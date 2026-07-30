@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { Settings as SettingsIcon, Save, Loader2 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { renameProject } from '../../lib/projects';
-import { getUserSettings, saveUserSettings } from '../../lib/userSettings';
+import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../../lib/userSettings';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 
 export default function SettingsModal({
   open,
@@ -15,6 +16,7 @@ export default function SettingsModal({
   onToast,
 }) {
   const { preference, setTheme } = useTheme();
+  const { user } = useAuth();
   const [name, setName] = useState(project?.name || '');
   const [theme, setThemeLocal] = useState(preference);
   const [notifications, setNotifications] = useState(true);
@@ -47,6 +49,9 @@ export default function SettingsModal({
         onProjectUpdated?.({ ...project, name: trimmed });
       }
       saveUserSettings({ theme, notifications });
+      if (user?.uid) {
+        await syncDeployEmailPreference(user.uid, notifications);
+      }
       setTheme(theme);
       onToast?.({ message: 'Configurações guardadas.', type: 'success' });
       onClose?.();

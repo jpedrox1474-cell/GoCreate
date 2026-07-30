@@ -1,15 +1,13 @@
-// Rotas de billing / créditos — Mercado Pago (produção).
+// Rotas de billing / créditos — Mercado Pago (Brasil) + Stripe Checkout (internacional).
 //
-// Fluxo:
+// Fluxo MP:
 // 1. POST /api/billing/create-payment (auth) → Preference (Pro) ou Pix (Turbo)
-//    + doc Firestore `transactions` pending (Admin SDK).
-// 2. MP notifica POST /api/billing/webhook → valida, marca completed,
-//    credita utilizador / atualiza plan via Admin (nunca confiar no cliente).
-// 3. GET /api/billing/status/:transactionId (auth) → polling do Pix no PricingModal.
+// 2. POST /api/billing/webhook → valida, fulfillTransaction()
+// 3. GET /api/billing/status/:transactionId (auth) → polling Pix
 //
-// INTEGRAÇÃO FUTURA — Stripe:
-// - create-payment com provider=stripe → PaymentIntent / Checkout Session
-// - webhook com stripe-signature → constructEvent → mesmo fulfillTransaction()
+// Fluxo Stripe (opcional — requer STRIPE_SECRET_KEY):
+// 1. POST /api/billing/stripe-checkout (auth) → Checkout Session (Pro)
+// 2. POST /api/billing/stripe-webhook (raw body) → checkout.session.completed → fulfill
 
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
@@ -26,18 +24,28 @@ import {
   resolveNotificationUrl,
   resolveAppUrl,
 } from '../services/mercadopago.js';
+import {
+  isStripeConfigured,
+  createProCheckoutSession,
+  constructStripeEvent,
+  resolveAppUrl as resolveStripeAppUrl,
+} from '../services/stripe.js';
 
 const router = Router();
 
 /**
  * Aplica crédito + plano de forma idempotente (Admin SDK).
  */
-async function fulfillTransaction({
+export async function fulfillTransaction({
   transactionId,
-  mpPaymentId,
-  paymentStatus,
+  provider = 'mercadopago',
+  providerPaymentId = null,
+  paymentStatus = 'approved',
+  // legacy aliases
+  mpPaymentId = null,
 }) {
   const txRef = db.collection('transactions').doc(transactionId);
+  const externalId = providerPaymentId || mpPaymentId;
 
   return db.runTransaction(async (firestoreTx) => {
     const snap = await firestoreTx.get(txRef);
@@ -60,14 +68,20 @@ async function fulfillTransaction({
       throw err;
     }
 
-    firestoreTx.update(txRef, {
+    const txUpdate = {
       status: 'completed',
-      provider: 'mercadopago',
-      mpPaymentId: mpPaymentId ? String(mpPaymentId) : null,
-      mpStatus: paymentStatus || 'approved',
+      provider,
       paidAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    };
+    if (provider === 'stripe') {
+      txUpdate.stripeSessionId = externalId ? String(externalId) : null;
+      txUpdate.stripeStatus = paymentStatus || 'paid';
+    } else {
+      txUpdate.mpPaymentId = externalId ? String(externalId) : null;
+      txUpdate.mpStatus = paymentStatus || 'approved';
+    }
+    firestoreTx.update(txRef, txUpdate);
 
     const userRef = db.collection('users').doc(userId);
     const userUpdate = {
@@ -125,7 +139,6 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Turbo → Pix QR; Pro → Checkout Preference (cartão/Pix no MP)
     if (product.id === 'turbo') {
       const pix = await createPixPayment({
         product,
@@ -152,7 +165,6 @@ router.post('/create-payment', requireAuth, async (req, res) => {
         qrCode: pix.qrCode,
         qrCodeBase64: pix.qrCodeBase64,
         ticketUrl: pix.ticketUrl,
-        // TODO(stripe): mode: 'stripe_checkout', checkoutUrl
       });
     }
 
@@ -178,7 +190,7 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       checkoutUrl: pref.initPoint,
       amount: product.amount,
       credits: product.credits,
-      // TODO(stripe): devolver session.url do Stripe Checkout
+      stripeAvailable: isStripeConfigured(),
     });
   } catch (err) {
     console.error('[billing/create-payment]', err);
@@ -191,8 +203,89 @@ router.post('/create-payment', requireAuth, async (req, res) => {
 });
 
 /**
+ * POST /api/billing/stripe-checkout
+ * Body: { productId?: 'pro' } — Pro only (international card via Stripe Checkout).
+ */
+router.post('/stripe-checkout', requireAuth, async (req, res) => {
+  try {
+    if (!isStripeConfigured()) {
+      return res.status(503).json({
+        error: 'STRIPE_SECRET_KEY não configurado.',
+        code: 'STRIPE_NOT_CONFIGURED',
+        message:
+          'Pagamentos Stripe ainda não estão ativos. Adicione STRIPE_SECRET_KEY no functions/.env e redeploy.',
+      });
+    }
+
+    const productId = String(req.body?.productId || 'pro').toLowerCase();
+    if (productId !== 'pro') {
+      return res.status(400).json({
+        error: 'Stripe Checkout disponível apenas para o plano Pro. Use Mercado Pago para Turbo/Pix.',
+      });
+    }
+
+    const product = BILLING_PRODUCTS.pro;
+    const appUrl = resolveStripeAppUrl(req);
+    const email = req.user.email || null;
+
+    const txRef = db.collection('transactions').doc();
+    const transactionId = txRef.id;
+
+    await txRef.set({
+      userId: req.user.uid,
+      amount: product.amount,
+      credits: product.credits,
+      type: product.type,
+      plan: product.plan || product.id,
+      status: 'pending',
+      provider: 'stripe',
+      productId: product.id,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const session = await createProCheckoutSession({
+      transactionId,
+      userId: req.user.uid,
+      email,
+      appUrl,
+    });
+
+    await txRef.update({
+      stripeSessionId: session.sessionId || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return res.status(201).json({
+      provider: 'stripe',
+      mode: 'stripe_checkout',
+      transactionId,
+      sessionId: session.sessionId,
+      checkoutUrl: session.checkoutUrl,
+      amount: product.amount,
+      credits: product.credits,
+    });
+  } catch (err) {
+    console.error('[billing/stripe-checkout]', err);
+    const status = err.status || 500;
+    return res.status(status).json({
+      error: err.message || 'Falha ao criar Stripe Checkout.',
+      code: err.code || undefined,
+    });
+  }
+});
+
+/**
+ * GET /api/billing/providers — which gateways are configured (no secrets).
+ */
+router.get('/providers', (_req, res) => {
+  res.json({
+    mercadopago: isMercadoPagoConfigured(),
+    stripe: isStripeConfigured(),
+  });
+});
+
+/**
  * GET /api/billing/status/:transactionId
- * Polling do PricingModal (Pix) — só o dono da transaction.
  */
 router.get('/status/:transactionId', requireAuth, async (req, res) => {
   try {
@@ -206,14 +299,14 @@ router.get('/status/:transactionId', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Sem permissão.' });
     }
 
-    // Se ainda pending e temos mpPaymentId, consulta MP (sandbox/prod)
     if (data.status === 'pending' && data.mpPaymentId && isMercadoPagoConfigured()) {
       try {
         const payment = await getPaymentById(data.mpPaymentId);
         if (payment?.status === 'approved') {
           await fulfillTransaction({
             transactionId,
-            mpPaymentId: payment.id,
+            provider: 'mercadopago',
+            providerPaymentId: payment.id,
             paymentStatus: payment.status,
           });
           return res.json({
@@ -238,6 +331,7 @@ router.get('/status/:transactionId', requireAuth, async (req, res) => {
       status: data.status,
       credits: data.credits,
       plan: data.plan,
+      provider: data.provider || null,
       mpStatus: data.mpStatus || null,
     });
   } catch (err) {
@@ -247,9 +341,7 @@ router.get('/status/:transactionId', requireAuth, async (req, res) => {
 });
 
 /**
- * POST /api/billing/webhook
- * Mercado Pago Notifications — sem auth de utilizador (Admin + MP).
- * Sempre responde 200 após processar para evitar retries infinitos.
+ * POST /api/billing/webhook — Mercado Pago Notifications
  */
 router.post('/webhook', async (req, res) => {
   try {
@@ -266,7 +358,6 @@ router.post('/webhook', async (req, res) => {
     const topic = req.query?.topic || req.query?.type || req.body?.type || req.body?.action;
     const paymentId = extractPaymentIdFromNotification(req);
 
-    // MP também envia GET-style query; ignoramos topics que não sejam payment
     const isPayment =
       !topic ||
       String(topic).includes('payment') ||
@@ -310,7 +401,8 @@ router.post('/webhook', async (req, res) => {
 
     const result = await fulfillTransaction({
       transactionId: String(transactionId),
-      mpPaymentId: paymentId,
+      provider: 'mercadopago',
+      providerPaymentId: paymentId,
       paymentStatus: status,
     });
 
@@ -327,14 +419,71 @@ router.post('/webhook', async (req, res) => {
     });
   } catch (err) {
     console.error('[billing/webhook]', err);
-    // 200 para não reenviar em loop se for erro nosso de negócio; MP reenvia em 5xx
     return res.status(200).json({ ok: false, error: err.message });
   }
 });
 
 /**
+ * Stripe webhook handler — must be mounted with express.raw({ type: 'application/json' }).
+ * Exported for app.js (raw body before JSON parser).
+ */
+export async function stripeWebhookHandler(req, res) {
+  try {
+    const signature = req.headers['stripe-signature'];
+    if (!signature) {
+      return res.status(400).json({ error: 'Missing stripe-signature.' });
+    }
+
+    const rawBody = req.body;
+    if (!Buffer.isBuffer(rawBody) && typeof rawBody !== 'string') {
+      console.error('[billing/stripe-webhook] body não é raw — verifique middleware.');
+      return res.status(400).json({ error: 'Raw body required.' });
+    }
+
+    let event;
+    try {
+      event = constructStripeEvent(rawBody, signature);
+    } catch (err) {
+      console.warn('[billing/stripe-webhook] assinatura inválida:', err?.message);
+      return res.status(401).json({ error: 'Assinatura inválida.' });
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data?.object || {};
+      const transactionId =
+        session.client_reference_id ||
+        session.metadata?.transactionId ||
+        null;
+
+      if (!transactionId) {
+        console.warn('[billing/stripe-webhook] session sem transactionId');
+        return res.status(200).json({ ok: true, ignored: 'no_transaction' });
+      }
+
+      if (session.payment_status === 'paid' || session.status === 'complete') {
+        const result = await fulfillTransaction({
+          transactionId: String(transactionId),
+          provider: 'stripe',
+          providerPaymentId: session.id,
+          paymentStatus: session.payment_status || 'paid',
+        });
+        console.log(
+          '[billing/stripe-webhook] fulfilled',
+          transactionId,
+          result.alreadyCompleted ? '(idempotent)' : `+${result.credits} credits`
+        );
+      }
+    }
+
+    return res.status(200).json({ ok: true, type: event.type });
+  } catch (err) {
+    console.error('[billing/stripe-webhook]', err);
+    return res.status(200).json({ ok: false, error: err.message });
+  }
+}
+
+/**
  * @deprecated Preferir POST /create-payment
- * Mantido para compatibilidade — cria só o intent pending.
  */
 router.post('/checkout-intent', requireAuth, async (req, res) => {
   try {
@@ -358,7 +507,7 @@ router.post('/checkout-intent', requireAuth, async (req, res) => {
     return res.status(201).json({
       transactionId: ref.id,
       status: 'pending',
-      message: 'Use POST /api/billing/create-payment para checkout Mercado Pago.',
+      message: 'Use POST /api/billing/create-payment ou /stripe-checkout.',
     });
   } catch (err) {
     console.error('[billing/checkout-intent]', err);

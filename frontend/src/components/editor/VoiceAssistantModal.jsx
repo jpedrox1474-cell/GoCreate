@@ -61,6 +61,38 @@ function craftBuildPrompt(text) {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
+function stopTts() {
+  try {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Browser TTS (pt-BR) for voice-to-voice replies. */
+function speakText(text) {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  const phrase = String(text || '').trim();
+  if (!phrase) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(phrase);
+    utter.lang = 'pt-BR';
+    utter.rate = 1.05;
+    utter.pitch = 1;
+    const voices = window.speechSynthesis.getVoices?.() || [];
+    const pt =
+      voices.find((v) => /pt-BR/i.test(v.lang)) ||
+      voices.find((v) => /^pt/i.test(v.lang));
+    if (pt) utter.voice = pt;
+    window.speechSynthesis.speak(utter);
+  } catch {
+    /* TTS optional */
+  }
+}
+
 /**
  * Modo Jarvis — voice helper. Helps craft ideas; never builds until confirm.
  * States: idle → listening → chatting | awaiting_confirm
@@ -123,6 +155,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
   const resetToIdle = useCallback(() => {
     clearChatIdleTimer();
     stopRecognition();
+    stopTts();
     finishedRef.current = false;
     finalTranscriptRef.current = '';
     buildPromptRef.current = '';
@@ -143,6 +176,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
       setCaption(CONFIRM_CAPTION);
       setLiveTranscript('');
       setState('awaiting_confirm');
+      speakText(CONFIRM_CAPTION);
     },
     [setState]
   );
@@ -170,8 +204,10 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
           enterAwaitingConfirm(raw);
           return;
         }
-        setCaption('Não entendi. Diga «confirmar» para gerar, ou «cancelar».');
+        const clarify = 'Não entendi. Diga «confirmar» para gerar, ou «cancelar».';
+        setCaption(clarify);
         setState('awaiting_confirm');
+        speakText(clarify);
         return;
       }
 
@@ -183,15 +219,17 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
       setBuildPrompt('');
       buildPromptRef.current = '';
       pendingConfirmRef.current = false;
-      setCaption(chatReplyFor(raw));
+      const reply = chatReplyFor(raw);
+      setCaption(reply);
       setState('chatting');
+      speakText(reply);
       chatIdleTimerRef.current = setTimeout(() => {
         chatIdleTimerRef.current = null;
         if (conversationStateRef.current === 'chatting') {
           setCaption('');
           setState('idle');
         }
-      }, 4000);
+      }, 5500);
     },
     [clearChatIdleTimer, stopRecognition, setState, resetToIdle, enterAwaitingConfirm]
   );
@@ -200,6 +238,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     if (conversationStateRef.current === 'listening') return;
     clearChatIdleTimer();
     stopRecognition();
+    stopTts();
     finishedRef.current = false;
     finalTranscriptRef.current = '';
     setLiveTranscript('');
@@ -303,6 +342,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     if (!open) {
       clearChatIdleTimer();
       stopRecognition();
+      stopTts();
       setClosing(false);
       setLiveTranscript('');
       setCaption('');
@@ -319,9 +359,16 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     }
 
     resetToIdle();
+    // Warm TTS voices (Chrome loads async)
+    try {
+      window.speechSynthesis?.getVoices?.();
+    } catch {
+      /* ignore */
+    }
     return () => {
       clearChatIdleTimer();
       stopRecognition();
+      stopTts();
     };
   }, [open, resetToIdle, clearChatIdleTimer, stopRecognition]);
 
@@ -348,6 +395,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     (afterClose) => {
       clearChatIdleTimer();
       stopRecognition();
+      stopTts();
       setClosing(true);
       setTimeout(() => {
         setClosing(false);

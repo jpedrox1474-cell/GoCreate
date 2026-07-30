@@ -25,6 +25,7 @@ const FILES = [
   'routes/github.js',
   'services/gemini.js',
   'services/mercadopago.js',
+  'services/stripe.js',
   'services/github.js',
 ];
 

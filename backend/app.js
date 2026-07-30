@@ -3,7 +3,7 @@ import cors from 'cors';
 
 import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
-import billingRouter from './routes/billing.js';
+import billingRouter, { stripeWebhookHandler } from './routes/billing.js';
 import githubRouter from './routes/github.js';
 
 export function createApp() {
@@ -15,6 +15,14 @@ export function createApp() {
       credentials: true,
     })
   );
+
+  // Stripe needs the raw body for signature verification — before JSON parser.
+  app.post(
+    '/api/billing/stripe-webhook',
+    express.raw({ type: 'application/json' }),
+    stripeWebhookHandler
+  );
+
   app.use(express.json({ limit: '10mb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -28,8 +36,7 @@ export function createApp() {
 
   app.use('/api/chat', chatRouter);
   app.use('/api/upload', uploadRouter);
-  // Mercado Pago / Stripe webhooks → POST /api/billing/webhook
-  // create-payment → Preference (Pro) ou Pix (Turbo)
+  // Mercado Pago / Stripe — create-payment, stripe-checkout, webhook
   app.use('/api/billing', billingRouter);
   // GitHub OAuth (export) + create repo / push
   app.use('/api/github', githubRouter);

@@ -8,7 +8,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
-  deleteDoc,
+  writeBatch,
   query,
   where,
   limit,
@@ -139,9 +139,29 @@ export async function renameProject(projectId, name) {
   });
 }
 
+/**
+ * Cascade delete: messages subcollection + publicProjects snapshots + project doc.
+ * Batches of ≤400 ops (Firestore limit 500).
+ */
 export async function deleteProject(projectId) {
-  // Mensagens filhas ficam órfãs no MVP — limpeza completa pode vir depois.
-  await deleteDoc(doc(db, 'projects', projectId));
+  if (!projectId) throw new Error('Projeto inválido.');
+
+  const messagesSnap = await getDocs(collection(db, 'projects', projectId, 'messages'));
+  const toDelete = [
+    ...messagesSnap.docs.map((d) => d.ref),
+    doc(db, 'publicProjects', projectId),
+    doc(db, 'publicProjects', `${projectId}_preview`),
+    doc(db, 'projects', projectId),
+  ];
+
+  const CHUNK = 400;
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    for (const ref of toDelete.slice(i, i + CHUNK)) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+  }
 }
 
 /** Cria um novo projeto com o mesmo nome/descrição (sem histórico). */

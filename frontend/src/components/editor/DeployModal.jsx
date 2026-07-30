@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Rocket, Loader2, CheckCircle2, ExternalLink, Globe, Copy, Check } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { publishProject, getPublishUrl } from '../../lib/projects';
+import { getUserSettings, recordDeployNotificationStub } from '../../lib/userSettings';
 
 const STEPS = ['A preparar build…', 'A guardar snapshot…', 'A publicar…', 'Live!'];
 
@@ -74,6 +75,17 @@ export default function DeployModal({
       setDeployUrl(result.url || getPublishUrl(projectId, env));
       setPhase('done');
       onToast?.({ message: 'Publicado com sucesso.', type: 'success' });
+
+      const wantsNotify = getUserSettings().notifications;
+      if (wantsNotify) {
+        await recordDeployNotificationStub({
+          uid: ownerId,
+          projectId,
+          url: result.url,
+          env,
+          enabled: true,
+        });
+      }
     } catch (err) {
       console.error('[DeployModal]', err);
       setPhase('error');

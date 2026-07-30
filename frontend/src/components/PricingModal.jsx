@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PLANS } from '../lib/plans';
-import { createPayment, getPaymentStatus } from '../lib/billingApi';
+import { createPayment, createStripeCheckout, getBillingProviders, getPaymentStatus } from '../lib/billingApi';
 import Toast from './Toast';
 
 /**
@@ -23,7 +23,8 @@ import Toast from './Toast';
  * Mercado Pago:
  * - Pro → Preference Checkout (redirect init_point)
  * - Turbo → Pix QR + polling /api/billing/status
- * - Webhook POST /api/billing/webhook completa transaction + créditos (Admin)
+ * Stripe (optional):
+ * - Pro → Checkout Session (cartão internacional) via /api/billing/stripe-checkout
  */
 export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
   const { user } = useAuth();
@@ -32,6 +33,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
   const [view, setView] = useState('plans'); // plans | pix | success
   const [pixData, setPixData] = useState(null);
   const [pixStatus, setPixStatus] = useState('pending');
+  const [stripeReady, setStripeReady] = useState(false);
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
@@ -48,7 +50,9 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
       setPixData(null);
       setPixStatus('pending');
       setBusyId(null);
+      return;
     }
+    getBillingProviders().then((p) => setStripeReady(Boolean(p?.stripe)));
   }, [open, stopPolling]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
@@ -119,6 +123,36 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
           message: err?.message || 'Falha ao iniciar pagamento.',
           type: 'error',
         });
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleStripePro() {
+    if (!user?.uid) {
+      setToast({ message: 'Inicia sessão para continuar.', type: 'error' });
+      return;
+    }
+    setBusyId('stripe-pro');
+    try {
+      const idToken = await user.getIdToken();
+      const result = await createStripeCheckout({ productId: 'pro', idToken });
+      if (result.checkoutUrl) {
+        setToast({ message: 'A redirecionar para o Stripe…', type: 'info' });
+        window.location.href = result.checkoutUrl;
+        return;
+      }
+      setToast({ message: 'Resposta Stripe inesperada.', type: 'error' });
+    } catch (err) {
+      console.error('[PricingModal] stripe:', err);
+      if (err?.code === 'STRIPE_NOT_CONFIGURED' || err?.status === 503) {
+        setToast({
+          message: 'Stripe ainda não configurado no servidor (STRIPE_SECRET_KEY).',
+          type: 'error',
+        });
+      } else {
+        setToast({ message: err?.message || 'Falha ao iniciar Stripe Checkout.', type: 'error' });
       }
     } finally {
       setBusyId(null);
@@ -267,6 +301,28 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
                         plan.cta
                       )}
                     </button>
+
+                    {isPro && !isCurrent && (
+                      <button
+                        type="button"
+                        disabled={busyId === 'stripe-pro'}
+                        onClick={handleStripePro}
+                        className="relative mt-2 w-full py-2 rounded-xl text-xs font-medium text-zinc-300 hover:text-white border border-zinc-700/80 hover:border-zinc-500 bg-zinc-950/60 transition-all disabled:opacity-50"
+                        title={
+                          stripeReady
+                            ? 'Cartão internacional via Stripe Checkout'
+                            : 'Stripe: adiciona STRIPE_SECRET_KEY no servidor'
+                        }
+                      >
+                        {busyId === 'stripe-pro' ? (
+                          <span className="inline-flex items-center gap-2 justify-center">
+                            <Loader2 size={12} className="animate-spin" /> Stripe…
+                          </span>
+                        ) : (
+                          'Cartão internacional (Stripe)'
+                        )}
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -371,7 +427,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
 
         {view === 'plans' && (
           <p className="relative px-6 pb-5 text-[11px] text-zinc-500 text-center">
-            Pagamentos via Mercado Pago · webhook /api/billing/webhook
+            Mercado Pago (Pix / BR) · Stripe opcional (cartão internacional)
           </p>
         )}
       </div>

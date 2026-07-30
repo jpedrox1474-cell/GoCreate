@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save, Loader2, User, Type, Palette } from 'lucide-react';
 import Toast from '../components/Toast';
-import { getUserSettings, saveUserSettings } from '../lib/userSettings';
+import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../lib/userSettings';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -63,6 +63,9 @@ export default function Settings() {
         editorFontSize,
         codeTheme,
       });
+      if (user?.uid) {
+        await syncDeployEmailPreference(user.uid, notifications);
+      }
       setTheme(theme);
       await new Promise((r) => setTimeout(r, 280));
       setToast({ message: 'Guardado', type: 'success' });
