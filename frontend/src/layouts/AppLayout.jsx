@@ -11,6 +11,7 @@ import {
   FolderKanban,
   Loader2,
   Plug,
+  Bot,
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
@@ -29,6 +30,7 @@ import { PENDING_PROMPT_KEY } from '../lib/mockData';
 
 const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
+  { to: '/automations', label: 'Automations', icon: Bot },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },
   { to: '/settings', label: 'Configurações', icon: Settings },

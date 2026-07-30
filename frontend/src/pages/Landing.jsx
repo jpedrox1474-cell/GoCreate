@@ -304,6 +304,9 @@ export default function Landing() {
           <Link to="/integrations" className="hover:text-zinc-100 transition-colors">
             Integrações
           </Link>
+          <Link to="/automations" className="hover:text-zinc-100 transition-colors">
+            Automations
+          </Link>
           <button
             type="button"
             onClick={() => setJarvisOpen(true)}

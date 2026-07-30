@@ -147,8 +147,12 @@ export async function deleteProject(projectId) {
   if (!projectId) throw new Error('Projeto inválido.');
 
   const messagesSnap = await getDocs(collection(db, 'projects', projectId, 'messages'));
+  const automationsSnap = await getDocs(collection(db, 'projects', projectId, 'automations'));
+  const runsSnap = await getDocs(collection(db, 'projects', projectId, 'automationRuns'));
   const toDelete = [
     ...messagesSnap.docs.map((d) => d.ref),
+    ...automationsSnap.docs.map((d) => d.ref),
+    ...runsSnap.docs.map((d) => d.ref),
     doc(db, 'publicProjects', projectId),
     doc(db, 'publicProjects', `${projectId}_preview`),
     doc(db, 'projects', projectId),

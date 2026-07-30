@@ -67,10 +67,23 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.auth.uid == request.resource.data.ownerId;
 
-      match /messages/{messageId} {
-        allow read, write: if isSignedIn()
+      function isProjectOwner() {
+        return isSignedIn()
           && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId
             == request.auth.uid;
+      }
+
+      match /messages/{messageId} {
+        allow read, write: if isProjectOwner();
+      }
+
+      // Background AI agents (Bug Hunter, Security Scan, Docs, Tests)
+      match /automations/{automationId} {
+        allow read, write: if isProjectOwner();
+      }
+
+      match /automationRuns/{runId} {
+        allow read, write: if isProjectOwner();
       }
     }
 

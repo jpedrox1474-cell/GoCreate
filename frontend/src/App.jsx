@@ -12,6 +12,7 @@ import Editor from './pages/Editor';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Integrations from './pages/Integrations';
+import Automations from './pages/Automations';
 import PublicPreview from './pages/PublicPreview';
 
 function PublicOnly({ children }) {
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/profile" element={<Profile />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/integrations" element={<Integrations />} />
+        <Route path="/automations" element={<Automations />} />
       </Route>
 
       <Route

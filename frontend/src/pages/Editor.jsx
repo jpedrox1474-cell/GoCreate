@@ -36,6 +36,7 @@ import SettingsModal from '../components/editor/SettingsModal';
 import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import IntegrationsBanner from '../components/editor/IntegrationsBanner';
 import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, duplicateProject } from '../lib/projects';
+import { scheduleAutomationCheck, rememberLastProjectId } from '../lib/automations';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { uploadFile } from '../lib/uploadApi';
 import { extractAiDisplay, parseArtifacts } from '../lib/artifactParser';
@@ -168,6 +169,16 @@ export default function Editor() {
     });
   }, []);
 
+  const notifyAutomations = useCallback(
+    (projectId) => {
+      if (!projectId) return;
+      scheduleAutomationCheck(projectId, {
+        onToast: (payload) => setToast(payload),
+      });
+    },
+    []
+  );
+
   useEffect(() => {
     if (!user) return undefined;
     let unsub = () => {};
@@ -208,6 +219,7 @@ export default function Editor() {
         if (cancelled) return;
         setProjectMeta(meta || getProjectById(id));
         setFirestoreId(id);
+        rememberLastProjectId(id);
         setGeneratedFiles({});
         setActiveFile(null);
 
@@ -391,12 +403,16 @@ export default function Editor() {
           finishGeneration();
           return;
         }
-        if (result?.text) applyAiRaw(result.text);
-        else if (!streamBufferRef.current.trim()) {
+        if (result?.text) {
+          applyAiRaw(result.text);
+          notifyAutomations(firestoreId);
+        } else if (!streamBufferRef.current.trim()) {
           setIsTyping(false);
           pushLocalTurn(
             'A API respondeu sem conteúdo. Confirma que o backend tem GEMINI_API_KEY e tenta de novo.'
           );
+        } else {
+          notifyAutomations(firestoreId);
         }
       } catch (err) {
         if (err?.name === 'AbortError' || controller.signal.aborted) {
@@ -435,6 +451,7 @@ export default function Editor() {
       mergeGeneratedFiles,
       finishGeneration,
       openPricing,
+      notifyAutomations,
     ]
   );
 
@@ -609,6 +626,7 @@ export default function Editor() {
   async function handleSaveProject() {
     if (firestoreId) {
       await touchProject(firestoreId);
+      notifyAutomations(firestoreId);
     }
     setToast({ message: 'Projeto guardado.', type: 'success' });
   }
