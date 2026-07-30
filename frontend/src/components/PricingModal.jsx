@@ -74,7 +74,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-4xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl shadow-black/50 overflow-hidden"
+        className="relative w-full max-w-4xl gc-themed bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl shadow-black/50 overflow-hidden"
       >
         <div className="flex items-start justify-between gap-4 px-5 sm:px-6 py-5 border-b border-zinc-800">
           <div>

@@ -144,6 +144,21 @@ export async function deleteProject(projectId) {
   await deleteDoc(doc(db, 'projects', projectId));
 }
 
+/** Cria um novo projeto com o mesmo nome/descrição (sem histórico). */
+export async function duplicateProject(uid, project) {
+  if (!uid) throw new Error('Utilizador inválido.');
+  const source =
+    typeof project === 'string' ? await getProject(project) : project;
+  if (!source?.id && typeof project === 'string') {
+    throw new Error('Projeto não encontrado.');
+  }
+  const baseName = (source?.name || 'Projeto').replace(/\s*\(cópia\)\s*$/i, '').trim();
+  return createProject(uid, {
+    name: `${baseName} (cópia)`,
+    description: source?.description || 'Cópia criada no GoCreate',
+  });
+}
+
 export async function touchProject(projectId) {
   try {
     await updateDoc(doc(db, 'projects', projectId), { updatedAt: serverTimestamp() });

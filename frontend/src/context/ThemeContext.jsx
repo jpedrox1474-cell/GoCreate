@@ -14,12 +14,16 @@ export function ThemeProvider({ children }) {
   const [preference, setPreference] = useState(() => getThemePreference());
   const [resolved, setResolved] = useState(() => resolveTheme(getThemePreference()));
 
+  // Keep <html> class in sync whenever preference changes (incl. already-mounted routes).
   useEffect(() => {
-    setResolved(applyTheme(preference));
+    const next = applyTheme(preference);
+    setResolved(next);
   }, [preference]);
 
   useEffect(() => {
-    return subscribeSystemTheme((next) => setResolved(next));
+    return subscribeSystemTheme((next) => {
+      setResolved(next);
+    });
   }, []);
 
   useEffect(() => {
@@ -27,6 +31,25 @@ export function ThemeProvider({ children }) {
       setPreference(nextPref);
       setResolved(nextResolved);
     });
+  }, []);
+
+  // Re-apply on tab focus (covers storage races / multi-tab).
+  useEffect(() => {
+    const sync = () => {
+      const pref = getThemePreference();
+      const next = applyTheme(pref);
+      setPreference(pref);
+      setResolved(next);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') sync();
+    };
+    window.addEventListener('focus', sync);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', sync);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   const setTheme = useCallback((next) => {

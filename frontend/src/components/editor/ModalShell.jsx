@@ -19,7 +19,7 @@ export default function ModalShell({ open, onClose, title, children, wide }) {
       <div
         role="dialog"
         aria-modal="true"
-        className={`relative w-full ${wide ? 'max-w-lg' : 'max-w-md'} bg-zinc-900 border border-zinc-800/80 rounded-xl shadow-2xl overflow-hidden`}
+        className={`relative w-full ${wide ? 'max-w-lg' : 'max-w-md'} gc-themed bg-zinc-900 border border-zinc-800/80 rounded-xl shadow-2xl overflow-hidden`}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/80">
           <h2 className="text-sm font-semibold text-zinc-100">{title}</h2>

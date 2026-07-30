@@ -15,9 +15,17 @@ body {
   color: #18181b;
 }
 
+html.dark {
+  color-scheme: dark;
+}
+
 html.dark body {
   background-color: #09090b;
   color: #d4d4d8;
+}
+
+html.light {
+  color-scheme: light;
 }
 
 html.light body {
@@ -71,69 +79,149 @@ html.light body {
   height: 100% !important;
 }
 
-/* Light theme for logged-in shells (default remains dark via html.dark) */
+/*
+ * Light theme for app chrome (.gc-app-shell) and floating UI (.gc-themed).
+ * Public /p/* preview content stays in the iframe; chrome can remain dark.
+ */
 html.light .gc-app-shell,
-html.light .gc-app-shell .bg-zinc-950,
-html.light .gc-app-shell.bg-zinc-950 {
+html.light .gc-themed {
+  color: #3f3f46;
+}
+
+html.light .gc-app-shell,
+html.light .gc-app-shell.bg-zinc-950,
+html.light .gc-themed.bg-zinc-950 {
   background-color: #fafafa !important;
-  color: #3f3f46 !important;
 }
-html.light .gc-app-shell .bg-zinc-950\/90,
-html.light .gc-app-shell .bg-zinc-950\/80 {
-  background-color: rgba(250, 250, 250, 0.92) !important;
-}
-html.light .gc-app-shell .bg-zinc-900,
-html.light .gc-app-shell .bg-zinc-900\/60,
-html.light .gc-app-shell .bg-zinc-900\/50,
-html.light .gc-app-shell .bg-zinc-900\/40,
-html.light .gc-app-shell .bg-zinc-900\/80 {
+
+html.light .gc-themed.bg-zinc-900 {
   background-color: #ffffff !important;
 }
+
+html.light .gc-app-shell .bg-zinc-950,
+html.light .gc-themed .bg-zinc-950,
+html.light .gc-app-shell .bg-zinc-950\/95,
+html.light .gc-themed .bg-zinc-950\/95,
+html.light .gc-app-shell .bg-zinc-950\/90,
+html.light .gc-themed .bg-zinc-950\/90,
+html.light .gc-app-shell .bg-zinc-950\/80,
+html.light .gc-themed .bg-zinc-950\/80,
+html.light .gc-app-shell .bg-zinc-950\/70,
+html.light .gc-themed .bg-zinc-950\/70,
+html.light .gc-app-shell .bg-zinc-950\/60,
+html.light .gc-themed .bg-zinc-950\/60,
+html.light .gc-app-shell .bg-zinc-950\/50,
+html.light .gc-themed .bg-zinc-950\/50,
+html.light .gc-app-shell .bg-zinc-950\/40,
+html.light .gc-themed .bg-zinc-950\/40 {
+  background-color: #fafafa !important;
+}
+
+html.light .gc-app-shell .bg-zinc-900,
+html.light .gc-themed .bg-zinc-900,
+html.light .gc-app-shell .bg-zinc-900\/80,
+html.light .gc-themed .bg-zinc-900\/80,
+html.light .gc-app-shell .bg-zinc-900\/70,
+html.light .gc-themed .bg-zinc-900\/70,
+html.light .gc-app-shell .bg-zinc-900\/60,
+html.light .gc-themed .bg-zinc-900\/60,
+html.light .gc-app-shell .bg-zinc-900\/50,
+html.light .gc-themed .bg-zinc-900\/50,
+html.light .gc-app-shell .bg-zinc-900\/40,
+html.light .gc-themed .bg-zinc-900\/40,
+html.light .gc-app-shell .bg-zinc-900\/30,
+html.light .gc-themed .bg-zinc-900\/30 {
+  background-color: #ffffff !important;
+}
+
 html.light .gc-app-shell .bg-zinc-800,
+html.light .gc-themed .bg-zinc-800,
+html.light .gc-app-shell .bg-zinc-800\/80,
+html.light .gc-themed .bg-zinc-800\/80,
 html.light .gc-app-shell .bg-zinc-800\/60,
+html.light .gc-themed .bg-zinc-800\/60,
 html.light .gc-app-shell .bg-zinc-800\/50,
+html.light .gc-themed .bg-zinc-800\/50,
+html.light .gc-app-shell .bg-zinc-700,
+html.light .gc-themed .bg-zinc-700,
 html.light .gc-app-shell .hover\:bg-zinc-800:hover,
+html.light .gc-themed .hover\:bg-zinc-800:hover,
+html.light .gc-app-shell .hover\:bg-zinc-800\/80:hover,
+html.light .gc-themed .hover\:bg-zinc-800\/80:hover,
 html.light .gc-app-shell .hover\:bg-zinc-800\/60:hover,
+html.light .gc-themed .hover\:bg-zinc-800\/60:hover,
 html.light .gc-app-shell .hover\:bg-zinc-800\/50:hover,
+html.light .gc-themed .hover\:bg-zinc-800\/50:hover,
 html.light .gc-app-shell .hover\:bg-zinc-900:hover,
+html.light .gc-themed .hover\:bg-zinc-900:hover,
 html.light .gc-app-shell .hover\:bg-zinc-900\/80:hover,
-html.light .gc-app-shell .hover\:bg-zinc-900\/60:hover {
+html.light .gc-themed .hover\:bg-zinc-900\/80:hover,
+html.light .gc-app-shell .hover\:bg-zinc-900\/60:hover,
+html.light .gc-themed .hover\:bg-zinc-900\/60:hover {
   background-color: #f4f4f5 !important;
 }
+
 html.light .gc-app-shell .border-zinc-800,
+html.light .gc-themed .border-zinc-800,
 html.light .gc-app-shell .border-zinc-800\/80,
+html.light .gc-themed .border-zinc-800\/80,
+html.light .gc-app-shell .border-zinc-800\/60,
+html.light .gc-themed .border-zinc-800\/60,
 html.light .gc-app-shell .border-zinc-800\/50,
+html.light .gc-themed .border-zinc-800\/50,
+html.light .gc-app-shell .border-zinc-800\/40,
+html.light .gc-themed .border-zinc-800\/40,
 html.light .gc-app-shell .border-zinc-700,
+html.light .gc-themed .border-zinc-700,
 html.light .gc-app-shell .hover\:border-zinc-700:hover,
-html.light .gc-app-shell .hover\:border-zinc-600:hover {
+html.light .gc-themed .hover\:border-zinc-700:hover,
+html.light .gc-app-shell .hover\:border-zinc-600:hover,
+html.light .gc-themed .hover\:border-zinc-600:hover {
   border-color: #e4e4e7 !important;
 }
+
 html.light .gc-app-shell .text-zinc-100,
-html.light .gc-app-shell .hover\:text-zinc-100:hover {
+html.light .gc-themed .text-zinc-100,
+html.light .gc-app-shell .hover\:text-zinc-100:hover,
+html.light .gc-themed .hover\:text-zinc-100:hover {
   color: #18181b !important;
 }
+
 html.light .gc-app-shell .text-zinc-200,
-html.light .gc-app-shell .hover\:text-zinc-200:hover {
+html.light .gc-themed .text-zinc-200,
+html.light .gc-app-shell .hover\:text-zinc-200:hover,
+html.light .gc-themed .hover\:text-zinc-200:hover {
   color: #27272a !important;
 }
+
 html.light .gc-app-shell .text-zinc-300,
-html.light .gc-app-shell .hover\:text-zinc-300:hover {
+html.light .gc-themed .text-zinc-300,
+html.light .gc-app-shell .hover\:text-zinc-300:hover,
+html.light .gc-themed .hover\:text-zinc-300:hover {
   color: #3f3f46 !important;
 }
+
 html.light .gc-app-shell .text-zinc-400,
+html.light .gc-themed .text-zinc-400,
 html.light .gc-app-shell .hover\:text-zinc-400:hover,
-html.light .gc-app-shell .placeholder-zinc-500::placeholder {
+html.light .gc-themed .hover\:text-zinc-400:hover,
+html.light .gc-app-shell .placeholder-zinc-500::placeholder,
+html.light .gc-themed .placeholder-zinc-500::placeholder {
   color: #71717a !important;
 }
+
 html.light .gc-app-shell .text-zinc-500,
-html.light .gc-app-shell .text-zinc-600 {
-  color: #a1a1aa !important;
+html.light .gc-themed .text-zinc-500,
+html.light .gc-app-shell .text-zinc-600,
+html.light .gc-themed .text-zinc-600 {
+  color: #71717a !important;
 }
-html.light .gc-app-shell .custom-scrollbar::-webkit-scrollbar-thumb {
+
+html.light .gc-app-shell .custom-scrollbar::-webkit-scrollbar-thumb,
+html.light .gc-themed .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #d4d4d8;
 }
-html.light .gc-app-shell .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+html.light .gc-app-shell .custom-scrollbar::-webkit-scrollbar-thumb:hover,
+html.light .gc-themed .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: #a1a1aa;
 }
-
-

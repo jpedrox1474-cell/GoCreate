@@ -3,15 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Plus,
   Clock,
-  Rocket,
-  MoreHorizontal,
   FolderKanban,
   Search,
   Loader2,
-  Pencil,
-  Trash2,
   Zap,
   CreditCard,
+  EyeOff,
 } from 'lucide-react';
 import { MOCK_PROJECTS } from '../lib/mockData';
 import {
@@ -19,10 +16,12 @@ import {
   createProject,
   renameProject,
   deleteProject,
+  duplicateProject,
 } from '../lib/projects';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import Toast from '../components/Toast';
+import ProjectActionsMenu from '../components/ProjectActionsMenu';
 
 const STATUS_LABEL = {
   draft: { text: 'Rascunho', className: 'bg-zinc-800 text-zinc-400 border-zinc-700' },
@@ -48,7 +47,6 @@ export default function Dashboard() {
   const { credits, plan, creditsUsedThisMonth, allowance, openPricing, lowCredits } = useCredits();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [menuOpen, setMenuOpen] = useState(null);
   const [toast, setToast] = useState(null);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +100,6 @@ export default function Dashboard() {
   }
 
   async function handleRename(project) {
-    setMenuOpen(null);
     const next = window.prompt('Novo nome do projeto', project.name);
     if (next == null) return;
     const trimmed = next.trim();
@@ -119,21 +116,31 @@ export default function Dashboard() {
     }
   }
 
+  async function handleDuplicate(project) {
+    if (!user?.uid) return;
+    try {
+      const id = await duplicateProject(user.uid, project);
+      setToast({ message: 'Projeto duplicado.', type: 'success' });
+      navigate(`/editor/${id}`);
+    } catch (err) {
+      console.error('[Dashboard] duplicate:', err);
+      setToast({ message: 'Não foi possível duplicar.', type: 'error' });
+    }
+  }
+
   async function handleDelete(project) {
-    setMenuOpen(null);
-    if (!window.confirm(`Apagar “${project.name}”? Esta ação não pode ser desfeita.`)) return;
+    if (!window.confirm(`Eliminar “${project.name}”? Esta ação não pode ser desfeita.`)) return;
     try {
       await deleteProject(project.id);
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
-      setToast({ message: 'Projeto apagado.', type: 'success' });
+      setToast({ message: 'Projeto eliminado.', type: 'success' });
     } catch (err) {
       console.error('[Dashboard] delete:', err);
-      setToast({ message: 'Não foi possível apagar.', type: 'error' });
+      setToast({ message: 'Não foi possível eliminar.', type: 'error' });
     }
   }
 
   function hideDemo(id) {
-    setMenuOpen(null);
     setHiddenDemos((prev) => {
       const next = new Set(prev);
       next.add(id);
@@ -183,68 +190,29 @@ export default function Dashboard() {
           </div>
         </Link>
 
-        <div className="absolute top-2 right-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              setMenuOpen(menuOpen === project.id ? null : project.id);
-            }}
-            className="p-1.5 rounded-md bg-black/30 text-white/80 hover:bg-black/50 hover:text-white transition-all opacity-0 group-hover:opacity-100"
-          >
-            <MoreHorizontal size={14} />
-          </button>
-          {menuOpen === project.id && (
-            <div className="absolute right-0 top-8 w-40 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 z-10">
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(null);
-                  navigate(`/editor/${project.id}`);
-                }}
-                className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-all"
-              >
-                Abrir editor
-              </button>
-              {!isDemo && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleRename(project)}
-                    className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-all flex items-center gap-1.5"
-                  >
-                    <Pencil size={12} /> Renomear
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(null);
-                      navigate(`/editor/${project.id}`);
-                      setToast({ message: 'Abre Deploy no editor para publicar.', type: 'info' });
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-all flex items-center gap-1.5"
-                  >
-                    <Rocket size={12} /> Deploy
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(project)}
-                    className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-zinc-800 transition-all flex items-center gap-1.5"
-                  >
-                    <Trash2 size={12} /> Apagar
-                  </button>
-                </>
-              )}
-              {isDemo && (
-                <button
-                  type="button"
-                  onClick={() => hideDemo(project.id)}
-                  className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-all"
-                >
-                  Ocultar exemplo
-                </button>
-              )}
-            </div>
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          {isDemo ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                hideDemo(project.id);
+              }}
+              className="p-1.5 rounded-md bg-black/40 text-white/90 hover:bg-black/60 transition-all inline-flex items-center gap-1 text-[10px] font-medium"
+              title="Ocultar exemplo"
+            >
+              <EyeOff size={12} />
+            </button>
+          ) : (
+            <ProjectActionsMenu
+              project={project}
+              buttonClassName="bg-black/40 text-white/90 hover:bg-black/60 hover:text-white"
+              onOpen={(proj) => navigate(`/editor/${proj.id}`)}
+              onRename={handleRename}
+              onDuplicate={handleDuplicate}
+              onDelete={handleDelete}
+            />
           )}
         </div>
       </div>
@@ -252,7 +220,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto" onClick={() => menuOpen && setMenuOpen(null)}>
+    <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">

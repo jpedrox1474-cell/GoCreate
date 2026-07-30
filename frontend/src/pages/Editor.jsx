@@ -31,7 +31,7 @@ import HistoryDrawer from '../components/editor/HistoryDrawer';
 import ExportModal from '../components/editor/ExportModal';
 import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
-import { createProject, getProject, listenToMessages, touchProject, listUserProjects } from '../lib/projects';
+import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, duplicateProject } from '../lib/projects';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { extractAiDisplay, parseArtifacts } from '../lib/artifactParser';
 import {
@@ -39,6 +39,12 @@ import {
   getMessagesForProject,
   PENDING_PROMPT_KEY,
 } from '../lib/mockData';
+import { useTheme } from '../context/ThemeContext';
+
+function EditorLogo() {
+  const { isLight } = useTheme();
+  return <Logo to="/dashboard" variant={isLight ? 'light' : 'dark'} size="sm" />;
+}
 
 // Empty VITE_API_URL = same-origin /api/* (Firebase Hosting → gocreateApi).
 // Only force demo replies with VITE_USE_MOCK_CHAT=true (local UI demos).
@@ -457,6 +463,54 @@ export default function Editor() {
     }
   }
 
+  async function handleRenameHistoryProject(project) {
+    const next = window.prompt('Novo nome do projeto', project.name);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === project.name) return;
+    try {
+      await renameProject(project.id, trimmed);
+      setHistoryProjects((prev) =>
+        prev.map((p) => (p.id === project.id ? { ...p, name: trimmed } : p))
+      );
+      if (projectMeta?.id === project.id || firestoreId === project.id) {
+        setProjectMeta((prev) => (prev ? { ...prev, name: trimmed } : prev));
+      }
+      setToast({ message: 'Projeto renomeado.', type: 'success' });
+    } catch (err) {
+      console.error('[Editor] rename:', err);
+      setToast({ message: 'Não foi possível renomear.', type: 'error' });
+    }
+  }
+
+  async function handleDuplicateHistoryProject(project) {
+    if (!user?.uid) return;
+    try {
+      const id = await duplicateProject(user.uid, project);
+      setToast({ message: 'Projeto duplicado.', type: 'success' });
+      await refreshHistory();
+      navigate(`/editor/${id}`);
+    } catch (err) {
+      console.error('[Editor] duplicate:', err);
+      setToast({ message: 'Não foi possível duplicar.', type: 'error' });
+    }
+  }
+
+  async function handleDeleteHistoryProject(project) {
+    if (!window.confirm(`Eliminar “${project.name}”? Esta ação não pode ser desfeita.`)) return;
+    try {
+      await deleteProject(project.id);
+      setHistoryProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setToast({ message: 'Projeto eliminado.', type: 'success' });
+      if (firestoreId === project.id || routeId === project.id) {
+        navigate('/dashboard');
+      }
+    } catch (err) {
+      console.error('[Editor] delete:', err);
+      setToast({ message: 'Não foi possível eliminar.', type: 'error' });
+    }
+  }
+
   return (
     <div className="gc-app-shell flex flex-col h-screen w-full bg-zinc-950 text-zinc-300 font-sans selection:bg-indigo-500/30">
       <header className="flex items-center justify-between px-3 sm:px-4 h-14 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md z-10 shrink-0">
@@ -477,7 +531,7 @@ export default function Editor() {
             <PanelLeft size={16} />
           </button>
 
-          <Logo to="/dashboard" variant="dark" size="sm" />
+          <EditorLogo />
 
           <div className="h-4 w-px bg-zinc-800 mx-1 hidden sm:block" />
 
@@ -557,6 +611,9 @@ export default function Editor() {
               refreshHistory();
             }}
             projects={historyProjects}
+            onRenameProject={handleRenameHistoryProject}
+            onDuplicateProject={handleDuplicateHistoryProject}
+            onDeleteProject={handleDeleteHistoryProject}
           />
         </div>
 

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   PanelLeftClose,
   PanelLeft,
@@ -9,6 +9,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { MOCK_PROJECTS } from '../../lib/mockData';
+import ProjectActionsMenu from '../ProjectActionsMenu';
 
 function formatRelative(label) {
   if (!label) return 'Agora';
@@ -21,11 +22,15 @@ export default function HistoryDrawer({
   currentProjectId,
   onNewChat,
   projects = [],
+  onRenameProject,
+  onDuplicateProject,
+  onDeleteProject,
 }) {
+  const navigate = useNavigate();
   const list = projects.length ? projects : MOCK_PROJECTS;
+  const isRealList = projects.length > 0;
 
   const conversations = useMemo(() => {
-    // Derive recent chats from projects (real) or fall back to mock demos
     if (projects.length) {
       return projects.slice(0, 8).map((p) => ({
         id: `conv-${p.id}`,
@@ -82,23 +87,39 @@ export default function HistoryDrawer({
             </p>
             <ul className="space-y-0.5">
               {list.map((p) => (
-                <li key={p.id}>
-                  <Link
-                    to={`/editor/${p.id}`}
-                    className={`flex items-start gap-2 px-2.5 py-2 rounded-lg text-xs transition-all ${
+                <li key={p.id} className="group relative">
+                  <div
+                    className={`flex items-start gap-1 rounded-lg text-xs transition-all ${
                       currentProjectId === p.id
                         ? 'bg-zinc-900 text-zinc-100 border border-zinc-800'
                         : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60 border border-transparent'
                     }`}
                   >
-                    <FolderKanban size={13} className="mt-0.5 shrink-0 text-blue-400/80" />
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium">{p.name}</span>
-                      <span className="block text-[10px] text-zinc-600 mt-0.5 flex items-center gap-1">
-                        <Clock size={9} /> {formatRelative(p.updatedAtLabel || p.updatedAt)}
+                    <Link
+                      to={`/editor/${p.id}`}
+                      className="flex items-start gap-2 flex-1 min-w-0 px-2.5 py-2"
+                    >
+                      <FolderKanban size={13} className="mt-0.5 shrink-0 text-blue-400/80" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium pr-1">{p.name}</span>
+                        <span className="block text-[10px] text-zinc-600 mt-0.5 flex items-center gap-1">
+                          <Clock size={9} /> {formatRelative(p.updatedAtLabel || p.updatedAt)}
+                        </span>
                       </span>
-                    </span>
-                  </Link>
+                    </Link>
+                    {isRealList && (
+                      <div className="shrink-0 pr-1 pt-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                        <ProjectActionsMenu
+                          project={p}
+                          size="xs"
+                          onOpen={(proj) => navigate(`/editor/${proj.id}`)}
+                          onRename={onRenameProject}
+                          onDuplicate={onDuplicateProject}
+                          onDelete={onDeleteProject}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
