@@ -89,8 +89,13 @@ const ICONS = {
   Plug,
 };
 
-function statusLabel(status) {
-  if (status === 'connected') return 'Ligado';
+function statusLabel(status, meta = {}) {
+  if (status === 'connected') {
+    if (meta?.platformPowered || meta?.label === 'Ligado (plataforma)') {
+      return 'Ligado (plataforma)';
+    }
+    return 'Ligado';
+  }
   if (status === 'coming_soon') return 'Em breve';
   return 'Disponível';
 }
@@ -137,7 +142,13 @@ export default function Integrations() {
 
   const cards = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const SOCIAL_SECTION_IDS = new Set(['whatsapp_evolution', 'instagram', 'facebook']);
+    const SOCIAL_SECTION_IDS = new Set([
+      'whatsapp_evolution',
+      'instagram',
+      'facebook',
+      'youtube',
+      'tiktok',
+    ]);
     return INTEGRATIONS_CATALOG.filter((item) => {
       // Secção premium dedicada — evita cartões duplicados no grid
       if (SOCIAL_SECTION_IDS.has(item.id)) return false;
@@ -152,12 +163,10 @@ export default function Integrations() {
       let status = 'available';
       if (item.connectType === 'coming_soon') status = 'coming_soon';
       else if (statusMap[item.id]?.status === 'connected') status = 'connected';
-      else if (item.connectType === 'platform' && statusMap[item.id]?.status === 'connected')
-        status = 'connected';
-      // Platform defaults to connected when API says so; else if still platform mark connected
       if (item.connectType === 'platform' && status !== 'coming_soon') {
-        status = statusMap[item.id]?.status === 'available' ? 'available' : 'connected';
-        if (!statusMap[item.id]) status = 'connected';
+        const apiStatus = statusMap[item.id]?.status;
+        if (apiStatus === 'available') status = 'available';
+        else if (apiStatus === 'connected' || !statusMap[item.id]) status = 'connected';
       }
       return { ...item, status, meta: statusMap[item.id]?.meta || {} };
     });
@@ -263,8 +272,8 @@ export default function Integrations() {
             Integrações
           </h1>
           <p className="text-sm text-zinc-500 max-w-xl">
-            Liga provedores à tua conta — Mercado Pago, Stripe, GitHub e outros — para os apps
-            gerados usarem as tuas credenciais.
+            Canais sociais e Pix usam credenciais da plataforma GoCreate. WhatsApp gera QR no VPS;
+            Instagram/Facebook abrem login Meta. Supabase e similares continuam opcionais (BYO).
           </p>
         </div>
         <div className="text-right shrink-0">
@@ -352,7 +361,7 @@ export default function Integrations() {
                       <span
                         className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border ${statusClass(item.status)}`}
                       >
-                        {statusLabel(item.status)}
+                        {statusLabel(item.status, item.meta)}
                       </span>
                     </div>
                     <p className="text-[11px] text-zinc-500 mt-0.5 capitalize">

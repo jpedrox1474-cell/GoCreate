@@ -37,6 +37,9 @@ const FILES = [
   'services/entities.js',
   'services/evolution.js',
   'services/meta.js',
+  'services/oauth/pkce.js',
+  'services/oauth/state.js',
+  'services/oauth/providers.js',
 ];
 
 function ensureDir(filePath) {

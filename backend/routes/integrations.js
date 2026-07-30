@@ -10,12 +10,15 @@
 // POST /paypal/create-payment               (auth) — order PayPal (BYO)
 // POST /telegram/webhook                    (auth) — setWebhook stub
 // POST /nfe/emit                            (auth) — emissão stub
-// —— Canais premium (Evolution / Meta) — exigem requirePremium ——
-// POST /whatsapp/qr                         — cria instância + QR Evolution
+// —— Canais premium (WhatsApp / Meta / YouTube / TikTok) — exigem requirePremium ——
+// POST /whatsapp/qr                         — cria instância + QR WhatsApp
 // GET  /whatsapp/connection                 — polling connectionState
 // POST /whatsapp/disconnect                 — logout/delete instância
 // POST /meta/connect                        — FB.login token → IG + Page
 // POST /meta/disconnect                     — limpa Instagram/Facebook
+// GET  /:platform/oauth/start               — YouTube / TikTok authorize URL
+// GET  /:platform/oauth/callback            — OAuth callback (popup HTML)
+// POST /:platform/oauth/disconnect          — limpa YouTube / TikTok
 
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
@@ -37,6 +40,8 @@ import {
   clearWhatsAppEvolutionConnection,
   saveMetaSocialConnection,
   clearMetaSocialConnection,
+  saveSocialOAuthConnection,
+  clearSocialOAuthConnection,
 } from '../services/integrations.js';
 import {
   provisionUserWhatsAppQr,
@@ -51,6 +56,16 @@ import {
   isMetaConfigured,
   getMetaConfig,
 } from '../services/meta.js';
+import {
+  buildAuthorizeUrl,
+  exchangeCode,
+  getPublicApiUrl,
+  isOAuthPlatform,
+  oauthConfigHints,
+  oauthConfigured,
+  popupResultHtml,
+} from '../services/oauth/providers.js';
+import { consumeOAuthState } from '../services/oauth/state.js';
 
 const router = Router();
 
@@ -112,6 +127,12 @@ router.post('/disconnect/:providerId', requireAuth, async (req, res) => {
         code: 'USE_META_DISCONNECT',
       });
     }
+    if (providerId === 'youtube' || providerId === 'tiktok') {
+      return res.status(400).json({
+        error: `Usa POST /api/integrations/${providerId}/oauth/disconnect.`,
+        code: 'USE_OAUTH_DISCONNECT',
+      });
+    }
     if (!CONNECTABLE_PROVIDERS.has(providerId)) {
       return res.status(400).json({
         error: 'Provider de plataforma não pode ser desligado.',
@@ -157,7 +178,8 @@ router.post('/mercadopago/create-payment', requireAuth, async (req, res) => {
 });
 
 /**
- * Checkout público em páginas publicadas — exige MP do owner (sem fallback plataforma).
+ * Checkout público em páginas publicadas (/p/:id + GoCreatePayments).
+ * Usa MERCADOPAGO_ACCESS_TOKEN da plataforma — não exige o end-user colar API key.
  */
 router.post('/mercadopago/public-create-payment', async (req, res) => {
   try {
@@ -179,7 +201,7 @@ router.post('/mercadopago/public-create-payment', async (req, res) => {
       description,
       payerEmail,
       method: method === 'preference' ? 'preference' : 'pix',
-      allowPlatformFallback: false,
+      allowPlatformFallback: true,
     });
     res.json(result);
   } catch (err) {
@@ -303,15 +325,15 @@ router.post('/nfe/emit', requireAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WhatsApp Evolution (premium / VPS) — proxy; keys nunca no frontend
+// WhatsApp (premium / VPS) — proxy; keys nunca no frontend
 // ═══════════════════════════════════════════════════════════════════════════
 
 router.post('/whatsapp/qr', requireAuth, requirePremium, async (req, res) => {
   try {
     if (!isEvolutionConfigured()) {
       return res.status(503).json({
-        error: 'Evolution API não configurada (EVOLUTION_API_URL / EVOLUTION_API_KEY).',
-        code: 'EVOLUTION_NOT_CONFIGURED',
+        error: 'WhatsApp não configurado no servidor.',
+        code: 'WHATSAPP_NOT_CONFIGURED',
       });
     }
     const result = await provisionUserWhatsAppQr(req.user.uid);
@@ -435,6 +457,134 @@ router.get('/meta/config', requireAuth, (_req, res) => {
     configured: cfg.configured,
     appId: cfg.configured ? cfg.appId : null,
     graphVersion: cfg.graphVersion,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// YouTube / TikTok — OAuth popup (premium)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/:platform/oauth/start', requireAuth, requirePremium, async (req, res) => {
+  const { platform } = req.params;
+  if (!isOAuthPlatform(platform)) {
+    return res.status(400).json({ error: 'Plataforma inválida.' });
+  }
+  try {
+    const { authUrl, state, redirectUri } = await buildAuthorizeUrl(platform, req.user.uid);
+    return res.json({
+      authUrl,
+      state,
+      redirectUri,
+      platform,
+      oauthConfigured: true,
+    });
+  } catch (err) {
+    if (
+      err.message === 'OAUTH_NOT_CONFIGURED' ||
+      err.payload?.code === 'OAUTH_NOT_CONFIGURED'
+    ) {
+      return res.status(501).json(err.payload || { error: err.message, code: 'OAUTH_NOT_CONFIGURED' });
+    }
+    console.error(`[integrations/${platform}/oauth/start]`, err);
+    return res.status(500).json({
+      error: `Falha ao iniciar OAuth de ${platform}.`,
+      details: err?.details || err.message,
+    });
+  }
+});
+
+/** Callback OAuth (sem Firebase Auth — state amarra o uid). */
+router.get('/:platform/oauth/callback', async (req, res) => {
+  const { platform } = req.params;
+  if (!isOAuthPlatform(platform)) {
+    return res.status(400).send(popupResultHtml({ ok: false, platform, error: 'Plataforma inválida.' }));
+  }
+
+  const { code, state, error, error_description: errorDesc } = req.query;
+  if (error) {
+    return res.status(400).send(
+      popupResultHtml({
+        ok: false,
+        platform,
+        error: String(errorDesc || error || 'Login cancelado.'),
+      })
+    );
+  }
+  if (!code || !state) {
+    return res
+      .status(400)
+      .send(popupResultHtml({ ok: false, platform, error: 'Código OAuth ausente. Tente conectar de novo.' }));
+  }
+
+  try {
+    const saved = await consumeOAuthState(String(state));
+    if (!saved || saved.platform !== platform) {
+      return res
+        .status(400)
+        .send(
+          popupResultHtml({
+            ok: false,
+            platform,
+            error: 'Sessão OAuth expirada. Feche e clique em Conectar de novo.',
+          })
+        );
+    }
+
+    const fields = await exchangeCode(
+      platform,
+      String(code),
+      saved.redirectUri || `${getPublicApiUrl()}/api/integrations/${platform}/oauth/callback`,
+      saved.codeVerifier
+    );
+
+    const savedConn = await saveSocialOAuthConnection(saved.uid, platform, fields);
+    const displayName =
+      savedConn.displayName ||
+      fields.tiktokUsername ||
+      fields.youtubeChannelTitle ||
+      null;
+
+    return res.send(popupResultHtml({ ok: true, platform, displayName }));
+  } catch (err) {
+    console.error(`[integrations/${platform}/oauth/callback]`, err);
+    const msg =
+      err?.payload?.error ||
+      err?.details?.error_description ||
+      err?.details?.error ||
+      err.message ||
+      'Falha ao trocar código OAuth.';
+    return res.status(400).send(popupResultHtml({ ok: false, platform, error: String(msg) }));
+  }
+});
+
+router.post('/:platform/oauth/disconnect', requireAuth, requirePremium, async (req, res) => {
+  const { platform } = req.params;
+  if (!isOAuthPlatform(platform)) {
+    return res.status(400).json({ error: 'Plataforma inválida.' });
+  }
+  try {
+    const result = await clearSocialOAuthConnection(req.user.uid, platform);
+    res.json(result);
+  } catch (err) {
+    console.error(`[integrations/${platform}/oauth/disconnect]`, err);
+    res.status(err.status || 500).json({
+      error: err.message || `Falha ao desligar ${platform}.`,
+      code: err.code,
+    });
+  }
+});
+
+router.get('/:platform/oauth/config', requireAuth, (req, res) => {
+  const { platform } = req.params;
+  if (!isOAuthPlatform(platform)) {
+    return res.status(400).json({ error: 'Plataforma inválida.' });
+  }
+  const hint = oauthConfigHints(platform);
+  res.json({
+    platform,
+    configured: oauthConfigured(platform),
+    redirectUri: hint?.redirect || null,
+    console: hint?.console || null,
   });
 });
 

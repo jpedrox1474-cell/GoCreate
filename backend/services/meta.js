@@ -1,5 +1,5 @@
 /**
- * Meta Graph API helpers — Instagram Business + Facebook Page (padrão ManuTV).
+ * Meta Graph API helpers — Instagram Business + Facebook Page.
  * Tokens long-lived + page tokens ficam só no backend (secrets).
  */
 
@@ -167,7 +167,7 @@ function mergePages(existing, incoming) {
 }
 
 /**
- * Resolve Facebook Pages + Instagram Business (padrão ManuTV).
+ * Resolve Facebook Pages + Instagram Business (GoCreate).
  */
 export async function fetchPagesWithInstagram(longLivedToken) {
   let pages = await fetchAccountsEdge(longLivedToken);

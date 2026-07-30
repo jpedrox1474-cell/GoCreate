@@ -72,7 +72,7 @@ export function todayKeyUTC3(date = new Date()) {
 }
 
 export const PREMIUM_REQUIRED_MESSAGE =
-  'Recurso Premium. GitHub, deploys de backend e canais sociais (WhatsApp Evolution, Instagram, Facebook) estão disponíveis nos planos pagos.';
+  'Recurso Premium. GitHub, deploys de backend e canais sociais (WhatsApp, Instagram, Facebook, YouTube, TikTok) estão disponíveis nos planos pagos.';
 
 export default {
   OWNER_EMAILS,

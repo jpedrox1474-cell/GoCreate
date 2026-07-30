@@ -19,7 +19,7 @@ import {
 const POLL_MS = 4000;
 
 /**
- * Modal QR WhatsApp via Evolution API (proxy backend → VPS).
+ * Modal QR WhatsApp (proxy backend → VPS).
  * Adaptado de BarberPro WhatsAppConnectSelfService.
  */
 export default function WhatsAppConnectModal({
@@ -98,7 +98,7 @@ export default function WhatsAppConnectModal({
     return () => stopPoll();
   }, [open, connected, qrCode, pairingCode, pollConnection, stopPoll]);
 
-  async function handleGenerateQr() {
+  const generateQr = useCallback(async () => {
     if (!idToken) return;
     setLoading(true);
     setError('');
@@ -118,6 +118,23 @@ export default function WhatsAppConnectModal({
     } finally {
       setLoading(false);
     }
+  }, [idToken]);
+
+  // BarberPro pattern: abrir modal → gerar QR automaticamente (sem pedir API key)
+  useEffect(() => {
+    if (!open || !idToken || initiallyConnected) return undefined;
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await generateQr();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, idToken, initiallyConnected, generateQr]);
+
+  async function handleGenerateQr() {
+    await generateQr();
   }
 
   async function handleRecheck() {
@@ -159,8 +176,8 @@ export default function WhatsAppConnectModal({
           </span>
           <div>
             <p className="text-sm text-zinc-300 leading-relaxed">
-              Liga o teu número via Evolution API (VPS). O QR é gerado no servidor — as chaves da
-              API não saem do backend.
+              Liga o teu número profissional. Escaneia o QR no celular — as chaves da API não saem
+              do servidor.
             </p>
             {instanceName ? (
               <p className="text-[11px] text-zinc-500 mt-1 font-mono">
@@ -177,7 +194,7 @@ export default function WhatsAppConnectModal({
               <span className="text-sm font-semibold">WhatsApp conectado</span>
             </div>
             <p className="text-xs text-emerald-200/80">
-              Sessão activa na Evolution. Podes desligar a qualquer momento.
+              Sessão activa. Podes desligar a qualquer momento.
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -206,7 +223,12 @@ export default function WhatsAppConnectModal({
           </div>
         ) : (
           <div className="space-y-4">
-            {!qrSrc ? (
+            {!qrSrc && loading ? (
+              <div className="flex flex-col items-center gap-3 py-8 text-zinc-400">
+                <Loader2 size={28} className="animate-spin text-emerald-400" />
+                <p className="text-sm">A gerar QR Code…</p>
+              </div>
+            ) : !qrSrc ? (
               <button
                 type="button"
                 disabled={loading}
@@ -223,7 +245,7 @@ export default function WhatsAppConnectModal({
             ) : (
               <div className="flex flex-col items-center gap-3">
                 <div className="rounded-xl bg-white p-3 shadow-lg">
-                  <img src={qrSrc} alt="QR WhatsApp Evolution" className="w-[220px] h-[220px]" />
+                  <img src={qrSrc} alt="QR WhatsApp" className="w-[220px] h-[220px]" />
                 </div>
                 {pairingCode ? (
                   <p className="text-sm text-zinc-300">

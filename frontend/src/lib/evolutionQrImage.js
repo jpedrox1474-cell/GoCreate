@@ -1,4 +1,4 @@
-/** Converte payload Evolution (base64 ou string QR) em src de <img>. — BarberPro */
+/** Converte payload QR WhatsApp (base64 ou string) em src de <img>. */
 const QR_API = 'https://api.qrserver.com/v1/create-qr-code';
 
 export function evolutionQrToImageSrc(code) {

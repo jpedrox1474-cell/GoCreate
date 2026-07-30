@@ -14,11 +14,13 @@ import Stripe from 'stripe';
 import { isMercadoPagoConfigured, getAccessToken as getPlatformMpToken } from './mercadopago.js';
 import { isStripeConfigured } from './stripe.js';
 import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js';
+import { oauthConfigured } from './oauth/providers.js';
 import { isMetaConfigured } from './meta.js';
 
-/** Providers que aceitam connect via API key no backend (BYO — Free ok). */
+/** Providers que aceitam connect via API key no backend (BYO — Free ok).
+ * Mercado Pago NÃO está aqui: usa MERCADOPAGO_ACCESS_TOKEN da plataforma.
+ */
 export const CONNECTABLE_PROVIDERS = new Set([
-  'mercadopago',
   'stripe',
   'paypal',
   'pagseguro',
@@ -44,7 +46,6 @@ export const CONNECTABLE_PROVIDERS = new Set([
 
 /** Campos obrigatórios por provider (além da limpeza genérica). */
 const REQUIRED_FIELDS = {
-  mercadopago: ['accessToken'],
   stripe: ['secretKey'],
   paypal: ['clientId', 'clientSecret'],
   pagseguro: ['token'],
@@ -68,14 +69,16 @@ const REQUIRED_FIELDS = {
   nfe: ['apiToken'],
 };
 
-/** Canais premium (VPS Evolution / Meta) — estado em users.integrations. */
+/** Canais premium (WhatsApp QR / Meta / YouTube / TikTok) — estado em users.integrations. */
 export const SOCIAL_CHANNEL_PROVIDERS = new Set([
   'whatsapp_evolution',
   'instagram',
   'facebook',
+  'youtube',
+  'tiktok',
 ]);
 
-/** Providers “sempre ligados” via plataforma GoCreate. */
+/** Providers “sempre ligados” via plataforma GoCreate (quando env configurado). */
 export const PLATFORM_PROVIDERS = new Set([
   'firebase_auth',
   'google_oauth',
@@ -84,6 +87,7 @@ export const PLATFORM_PROVIDERS = new Set([
   'cloudinary',
   'viacep',
   'pix',
+  'mercadopago',
 ]);
 
 function secretsRef(uid, providerId) {
@@ -289,6 +293,7 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
   const providers = {};
 
   for (const id of PLATFORM_PROVIDERS) {
+    if (id === 'mercadopago' || id === 'pix') continue;
     providers[id] = {
       id,
       status: 'connected',
@@ -297,14 +302,35 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
     };
   }
 
-  // Pix herda do MP do utilizador OU da plataforma (billing)
+  // Mercado Pago / Pix: token da plataforma (env). BYO user opcional legado se existir.
   const mpUser = integrationsMeta.mercadopago;
-  const mpConnected = Boolean(mpUser?.connected);
+  const mpUserConnected = Boolean(mpUser?.connected);
+  const mpPlatform = isMercadoPagoConfigured();
+  const mpOk = mpPlatform || mpUserConnected;
+  providers.mercadopago = {
+    id: 'mercadopago',
+    status: mpOk ? 'connected' : 'available',
+    source: mpPlatform ? 'platform' : mpUserConnected ? 'user' : 'none',
+    meta: {
+      connected: mpOk,
+      label: mpPlatform
+        ? 'Ligado (plataforma)'
+        : mpUserConnected
+          ? mpUser?.label || 'Access Token (conta)'
+          : undefined,
+      platformPowered: mpPlatform,
+    },
+  };
   providers.pix = {
     id: 'pix',
-    status: mpConnected || isMercadoPagoConfigured() ? 'connected' : 'available',
-    source: mpConnected ? 'user' : 'platform',
-    meta: { connected: mpConnected || isMercadoPagoConfigured(), viaMercadoPago: true },
+    status: mpOk ? 'connected' : 'available',
+    source: mpPlatform ? 'platform' : mpUserConnected ? 'user' : 'none',
+    meta: {
+      connected: mpOk,
+      viaMercadoPago: true,
+      label: mpPlatform ? 'Ligado (plataforma)' : undefined,
+      platformPowered: mpPlatform,
+    },
   };
 
   for (const id of CONNECTABLE_PROVIDERS) {
@@ -329,15 +355,15 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
     },
   };
 
-  // —— Canais premium (Evolution / Meta) ——
+  // —— Canais premium (WhatsApp / Meta / YouTube / TikTok) ——
   const waEvo = integrationsMeta.whatsapp_evolution;
   providers.whatsapp_evolution = {
     id: 'whatsapp_evolution',
     status: waEvo?.connected ? 'connected' : 'available',
-    source: 'evolution',
+    source: 'whatsapp',
     meta: waEvo?.connected
       ? stripTimestamps(waEvo)
-      : { evolutionConfigured: isEvolutionConfigured() },
+      : { configured: isEvolutionConfigured() },
   };
 
   const ig = integrationsMeta.instagram;
@@ -359,6 +385,25 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
       : { metaConfigured: isMetaConfigured() },
   };
 
+  const yt = integrationsMeta.youtube;
+  const tt = integrationsMeta.tiktok;
+  providers.youtube = {
+    id: 'youtube',
+    status: yt?.connected ? 'connected' : 'available',
+    source: 'oauth',
+    meta: yt?.connected
+      ? stripTimestamps(yt)
+      : { oauthConfigured: oauthConfigured('youtube') },
+  };
+  providers.tiktok = {
+    id: 'tiktok',
+    status: tt?.connected ? 'connected' : 'available',
+    source: 'oauth',
+    meta: tt?.connected
+      ? stripTimestamps(tt)
+      : { oauthConfigured: oauthConfigured('tiktok') },
+  };
+
   return {
     providers,
     platform: {
@@ -366,6 +411,8 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
       stripeBilling: isStripeConfigured(),
       evolutionApi: isEvolutionConfigured(),
       metaApp: isMetaConfigured(),
+      youtubeOAuth: oauthConfigured('youtube'),
+      tiktokOAuth: oauthConfigured('tiktok'),
     },
   };
 }
@@ -473,6 +520,87 @@ export async function clearMetaSocialConnection(uid) {
   return { success: true, connected: false };
 }
 
+/**
+ * Persiste tokens OAuth YouTube/TikTok (secrets) + meta pública.
+ */
+export async function saveSocialOAuthConnection(uid, platform, fields) {
+  if (platform !== 'youtube' && platform !== 'tiktok') {
+    const err = new Error('Plataforma OAuth inválida.');
+    err.status = 400;
+    throw err;
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  if (platform === 'youtube') {
+    await secretsRef(uid, 'youtube').set(
+      {
+        providerId: 'youtube',
+        youtubeAccessToken: fields.youtubeAccessToken || null,
+        youtubeRefreshToken: fields.youtubeRefreshToken || null,
+        youtubeTokenExpiresAt: fields.youtubeTokenExpiresAt || null,
+        youtubeChannelId: fields.youtubeChannelId || null,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    const meta = {
+      connected: true,
+      channelId: fields.youtubeChannelId || null,
+      channelTitle: fields.youtubeChannelTitle || null,
+      connectedAt: now,
+      updatedAt: now,
+    };
+    await userRef(uid).set({ integrations: { youtube: meta } }, { merge: true });
+    return {
+      success: true,
+      providerId: 'youtube',
+      displayName: fields.youtubeChannelTitle || null,
+      meta: stripTimestamps(meta),
+    };
+  }
+
+  await secretsRef(uid, 'tiktok').set(
+    {
+      providerId: 'tiktok',
+      tiktokAccessToken: fields.tiktokAccessToken || null,
+      tiktokRefreshToken: fields.tiktokRefreshToken || null,
+      tiktokOpenId: fields.tiktokOpenId || null,
+      tiktokTokenExpiresAt: fields.tiktokTokenExpiresAt || null,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
+  const meta = {
+    connected: true,
+    username: fields.tiktokUsername || null,
+    openId: fields.tiktokOpenId || null,
+    connectedAt: now,
+    updatedAt: now,
+  };
+  await userRef(uid).set({ integrations: { tiktok: meta } }, { merge: true });
+  return {
+    success: true,
+    providerId: 'tiktok',
+    displayName: fields.tiktokUsername || null,
+    meta: stripTimestamps(meta),
+  };
+}
+
+export async function clearSocialOAuthConnection(uid, platform) {
+  if (platform !== 'youtube' && platform !== 'tiktok') {
+    const err = new Error('Plataforma OAuth inválida.');
+    err.status = 400;
+    throw err;
+  }
+  await secretsRef(uid, platform).delete().catch(() => {});
+  await userRef(uid).set(
+    { integrations: { [platform]: admin.firestore.FieldValue.delete() } },
+    { merge: true }
+  );
+  return { success: true, providerId: platform, connected: false };
+}
+
 function stripTimestamps(obj) {
   if (!obj || typeof obj !== 'object') return {};
   const out = { ...obj };
@@ -491,20 +619,27 @@ export async function listConnectedProviderIds(uid) {
     .map((p) => p.id);
 }
 
+/**
+ * Preferência: token da plataforma (MERCADOPAGO_ACCESS_TOKEN) para billing +
+ * GoCreatePayments / public-create-payment. Credencial BYO do user só se a
+ * plataforma não tiver token.
+ *
+ * Hub gerado: owner liga canais sociais na conta; end-users de apps publicados
+ * podem ligar os deles via bridge estilo GoCreatePayments (sem pedir API keys).
+ */
 async function resolveMpAccessToken(uid) {
+  if (isMercadoPagoConfigured()) {
+    return { accessToken: getPlatformMpToken(), source: 'platform' };
+  }
   const creds = await getStoredCredentials(uid, 'mercadopago');
   if (creds?.accessToken) {
     return { accessToken: creds.accessToken, source: 'user' };
-  }
-  // Fallback plataforma só para testes internos — apps publicados exigem BYO
-  if (isMercadoPagoConfigured()) {
-    return { accessToken: getPlatformMpToken(), source: 'platform' };
   }
   return null;
 }
 
 /**
- * Cria Pix ou Preference com o token do owner (ou plataforma se disponível).
+ * Cria Pix ou Preference com token da plataforma (preferido) ou BYO legado.
  */
 export async function createProjectMercadoPagoPayment({
   uid,
@@ -518,15 +653,16 @@ export async function createProjectMercadoPagoPayment({
   const resolved = await resolveMpAccessToken(uid);
   if (!resolved) {
     const err = new Error(
-      'Mercado Pago não ligado. Liga o teu Access Token em Integrações.'
+      'Mercado Pago da plataforma não configurado (MERCADOPAGO_ACCESS_TOKEN).'
     );
     err.status = 503;
     err.code = 'MP_NOT_CONNECTED';
     throw err;
   }
   if (!allowPlatformFallback && resolved.source === 'platform') {
+    // Mantido por compat; chamadas públicas agora passam allowPlatformFallback=true.
     const err = new Error(
-      'Liga o teu Mercado Pago em Integrações para aceitar pagamentos reais neste projeto.'
+      'Mercado Pago requer token de utilizador neste contexto.'
     );
     err.status = 503;
     err.code = 'MP_USER_REQUIRED';

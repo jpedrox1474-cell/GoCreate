@@ -3,6 +3,7 @@ import {
   MessageCircle,
   Instagram,
   Facebook,
+  Youtube,
   Lock,
   Loader2,
   Check,
@@ -14,6 +15,10 @@ import {
   connectMeta,
   disconnectMeta,
   getMetaPublicConfig,
+  startPlatformOAuth,
+  disconnectPlatformOAuth,
+  openOAuthPopup,
+  waitForOAuthMessage,
 } from '../../lib/socialChannelsApi';
 
 const META_LOGIN_SCOPES = [
@@ -83,31 +88,55 @@ function loadFbSdk(appId) {
   return fbSdkInitPromise;
 }
 
+function TikTokIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 0 0-.79-.05A6.34 6.34 0 0 0 3.15 16.2a6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.34-6.34V8.73a8.19 8.19 0 0 0 4.76 1.52V6.84a4.84 4.84 0 0 1-1-.15z" />
+    </svg>
+  );
+}
+
 const CHANNELS = [
   {
     id: 'whatsapp_evolution',
     name: 'WhatsApp',
-    description: 'QR Code via Evolution API no teu VPS. Mensagens e sessão Baileys.',
+    description: 'Conectar conta — escaneie o QR no celular. Sem colar API key.',
     icon: MessageCircle,
     accent: 'from-emerald-600/20 to-emerald-900/10 border-emerald-500/25 text-emerald-400',
     btn: 'bg-emerald-600 hover:bg-emerald-500',
   },
   {
+    id: 'facebook',
+    name: 'Facebook',
+    description: 'Conta profissional — Página + Instagram no mesmo login Meta.',
+    icon: Facebook,
+    accent: 'from-[#1877F2]/20 to-[#1877F2]/5 border-blue-500/25 text-blue-400',
+    btn: 'bg-[#1877F2] hover:bg-[#166fe5]',
+  },
+  {
     id: 'instagram',
     name: 'Instagram',
-    description: 'Conta Professional ligada à Página — login Meta (padrão ManuTV Hub).',
+    description: 'Conta profissional via Meta Login. Sem secret key.',
     icon: Instagram,
     accent:
       'from-[#833AB4]/20 via-[#FD1D1D]/10 to-[#F77737]/10 border-pink-500/25 text-pink-400',
     btn: 'bg-gradient-to-r from-[#833AB4] via-[#FD1D1D] to-[#F77737] hover:opacity-90',
   },
   {
-    id: 'facebook',
-    name: 'Facebook',
-    description: 'Página do Facebook no mesmo login Meta do Instagram.',
-    icon: Facebook,
-    accent: 'from-[#1877F2]/20 to-[#1877F2]/5 border-blue-500/25 text-blue-400',
-    btn: 'bg-[#1877F2] hover:bg-[#166fe5]',
+    id: 'youtube',
+    name: 'YouTube',
+    description: 'Conectar conta Google — canal YouTube do marketplace.',
+    icon: Youtube,
+    accent: 'from-[#FF0000]/20 to-[#FF0000]/5 border-red-500/25 text-red-400',
+    btn: 'bg-[#FF0000] hover:bg-[#e60000]',
+  },
+  {
+    id: 'tiktok',
+    name: 'TikTok',
+    description: 'Conectar conta — OAuth TikTok para o marketplace.',
+    icon: TikTokIcon,
+    accent: 'from-zinc-100/10 to-cyan-500/10 border-zinc-500/30 text-zinc-100',
+    btn: 'bg-zinc-100 hover:bg-white text-zinc-900',
   },
 ];
 
@@ -143,7 +172,7 @@ export default function SocialChannelsSection({
     if (canUsePremium) return true;
     openPremiumPaywall?.();
     onToast?.({
-      message: 'Canais sociais usam recursos VPS — disponíveis nos planos pagos.',
+      message: 'Canais sociais disponíveis nos planos pagos.',
       type: 'error',
     });
     return false;
@@ -202,11 +231,65 @@ export default function SocialChannelsSection({
 
   async function handleMetaDisconnect() {
     if (!guardPremium()) return;
-    if (!window.confirm('Desligar Instagram e Facebook desta conta GoCreate?')) return;
+    if (!window.confirm('Desligar Instagram e Facebook desta conta?')) return;
     setBusy('meta');
     try {
       await disconnectMeta({ idToken });
-      onToast?.({ message: 'Meta desligado.', type: 'success' });
+      onToast?.({ message: 'Facebook e Instagram desligados.', type: 'success' });
+      await onRefresh?.();
+    } catch (err) {
+      onToast?.({ message: err.message || 'Falha ao desligar.', type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleOAuthConnect(platformId) {
+    if (!guardPremium()) return;
+    if (!idToken) return;
+    setBusy(platformId);
+    try {
+      const { authUrl } = await startPlatformOAuth({ idToken, platform: platformId });
+      const popup = openOAuthPopup(authUrl);
+      const result = await waitForOAuthMessage(platformId, popup);
+      try {
+        popup.close();
+      } catch {
+        /* ignore */
+      }
+      const label = platformId === 'youtube' ? 'YouTube' : 'TikTok';
+      onToast?.({
+        message: result?.displayName
+          ? `${label} conectado: ${result.displayName}`
+          : `${label} conectado.`,
+        type: 'success',
+      });
+      await onRefresh?.();
+    } catch (err) {
+      if (err?.code === 'PREMIUM_REQUIRED' || err?.status === 403) {
+        openPremiumPaywall?.();
+      }
+      if (err?.code === 'OAUTH_NOT_CONFIGURED') {
+        onToast?.({
+          message: err.details?.hint || err.message || 'OAuth ainda não configurado no servidor.',
+          type: 'error',
+        });
+      } else {
+        onToast?.({ message: err.message || `Falha ao ligar ${platformId}.`, type: 'error' });
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleOAuthDisconnect(platformId) {
+    if (!guardPremium()) return;
+    const label = platformId === 'youtube' ? 'YouTube' : 'TikTok';
+    if (!window.confirm(`Desligar ${label} desta conta?`)) return;
+    setBusy(platformId);
+    try {
+      await disconnectPlatformOAuth({ idToken, platform: platformId });
+      onToast?.({ message: `${label} desligado.`, type: 'success' });
       await onRefresh?.();
     } catch (err) {
       onToast?.({ message: err.message || 'Falha ao desligar.', type: 'error' });
@@ -223,7 +306,13 @@ export default function SocialChannelsSection({
       return;
     }
 
-    // Instagram e Facebook partilham o mesmo fluxo Meta
+    if (channel.id === 'youtube' || channel.id === 'tiktok') {
+      const connected = statusMap[channel.id]?.status === 'connected';
+      if (connected) handleOAuthDisconnect(channel.id);
+      else handleOAuthConnect(channel.id);
+      return;
+    }
+
     const igConnected = statusMap.instagram?.status === 'connected';
     const fbConnected = statusMap.facebook?.status === 'connected';
     if (igConnected || fbConnected) {
@@ -238,13 +327,13 @@ export default function SocialChannelsSection({
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-500/90 mb-1.5 flex items-center gap-1.5">
-            <Sparkles size={12} /> Premium · VPS
+            <Sparkles size={12} /> Premium
           </p>
           <h2 className="text-lg font-bold text-zinc-100 tracking-tight">
             Canais de Atendimento & Social
           </h2>
           <p className="text-xs text-zinc-500 mt-1 max-w-xl">
-            WhatsApp (Evolution API), Instagram e Facebook — ligam à tua infra VPS / Meta App.
+            WhatsApp, Facebook, Instagram, YouTube e TikTok — ligue contas profissionais ao marketplace.
             {!canUsePremium ? ' Incluído nos planos Pro e Enterprise.' : null}
           </p>
         </div>
@@ -259,32 +348,49 @@ export default function SocialChannelsSection({
         ) : null}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {CHANNELS.map((ch) => {
           const Icon = ch.icon;
           const meta = statusMap[ch.id]?.meta || {};
           const isConnected = statusMap[ch.id]?.status === 'connected';
           const isBusy =
-            busy === 'meta' && (ch.id === 'instagram' || ch.id === 'facebook');
+            (busy === 'meta' && (ch.id === 'instagram' || ch.id === 'facebook')) ||
+            busy === ch.id;
           const locked = !canUsePremium;
 
           let subtitle = '';
           if (ch.id === 'whatsapp_evolution') {
-            if (isConnected && meta.instanceName) subtitle = meta.instanceName;
-            else if (!platform.evolutionApi && canUsePremium)
-              subtitle = 'Servidor: falta EVOLUTION_API_URL';
-            else subtitle = 'Evolution · QR no celular';
+            if (isConnected && meta.instanceName) subtitle = 'Conta conectada';
+            else if (!platform.evolutionApi && canUsePremium) subtitle = 'Servidor: configurar WhatsApp';
+            else subtitle = 'QR no celular';
           } else if (ch.id === 'instagram') {
             if (isConnected && meta.username) subtitle = `@${meta.username}`;
-            else if (isConnected) subtitle = 'Conta Professional';
-            else subtitle = 'Login Meta · Business';
+            else if (isConnected) subtitle = 'Conta profissional';
+            else subtitle = 'Conta profissional';
           } else if (ch.id === 'facebook') {
             if (isConnected && meta.pageName) subtitle = meta.pageName;
-            else if (isConnected) subtitle = 'Página vinculada';
-            else if (statusMap.instagram?.status === 'connected')
-              subtitle = 'Mesmo login Meta';
-            else subtitle = 'Página + Instagram';
+            else if (isConnected) subtitle = 'Conta profissional';
+            else if (statusMap.instagram?.status === 'connected') subtitle = 'Mesmo login Meta';
+            else subtitle = 'Conta profissional';
+          } else if (ch.id === 'youtube') {
+            if (isConnected && meta.channelTitle) subtitle = meta.channelTitle;
+            else if (isConnected) subtitle = 'Canal conectado';
+            else if (!platform.youtubeOAuth && canUsePremium) subtitle = 'OAuth: configurar no servidor';
+            else subtitle = 'Conectar conta';
+          } else if (ch.id === 'tiktok') {
+            if (isConnected && meta.username) subtitle = `@${meta.username}`;
+            else if (isConnected) subtitle = 'Conta conectada';
+            else if (!platform.tiktokOAuth && canUsePremium) subtitle = 'OAuth: configurar no servidor';
+            else subtitle = 'Conectar conta';
           }
+
+          const connectedStyle =
+            isConnected &&
+            (ch.id === 'instagram' ||
+              ch.id === 'facebook' ||
+              ch.id === 'whatsapp_evolution' ||
+              ch.id === 'youtube' ||
+              ch.id === 'tiktok');
 
           return (
             <article
@@ -319,15 +425,13 @@ export default function SocialChannelsSection({
                 type="button"
                 disabled={isBusy}
                 onClick={() => handleChannelClick(ch)}
-                className={`w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50 ${
-                  isConnected && (ch.id === 'instagram' || ch.id === 'facebook')
+                className={`w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 ${
+                  connectedStyle
                     ? 'border border-emerald-500/30 text-emerald-300 bg-transparent hover:bg-emerald-500/10'
-                    : isConnected && ch.id === 'whatsapp_evolution'
-                      ? 'border border-emerald-500/30 text-emerald-300 bg-transparent hover:bg-emerald-500/10'
-                      : locked
-                        ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                        : ch.btn
-                }`}
+                    : locked
+                      ? 'bg-zinc-800 text-zinc-400 border border-zinc-700 text-white'
+                      : `${ch.btn} text-white`
+                } ${ch.id === 'tiktok' && !connectedStyle && !locked ? '!text-zinc-900' : ''}`}
               >
                 {isBusy ? (
                   <Loader2 size={13} className="animate-spin" />
@@ -348,7 +452,7 @@ export default function SocialChannelsSection({
                       ? 'Entrar com Instagram'
                       : ch.id === 'facebook'
                         ? 'Entrar com Facebook'
-                        : 'Ligar QR'}
+                        : 'Conectar'}
               </button>
             </article>
           );
