@@ -77,7 +77,7 @@ function saveHiddenDemos(set) {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { credits, plan, creditsUsedThisMonth, allowance, openPricing, lowCredits } = useCredits();
+  const { credits, plan, creditsUsedThisMonth, allowance, openPricing, lowCredits, unlimited } = useCredits();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
@@ -428,10 +428,12 @@ export default function Dashboard() {
               <h2 className="text-sm font-semibold text-zinc-100">Uso e Faturamento</h2>
               <p className="text-xs text-zinc-500">
                 Plano{' '}
-                <span className="text-zinc-300 capitalize font-medium">{plan}</span>
+                <span className="text-zinc-300 capitalize font-medium">
+                  {plan === 'enterprise_master' ? 'Owner Master' : plan}
+                </span>
                 {' · '}
                 <span className={lowCredits ? 'text-amber-400 font-medium' : 'text-zinc-400'}>
-                  {credits} créditos restantes
+                  {unlimited ? '∞ Ilimitado' : `${credits} créditos restantes`}
                 </span>
               </p>
             </div>
@@ -446,6 +448,10 @@ export default function Dashboard() {
           </button>
         </div>
         <div className="space-y-2">
+          {unlimited ? (
+            <p className="text-[11px] text-emerald-400/90">Conta Owner — créditos e paywalls liberados.</p>
+          ) : (
+            <>
           <div className="flex items-center justify-between text-[11px] text-zinc-500">
             <span>
               Usado este mês: {creditsUsedThisMonth} / {allowance}
@@ -464,6 +470,8 @@ export default function Dashboard() {
               }}
             />
           </div>
+            </>
+          )}
         </div>
       </section>
 

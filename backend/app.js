@@ -6,6 +6,8 @@ import uploadRouter from './routes/upload.js';
 import billingRouter, { stripeWebhookHandler } from './routes/billing.js';
 import githubRouter from './routes/github.js';
 import integrationsRouter from './routes/integrations.js';
+import meRouter from './routes/me.js';
+import deployRouter from './routes/deploy.js';
 
 export function createApp() {
   const app = express();
@@ -39,10 +41,14 @@ export function createApp() {
   app.use('/api/upload', uploadRouter);
   // Mercado Pago / Stripe — create-payment, stripe-checkout, webhook
   app.use('/api/billing', billingRouter);
-  // GitHub OAuth (export) + create repo / push
+  // GitHub OAuth (export) + create repo / push — premium gated
   app.use('/api/github', githubRouter);
   // BYO integrations (Mercado Pago, Stripe, Supabase, …) + project payments
   app.use('/api/integrations', integrationsRouter);
+  // Perfil: owner elevation + daily credit reset
+  app.use('/api/me', meRouter);
+  // Deploy production — premium gated (preview permanece free no cliente)
+  app.use('/api/deploy', deployRouter);
 
   app.use((err, _req, res, _next) => {
     console.error('[server] Erro não tratado:', err);

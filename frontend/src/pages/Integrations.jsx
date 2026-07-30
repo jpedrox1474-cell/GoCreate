@@ -50,6 +50,8 @@ import {
 } from '../lib/integrationsApi';
 import { connectGitHubPopup, disconnectGitHub } from '../lib/githubApi';
 import { useAuth } from '../context/AuthContext';
+import { useCredits } from '../context/CreditsContext';
+import { PREMIUM_REQUIRED_MESSAGE } from '../lib/plans';
 
 const ICONS = {
   Wallet,
@@ -100,6 +102,7 @@ function statusClass(status) {
 
 export default function Integrations() {
   const { user } = useAuth();
+  const { canUsePremium, openPremiumPaywall } = useCredits();
   const [statusMap, setStatusMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
@@ -168,6 +171,10 @@ export default function Integrations() {
     }
 
     if (item.connectType === 'oauth' && item.id === 'github') {
+      if (!canUsePremium) {
+        openPremiumPaywall();
+        return;
+      }
       setBusyId(item.id);
       try {
         const token = await user.getIdToken();
@@ -175,7 +182,12 @@ export default function Integrations() {
         setToast({ message: 'GitHub ligado.', type: 'success' });
         await refresh();
       } catch (err) {
-        setToast({ message: err.message || 'Falha ao ligar GitHub.', type: 'error' });
+        if (err?.code === 'PREMIUM_REQUIRED' || err?.status === 403) {
+          openPremiumPaywall();
+          setToast({ message: err.message || PREMIUM_REQUIRED_MESSAGE, type: 'error' });
+        } else {
+          setToast({ message: err.message || 'Falha ao ligar GitHub.', type: 'error' });
+        }
       } finally {
         setBusyId(null);
       }

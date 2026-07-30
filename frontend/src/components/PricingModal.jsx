@@ -26,7 +26,7 @@ import Toast from './Toast';
  * Stripe (optional):
  * - Pro → Checkout Session (cartão internacional) via /api/billing/stripe-checkout
  */
-export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
+export default function PricingModal({ open, onClose, currentPlan = 'free', message = null }) {
   const { user } = useAuth();
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -200,8 +200,14 @@ export default function PricingModal({ open, onClose, currentPlan = 'free' }) {
                 ? 'Escaneia o QR ou copia o código. Os créditos entram assim que o Pix for aprovado.'
                 : view === 'success'
                   ? 'Créditos adicionados à tua conta.'
-                  : 'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.'}
+                  : message ||
+                    'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.'}
             </p>
+            {view === 'plans' && message ? (
+              <p className="mt-2 text-xs text-amber-300/90 bg-amber-950/40 border border-amber-700/30 rounded-lg px-3 py-2 max-w-lg">
+                {message}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"

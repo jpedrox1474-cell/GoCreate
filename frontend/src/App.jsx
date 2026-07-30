@@ -13,6 +13,7 @@ import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Integrations from './pages/Integrations';
 import Automations from './pages/Automations';
+import Entities from './pages/Entities';
 import PublicPreview from './pages/PublicPreview';
 
 function PublicOnly({ children }) {
@@ -71,6 +72,8 @@ export default function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/integrations" element={<Integrations />} />
         <Route path="/automations" element={<Automations />} />
+        <Route path="/entities" element={<Entities />} />
+        <Route path="/database" element={<Entities />} />
       </Route>
 
       <Route

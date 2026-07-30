@@ -13,6 +13,8 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, googleProvider, githubProvider, db } from '../firebase';
+import { syncUserProfile } from '../lib/meApi';
+import { isOwnerEmail } from '../lib/plans';
 
 const AuthContext = createContext(null);
 
@@ -38,49 +40,58 @@ function translateError(code) {
 }
 
 /**
- * Cria ou atualiza users/{uid}.
- * Novos users: plan free + 50 credits. Existentes: só perfil / lastLogin
- * (créditos só via Admin / bootstrap se campo ausente).
+ * Cria ou atualiza users/{uid} no cliente (perfil).
+ * Owner elevation + reset diário: só via /api/me/ensure (Admin) — rules bloqueiam self-elevate.
  */
 export async function ensureUserDoc(firebaseUser) {
   if (!firebaseUser?.uid) return;
   try {
     const ref = doc(db, 'users', firebaseUser.uid);
     const snap = await getDoc(ref);
+    const ownerHint = isOwnerEmail(firebaseUser.email);
 
     if (!snap.exists()) {
+      // Create free bootstrap; server ensure elevates owner immediately after.
       await setDoc(ref, {
         uid: firebaseUser.uid,
         email: firebaseUser.email || null,
         displayName: firebaseUser.displayName || null,
         photoURL: firebaseUser.photoURL || null,
+        role: 'user',
         plan: INITIAL_PLAN,
         credits: INITIAL_CREDITS,
         creditsUsedThisMonth: 0,
         createdAt: serverTimestamp(),
         lastLoginAt: serverTimestamp(),
       });
-      return;
-    }
+    } else {
+      const data = snap.data() || {};
+      const patch = {
+        email: firebaseUser.email || null,
+        displayName: firebaseUser.displayName || null,
+        photoURL: firebaseUser.photoURL || null,
+        lastLoginAt: serverTimestamp(),
+      };
 
-    const data = snap.data() || {};
-    const patch = {
-      email: firebaseUser.email || null,
-      displayName: firebaseUser.displayName || null,
-      photoURL: firebaseUser.photoURL || null,
-      lastLoginAt: serverTimestamp(),
-    };
-
-    // Migração: docs antigos sem credits
-    if (typeof data.credits !== 'number') {
-      patch.plan = INITIAL_PLAN;
-      patch.credits = INITIAL_CREDITS;
-      if (typeof data.creditsUsedThisMonth !== 'number') {
-        patch.creditsUsedThisMonth = 0;
+      // Migração: docs antigos sem credits (rules permitem só free+50)
+      if (typeof data.credits !== 'number') {
+        patch.plan = INITIAL_PLAN;
+        patch.credits = INITIAL_CREDITS;
+        if (typeof data.creditsUsedThisMonth !== 'number') {
+          patch.creditsUsedThisMonth = 0;
+        }
       }
+
+      await setDoc(ref, patch, { merge: true });
     }
 
-    await setDoc(ref, patch, { merge: true });
+    // Server-side: owner role/plan + daily free reset (cannot be spoofed by client)
+    await syncUserProfile(firebaseUser);
+
+    // Hint for logs only — actual role comes from Admin write
+    if (ownerHint) {
+      console.info('[AuthContext] Owner email detected — syncing enterprise_master via API');
+    }
   } catch (err) {
     console.error('[AuthContext] Falha ao salvar doc do usuário:', err);
   }

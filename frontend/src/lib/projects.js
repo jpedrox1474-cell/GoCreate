@@ -239,7 +239,7 @@ export function getPublishUrl(projectId, env = 'production') {
  */
 export async function publishProject(
   projectId,
-  { files, name, env = 'production', ownerId, plan = 'free' } = {}
+  { files, name, env = 'production', ownerId, plan = 'free', role } = {}
 ) {
   if (!projectId) throw new Error('Projeto inválido.');
   if (!ownerId) throw new Error('Utilizador inválido.');
@@ -247,19 +247,25 @@ export async function publishProject(
     throw new Error('Não há ficheiros para publicar. Gera código no chat primeiro.');
   }
 
+  // Production must go through /api/deploy/publish (premium). Client path = preview only.
+  if (env === 'production') {
+    throw new Error('Deploy de produção requer API autenticada (plano Pro/Owner).');
+  }
+
   const pubId = publicProjectDocId(projectId, env);
   const url = getPublishUrl(projectId, env);
-  const ownerPlan = plan === 'pro' ? 'pro' : 'free';
+  const isProLike =
+    plan === 'pro' || plan === 'enterprise_master' || role === 'owner';
+  const ownerPlan = isProLike ? (plan === 'enterprise_master' ? 'enterprise_master' : 'pro') : 'free';
   const payload = {
     projectId,
     ownerId,
     name: name || 'Projeto',
-    env: env === 'preview' ? 'preview' : 'production',
+    env: 'preview',
     files,
     url,
-    plan: ownerPlan,
-    // Free plan: discreet "Feito com GoCreate" badge on public /p pages. Pro: none.
-    showBadge: ownerPlan !== 'pro',
+    plan: ownerPlan === 'enterprise_master' ? 'pro' : ownerPlan,
+    showBadge: ownerPlan === 'free',
     updatedAt: serverTimestamp(),
   };
 
@@ -267,9 +273,9 @@ export async function publishProject(
 
   try {
     await updateDoc(doc(db, 'projects', projectId), {
-      status: env === 'preview' ? 'preview' : 'live',
+      status: 'preview',
       publishedUrl: url,
-      publishedEnv: payload.env,
+      publishedEnv: 'preview',
       publishedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -277,7 +283,7 @@ export async function publishProject(
     console.warn('[projects] atualizar status do projeto falhou:', err);
   }
 
-  return { url, pubId, env: payload.env };
+  return { url, pubId, env: 'preview' };
 }
 
 export async function getPublishedProject(projectId, env = 'production') {

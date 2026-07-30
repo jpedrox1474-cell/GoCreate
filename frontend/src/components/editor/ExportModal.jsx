@@ -3,12 +3,14 @@ import { Download, Github, FolderArchive, Loader2, Check, ExternalLink, Unlink }
 import ModalShell from './ModalShell';
 import { downloadFilesAsZip } from '../../lib/zipDownload';
 import { useAuth } from '../../context/AuthContext';
+import { useCredits } from '../../context/CreditsContext';
 import {
   getGitHubStatus,
   connectGitHubPopup,
   disconnectGitHub,
   exportToGitHub,
 } from '../../lib/githubApi';
+import { PREMIUM_REQUIRED_MESSAGE } from '../../lib/plans';
 
 function slugifyRepo(name) {
   return (name || 'gocreate-project')
@@ -20,6 +22,7 @@ function slugifyRepo(name) {
 
 export default function ExportModal({ open, onClose, files, projectName, onToast }) {
   const { user } = useAuth();
+  const { canUsePremium, openPremiumPaywall } = useCredits();
   const [repoName, setRepoName] = useState('');
   const [branch, setBranch] = useState('main');
   const [isPrivate, setIsPrivate] = useState(true);
@@ -74,6 +77,11 @@ export default function ExportModal({ open, onClose, files, projectName, onToast
 
   async function handleConnect() {
     if (!user || connecting) return;
+    if (!canUsePremium) {
+      openPremiumPaywall();
+      onClose?.();
+      return;
+    }
     setConnecting(true);
     try {
       const token = await user.getIdToken();
@@ -116,6 +124,11 @@ export default function ExportModal({ open, onClose, files, projectName, onToast
   async function handleGithubPush(e) {
     e.preventDefault();
     if (!user || !repoName.trim() || !fileCount || pushing) return;
+    if (!canUsePremium) {
+      openPremiumPaywall();
+      onClose?.();
+      return;
+    }
 
     setPushing(true);
     setPushedUrl(null);
@@ -152,7 +165,11 @@ export default function ExportModal({ open, onClose, files, projectName, onToast
         type: 'success',
       });
     } catch (err) {
-      if (err?.code === 'GITHUB_NOT_CONNECTED') {
+      if (err?.code === 'PREMIUM_REQUIRED' || err?.status === 403) {
+        onToast?.({ message: err?.message || PREMIUM_REQUIRED_MESSAGE, type: 'error' });
+        openPremiumPaywall();
+        onClose?.();
+      } else if (err?.code === 'GITHUB_NOT_CONNECTED') {
         onToast?.({ message: 'Liga o GitHub e tenta outra vez.', type: 'error' });
       } else if (err?.code === 'GITHUB_NOT_CONFIGURED' || err?.status === 503) {
         onToast?.({

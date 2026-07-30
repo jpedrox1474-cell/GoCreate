@@ -8,6 +8,7 @@
 
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
+import { requirePremium } from '../middleware/premium.js';
 import {
   isGitHubOAuthConfigured,
   buildAuthorizeUrl,
@@ -85,7 +86,7 @@ router.get('/status', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/oauth/start', requireAuth, async (req, res) => {
+router.get('/oauth/start', requireAuth, requirePremium, async (req, res) => {
   try {
     if (!isGitHubOAuthConfigured()) {
       return res.status(503).json({
@@ -160,7 +161,7 @@ router.post('/disconnect', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/export', requireAuth, async (req, res) => {
+router.post('/export', requireAuth, requirePremium, async (req, res) => {
   try {
     if (!isGitHubOAuthConfigured()) {
       return res.status(503).json({

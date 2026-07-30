@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Rocket, Loader2, CheckCircle2, ExternalLink, Globe, Copy, Check } from 'lucide-react';
+import { Rocket, Loader2, CheckCircle2, ExternalLink, Globe, Copy, Check, Lock } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { publishProject, getPublishUrl } from '../../lib/projects';
+import { publishViaApi } from '../../lib/deployApi';
 import { getUserSettings, recordDeployNotificationStub } from '../../lib/userSettings';
+import { useAuth } from '../../context/AuthContext';
+import { useCredits } from '../../context/CreditsContext';
+import { PREMIUM_REQUIRED_MESSAGE } from '../../lib/plans';
 
 const STEPS = ['A preparar build…', 'A guardar snapshot…', 'A publicar…', 'Live!'];
 
@@ -16,12 +20,16 @@ export default function DeployModal({
   ownerPlan = 'free',
   onToast,
 }) {
+  const { user } = useAuth();
+  const { canUsePremium, openPremiumPaywall, plan, role } = useCredits();
   const [env, setEnv] = useState('production');
   const [phase, setPhase] = useState('idle'); // idle | deploying | done | error
   const [stepIdx, setStepIdx] = useState(0);
   const [deployUrl, setDeployUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [copied, setCopied] = useState(false);
+
+  const effectivePlan = plan || ownerPlan;
 
   useEffect(() => {
     if (!open) {
@@ -60,17 +68,37 @@ export default function DeployModal({
       return;
     }
 
+    // Production = premium; preview (Sandpack URL) stays free
+    if (env === 'production' && !canUsePremium) {
+      openPremiumPaywall();
+      onClose?.();
+      return;
+    }
+
     setPhase('deploying');
     setStepIdx(0);
 
     try {
-      const result = await publishProject(projectId, {
-        files,
-        name: projectName,
-        env,
-        ownerId,
-        plan: ownerPlan,
-      });
+      let result;
+      if (env === 'production') {
+        const idToken = await user.getIdToken();
+        result = await publishViaApi({
+          idToken,
+          projectId,
+          files,
+          name: projectName,
+          env: 'production',
+        });
+      } else {
+        result = await publishProject(projectId, {
+          files,
+          name: projectName,
+          env: 'preview',
+          ownerId,
+          plan: effectivePlan,
+          role,
+        });
+      }
       setStepIdx(STEPS.length - 1);
       setDeployUrl(result.url || getPublishUrl(projectId, env));
       setPhase('done');
@@ -88,6 +116,12 @@ export default function DeployModal({
       }
     } catch (err) {
       console.error('[DeployModal]', err);
+      if (err?.code === 'PREMIUM_REQUIRED' || err?.status === 403) {
+        openPremiumPaywall();
+        onClose?.();
+        onToast?.({ message: err?.message || PREMIUM_REQUIRED_MESSAGE, type: 'error' });
+        return;
+      }
       setPhase('error');
       setErrorMsg(err?.message || 'Falha ao publicar. Tenta novamente.');
       onToast?.({ message: 'Deploy falhou.', type: 'error' });
@@ -110,8 +144,7 @@ export default function DeployModal({
     <ModalShell open={open} onClose={onClose} title="Deploy">
       <div className="space-y-4">
         <p className="text-xs text-zinc-500 leading-relaxed">
-          Publica o preview num URL partilhável em gocreate.web.app — qualquer pessoa pode abrir sem
-          login.
+          Preview é gratuito. Deploy de produção (URL live sem badge Free) requer plano Pro ou Owner.
         </p>
 
         <div className="space-y-2">
@@ -123,12 +156,13 @@ export default function DeployModal({
                 type="button"
                 disabled={phase === 'deploying'}
                 onClick={() => setEnv(e)}
-                className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-all capitalize ${
+                className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-all capitalize inline-flex items-center justify-center gap-1.5 ${
                   env === e
                     ? 'bg-blue-600/15 border-blue-500/40 text-blue-400'
                     : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                 }`}
               >
+                {e === 'production' && !canUsePremium ? <Lock size={12} /> : null}
                 {e}
               </button>
             ))}
@@ -138,6 +172,11 @@ export default function DeployModal({
               ? getPublishUrl(projectId, env).replace(/^https?:\/\//, '')
               : 'gocreate.web.app/p/…'}
           </p>
+          {env === 'production' && !canUsePremium ? (
+            <p className="text-[11px] text-amber-400/90 leading-relaxed">
+              Produção é Premium — upgrade para publicar sem limites de plano Free.
+            </p>
+          ) : null}
         </div>
 
         {phase === 'idle' && (
@@ -146,8 +185,8 @@ export default function DeployModal({
             onClick={startDeploy}
             className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-md shadow-blue-900/20 transition-all"
           >
-            <Rocket size={16} />
-            Iniciar deploy
+            {env === 'production' && !canUsePremium ? <Lock size={16} /> : <Rocket size={16} />}
+            {env === 'production' && !canUsePremium ? 'Desbloquear produção' : 'Iniciar deploy'}
           </button>
         )}
 

@@ -9,7 +9,19 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Perfil do utilizador — leitura própria; créditos/plano só mudam via Admin SDK
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isPremiumUser() {
+      return isSignedIn()
+        && (
+          userDoc().role == 'owner'
+          || userDoc().plan in ['pro', 'enterprise_master']
+        );
+    }
+
+    // Perfil do utilizador — leitura própria; créditos/plano/role só via Admin SDK
     // (exceto bootstrap inicial: doc sem credits → 50 free).
     // Token GitHub NUNCA neste doc — só em users/{uid}/secrets/* (Admin).
     match /users/{userId} {
@@ -19,11 +31,12 @@ service cloud.firestore {
         && request.resource.data.uid == userId
         && request.resource.data.plan == 'free'
         && request.resource.data.credits == 50
+        && (!('role' in request.resource.data) || request.resource.data.role == 'user')
         && !('secrets' in request.resource.data);
 
       allow update: if isOwner(userId)
         && !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['github', 'integrations'])
+            .hasAny(['github', 'integrations', 'role', 'lastCreditReset'])
         && (
           // Atualização de perfil: credits e plan imutáveis no cliente
           !request.resource.data.diff(resource.data).affectedKeys()
@@ -33,9 +46,9 @@ service cloud.firestore {
             !('credits' in resource.data)
             && request.resource.data.credits == 50
             && request.resource.data.plan == 'free'
+            && (!('role' in request.resource.data) || request.resource.data.role == 'user')
           )
         );
-
       allow delete: if false;
 
       // Segredos (ex.: accessToken GitHub) — só Admin SDK
@@ -45,8 +58,6 @@ service cloud.firestore {
     }
 
     // Compras / packs — utilizador lê as suas; writes de conclusão via Admin/webhooks
-    // (Mercado Pago POST /api/billing/webhook). Cliente pode criar pending (legado);
-    // create-payment cria via Admin SDK.
     match /transactions/{txId} {
       allow read: if isSignedIn()
         && resource.data.userId == request.auth.uid;
@@ -77,7 +88,6 @@ service cloud.firestore {
         allow read, write: if isProjectOwner();
       }
 
-      // Background AI agents (Bug Hunter, Security Scan, Docs, Tests)
       match /automations/{automationId} {
         allow read, write: if isProjectOwner();
       }
@@ -85,10 +95,20 @@ service cloud.firestore {
       match /automationRuns/{runId} {
         allow read, write: if isProjectOwner();
       }
+
+      // Schema / mock DB entities (Base44-style)
+      match /entities/{entityId} {
+        allow read, write: if isProjectOwner();
+
+        match /rows/{rowId} {
+          allow read, write: if isProjectOwner();
+        }
+      }
     }
 
     // Publicações partilháveis — leitura aberta (só snapshot de ficheiros, sem chat).
-    // Escrita apenas pelo ownerId declarado no documento.
+    // Preview: qualquer owner do projeto.
+    // Production: só Pro / Owner (role/plan no user doc Admin); writes Admin via /api/deploy também.
     match /publicProjects/{pubId} {
       allow read: if true;
 
@@ -99,14 +119,22 @@ service cloud.firestore {
         ])
         && request.resource.data.env in ['preview', 'production']
         && (!('plan' in request.resource.data)
-          || request.resource.data.plan in ['free', 'pro'])
+          || request.resource.data.plan in ['free', 'pro', 'enterprise_master'])
         && (!('showBadge' in request.resource.data)
-          || request.resource.data.showBadge is bool);
+          || request.resource.data.showBadge is bool)
+        && (
+          request.resource.data.env == 'preview'
+          || isPremiumUser()
+        );
 
       allow update: if isSignedIn()
         && resource.data.ownerId == request.auth.uid
         && request.resource.data.ownerId == resource.data.ownerId
-        && request.resource.data.env in ['preview', 'production'];
+        && request.resource.data.env in ['preview', 'production']
+        && (
+          request.resource.data.env == 'preview'
+          || isPremiumUser()
+        );
 
       allow delete: if isSignedIn()
         && resource.data.ownerId == request.auth.uid;

@@ -12,6 +12,7 @@ import {
   Loader2,
   Plug,
   Bot,
+  Database,
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
@@ -30,6 +31,7 @@ import { PENDING_PROMPT_KEY } from '../lib/mockData';
 
 const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
+  { to: '/entities', label: 'Banco de Dados', icon: Database },
   { to: '/automations', label: 'Automations', icon: Bot },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },

@@ -7,7 +7,7 @@ import { getProfileExtras, saveProfileExtras } from '../lib/userSettings';
 
 export default function Profile() {
   const { user, updateUserProfile } = useAuth();
-  const { credits, plan, openPricing, lowCredits } = useCredits();
+  const { credits, plan, openPricing, lowCredits, unlimited } = useCredits();
   const [name, setName] = useState(user?.displayName || '');
   const [email] = useState(user?.email || '');
   const [bio, setBio] = useState('');
@@ -59,10 +59,12 @@ export default function Profile() {
             <Crown size={18} className="text-blue-400" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-zinc-100 capitalize">Plano {plan}</p>
+            <p className="text-sm font-semibold text-zinc-100 capitalize">
+              Plano {plan === 'enterprise_master' ? 'Owner Master' : plan}
+            </p>
             <p className={`text-xs ${lowCredits ? 'text-amber-400' : 'text-zinc-500'}`}>
               <Zap size={11} className="inline mr-0.5 -mt-0.5" />
-              {credits} créditos disponíveis
+              {unlimited ? '∞ Ilimitado' : `${credits} créditos disponíveis`}
             </p>
           </div>
         </div>

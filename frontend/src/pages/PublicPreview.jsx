@@ -11,7 +11,7 @@ function shouldShowGoCreateBadge(publication) {
   if (!publication) return false;
   if (typeof publication.showBadge === 'boolean') return publication.showBadge;
   const plan = publication.plan || 'free';
-  return plan !== 'pro';
+  return plan !== 'pro' && plan !== 'enterprise_master';
 }
 
 export default function PublicPreview() {

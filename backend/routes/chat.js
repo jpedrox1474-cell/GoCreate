@@ -17,6 +17,7 @@ import { db } from '../config/firebaseAdmin.js';
 import { GOCREATE_SYSTEM_PROMPT, buildIntegrationsPromptAddon } from '../prompts/systemPrompt.js';
 import { streamGeminiChat, getGeminiApiKey } from '../services/gemini.js';
 import { listConnectedProviderIds } from '../services/integrations.js';
+import { parseEntitiesFromAiText, upsertProjectEntities } from '../services/entities.js';
 
 const router = Router();
 
@@ -68,10 +69,24 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
     }
 
     // Debita 1 crédito imediatamente após geração bem-sucedida (Admin SDK)
+    // Owner / enterprise_master: debitCredit é no-op
+    let creditsRemaining = req.userUnlimited ? null : Math.max(0, (req.userCredits || 1) - 1);
     try {
-      await debitCredit(req.user.uid, 1);
+      if (!req.userUnlimited) {
+        await debitCredit(req.user.uid, 1);
+      }
     } catch (debitErr) {
       console.error('[api/chat] Falha ao debitar crédito:', debitErr);
+    }
+
+    // Persist entity schema if AI emitted <gocreate_entities>
+    try {
+      const entities = parseEntitiesFromAiText(fullResponse);
+      if (entities.length) {
+        await upsertProjectEntities(projectId, entities);
+      }
+    } catch (entErr) {
+      console.warn('[api/chat] entities upsert:', entErr?.message);
     }
 
     // Salva o turno completo (pergunta do usuário + resposta da IA) no Firestore
@@ -110,7 +125,8 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
       `data: ${JSON.stringify({
         type: 'done',
         model: result?.model || null,
-        creditsRemaining: Math.max(0, (req.userCredits || 1) - 1),
+        creditsRemaining,
+        unlimited: Boolean(req.userUnlimited),
       })}\n\n`
     );
     res.end();
