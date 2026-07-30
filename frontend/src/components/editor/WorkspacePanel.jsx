@@ -13,6 +13,7 @@ export default function WorkspacePanel({
   setActiveFile,
   isGenerating,
   onAskFix,
+  projectId = null,
 }) {
   return (
     <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 h-full overflow-hidden">
@@ -79,7 +80,12 @@ export default function WorkspacePanel({
                 : 'w-full'
             }`}
           >
-            <PreviewPane files={files} isGenerating={isGenerating} onAskFix={onAskFix} />
+            <PreviewPane
+              files={files}
+              isGenerating={isGenerating}
+              onAskFix={onAskFix}
+              projectId={projectId}
+            />
           </div>
         ) : (
           <div className="w-full h-full min-h-0 overflow-y-auto custom-scrollbar">

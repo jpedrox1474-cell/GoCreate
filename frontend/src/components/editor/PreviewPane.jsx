@@ -110,7 +110,13 @@ function PreviewInner({ isGenerating, onAskFix, publicMode }) {
   );
 }
 
-export default function PreviewPane({ files, isGenerating, onAskFix, publicMode = false }) {
+export default function PreviewPane({
+  files,
+  isGenerating,
+  onAskFix,
+  publicMode = false,
+  projectId = null,
+}) {
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const hasFiles = Boolean(sandpackFiles && Object.keys(sandpackFiles).length);
 
@@ -122,11 +128,22 @@ export default function PreviewPane({ files, isGenerating, onAskFix, publicMode 
   const sandpackKey = useMemo(() => {
     if (!sandpackFiles) return 'empty';
     const depsKey = Object.keys(dependencies).sort().join(',');
-    return `${depsKey}::${Object.entries(sandpackFiles)
+    return `${depsKey}::${projectId || ''}::${Object.entries(sandpackFiles)
       .map(([path, entry]) => `${path}:${(entry?.code || '').length}:${(entry?.code || '').slice(0, 48)}`)
       .sort()
       .join('|')}`;
-  }, [sandpackFiles, dependencies]);
+  }, [sandpackFiles, dependencies, projectId]);
+
+  const apiBase =
+    typeof window !== 'undefined'
+      ? window.location.origin
+      : 'https://gocreate.web.app';
+
+  const paymentsBootstrap = useMemo(() => {
+    const pid = JSON.stringify(projectId || '');
+    const base = JSON.stringify(apiBase);
+    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};`;
+  }, [projectId, apiBase]);
 
   const shellClass = publicMode
     ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'
@@ -168,8 +185,9 @@ export default function PreviewPane({ files, isGenerating, onAskFix, publicMode 
                 recompileMode: 'delayed',
                 recompileDelay: 300,
                 externalResources: [
-                  // Tailwind CDN — system prompt styles with utility classes
                   'https://cdn.tailwindcss.com',
+                  paymentsBootstrap,
+                  `${apiBase}/gocreate-payments.js`,
                 ],
               }}
               style={{ height: '100%' }}

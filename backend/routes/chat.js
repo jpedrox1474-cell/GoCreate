@@ -14,8 +14,9 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { creditCheck, debitCredit } from '../middleware/credits.js';
 import { db } from '../config/firebaseAdmin.js';
-import { GOCREATE_SYSTEM_PROMPT } from '../prompts/systemPrompt.js';
+import { GOCREATE_SYSTEM_PROMPT, buildIntegrationsPromptAddon } from '../prompts/systemPrompt.js';
 import { streamGeminiChat, getGeminiApiKey } from '../services/gemini.js';
+import { listConnectedProviderIds } from '../services/integrations.js';
 
 const router = Router();
 
@@ -43,8 +44,16 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
   let fullResponse = '';
 
   try {
+    let integrationsAddon = '';
+    try {
+      const connected = await listConnectedProviderIds(req.user.uid);
+      integrationsAddon = buildIntegrationsPromptAddon(connected);
+    } catch (intErr) {
+      console.warn('[api/chat] integrations addon:', intErr?.message);
+    }
+
     const result = await streamGeminiChat({
-      systemPrompt: GOCREATE_SYSTEM_PROMPT,
+      systemPrompt: GOCREATE_SYSTEM_PROMPT + integrationsAddon,
       messages,
       attachmentUrl,
       onChunk: (chunk) => {

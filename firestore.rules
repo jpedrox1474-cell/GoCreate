@@ -23,7 +23,7 @@ service cloud.firestore {
 
       allow update: if isOwner(userId)
         && !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['github'])
+            .hasAny(['github', 'integrations'])
         && (
           // Atualização de perfil: credits e plan imutáveis no cliente
           !request.resource.data.diff(resource.data).affectedKeys()

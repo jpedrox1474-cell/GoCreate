@@ -23,10 +23,12 @@ const FILES = [
   'routes/upload.js',
   'routes/billing.js',
   'routes/github.js',
+  'routes/integrations.js',
   'services/gemini.js',
   'services/mercadopago.js',
   'services/stripe.js',
   'services/github.js',
+  'services/integrations.js',
 ];
 
 function ensureDir(filePath) {

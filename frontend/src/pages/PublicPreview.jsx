@@ -84,7 +84,12 @@ export default function PublicPreview() {
 
   return (
     <div className="h-[100dvh] w-full overflow-hidden bg-zinc-950 relative">
-      <PreviewPane files={publication.files} isGenerating={false} publicMode />
+      <PreviewPane
+        files={publication.files}
+        isGenerating={false}
+        publicMode
+        projectId={projectId}
+      />
 
       {showBadge && (
         <a

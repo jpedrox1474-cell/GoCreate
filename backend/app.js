@@ -5,6 +5,7 @@ import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
 import billingRouter, { stripeWebhookHandler } from './routes/billing.js';
 import githubRouter from './routes/github.js';
+import integrationsRouter from './routes/integrations.js';
 
 export function createApp() {
   const app = express();
@@ -40,6 +41,8 @@ export function createApp() {
   app.use('/api/billing', billingRouter);
   // GitHub OAuth (export) + create repo / push
   app.use('/api/github', githubRouter);
+  // BYO integrations (Mercado Pago, Stripe, Supabase, …) + project payments
+  app.use('/api/integrations', integrationsRouter);
 
   app.use((err, _req, res, _next) => {
     console.error('[server] Erro não tratado:', err);

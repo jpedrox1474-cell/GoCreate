@@ -34,6 +34,7 @@ import ExportModal from '../components/editor/ExportModal';
 import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
 import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
+import IntegrationsBanner from '../components/editor/IntegrationsBanner';
 import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, duplicateProject } from '../lib/projects';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { uploadFile } from '../lib/uploadApi';
@@ -59,7 +60,7 @@ const MOCK_IDS = new Set(['landing-saas', 'dashboard-analytics', 'checkout-pix']
 const QUICK_ACTIONS = [
   { label: 'Criar Landing Page', prompt: 'Cria uma landing page moderna para um SaaS de produtividade, com hero, features, pricing e CTA.', icon: LayoutTemplate },
   { label: 'Criar Dashboard', prompt: 'Cria um dashboard analytics com KPIs, gráficos e tabela de dados recentes.', icon: BarChart3 },
-  { label: 'Criar Checkout', prompt: 'Cria um fluxo de checkout com Pix QR Code e formulário de cartão.', icon: CreditCard },
+  { label: 'Criar Checkout', prompt: 'Cria um fluxo de checkout com Pix QR Code e formulário de cartão. Usa window.GoCreatePayments.createPix e createCheckout para pagamentos reais via Mercado Pago.', icon: CreditCard },
   { label: 'Criar App UI', prompt: 'Cria um ecrã mobile de app com navegação inferior e lista de cards.', icon: Smartphone },
 ];
 
@@ -818,6 +819,8 @@ export default function Editor() {
             </button>
           </div>
 
+          <IntegrationsBanner user={user} projectId={firestoreId} files={generatedFiles} />
+
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-5 custom-scrollbar bg-zinc-950">
             {messages.map((msg) => (
               <div
@@ -1110,6 +1113,7 @@ export default function Editor() {
           setActiveFile={setActiveFile}
           isGenerating={isGenerating}
           onAskFix={handleAskFix}
+          projectId={firestoreId}
         />
       </main>
 
