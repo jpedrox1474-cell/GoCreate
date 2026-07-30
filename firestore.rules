@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Perfil do utilizador — leitura própria; créditos/plano só mudam via Admin SDK
+    // (exceto bootstrap inicial: doc sem credits → 50 free).
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.plan == 'free'
+        && request.resource.data.credits == 50;
+
+      allow update: if isOwner(userId)
+        && (
+          // Atualização de perfil: credits e plan imutáveis no cliente
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['credits', 'plan'])
+          // Migração: doc antigo sem credits → free + 50
+          || (
+            !('credits' in resource.data)
+            && request.resource.data.credits == 50
+            && request.resource.data.plan == 'free'
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // Compras / packs — utilizador lê as suas; writes de conclusão via Admin/webhooks.
+    // Cliente pode criar apenas docs pending (checkout placeholder).
+    match /transactions/{txId} {
+      allow read: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasAll([
+          'userId', 'amount', 'credits', 'type', 'status', 'createdAt'
+        ]);
+
+      allow update, delete: if false;
+    }
+
+    match /projects/{projectId} {
+      allow read, write: if isSignedIn()
+        && request.auth.uid == resource.data.ownerId;
+      allow create: if isSignedIn()
+        && request.auth.uid == request.resource.data.ownerId;
+
+      match /messages/{messageId} {
+        allow read, write: if isSignedIn()
+          && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId
+            == request.auth.uid;
+      }
+    }
+
+    // Publicações partilháveis — leitura aberta (só snapshot de ficheiros, sem chat).
+    // Escrita apenas pelo ownerId declarado no documento.
+    match /publicProjects/{pubId} {
+      allow read: if true;
+
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'projectId', 'ownerId', 'name', 'env', 'files', 'url', 'updatedAt'
+        ])
+        && request.resource.data.env in ['preview', 'production'];
+
+      allow update: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.env in ['preview', 'production'];
+
+      allow delete: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+    }
+  }
+}

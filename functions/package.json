@@ -1,0 +1,24 @@
+{
+  "name": "gocreate-functions",
+  "private": true,
+  "description": "GoCreate Cloud Functions — Gemini chat API",
+  "engines": {
+    "node": "22"
+  },
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "sync": "node scripts/sync-backend.mjs",
+    "predeploy": "npm run sync",
+    "deploy": "firebase deploy --only functions:gocreateApi --project vexo-ef6e2"
+  },
+  "dependencies": {
+    "cloudinary": "^2.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.3.1",
+    "firebase-functions": "^6.3.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
