@@ -129,12 +129,12 @@ export default function PreviewPane({ files, isGenerating, onAskFix, publicMode 
   }, [sandpackFiles, dependencies]);
 
   const shellClass = publicMode
-    ? 'w-full h-full overflow-hidden bg-zinc-950 relative flex flex-col'
-    : 'w-full h-full rounded-xl border border-zinc-800/80 overflow-hidden bg-zinc-950 relative shadow-2xl flex flex-col';
+    ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'
+    : 'w-full h-full min-h-0 rounded-xl border border-zinc-800 overflow-hidden bg-zinc-950 relative shadow-2xl shadow-black/40 flex flex-col';
 
   return (
     <div className={shellClass}>
-      <div className="flex-1 min-h-0 [&_.sp-wrapper]:h-full [&_.sp-layout]:h-full [&_.sp-preview-container]:h-full [&_.sp-stack]:h-full [&_.sp-preview]:h-full">
+      <div className="flex-1 min-h-0 bg-zinc-950 [&_.sp-wrapper]:h-full [&_.sp-wrapper]:!bg-zinc-950 [&_.sp-layout]:h-full [&_.sp-layout]:!bg-zinc-950 [&_.sp-layout]:!border-zinc-800 [&_.sp-preview-container]:h-full [&_.sp-preview-container]:!bg-zinc-950 [&_.sp-stack]:h-full [&_.sp-preview]:h-full [&_.sp-preview]:!bg-zinc-950">
         {!hasFiles ? (
           <div className="h-full flex flex-col items-center justify-center gap-2 bg-zinc-900/40 px-6 text-center">
             {isGenerating ? (

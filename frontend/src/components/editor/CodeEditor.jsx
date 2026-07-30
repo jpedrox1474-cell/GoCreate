@@ -1,5 +1,29 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { FileCode, Folder, FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
+import { getUserSettings } from '../../lib/userSettings';
+
+const FONT_SIZE_PX = { sm: 12, md: 14, lg: 16 };
+
+const CODE_THEME_STYLES = {
+  dark: {
+    shell: 'bg-[#1e1e1e] border-zinc-800',
+    aside: 'bg-[#252526] border-[#3c3c3c]',
+    codeBg: 'bg-[#1e1e1e]',
+    text: 'text-[#d4d4d4]',
+  },
+  midnight: {
+    shell: 'bg-[#0b1220] border-blue-950/60',
+    aside: 'bg-[#0f172a] border-slate-800',
+    codeBg: 'bg-[#0b1220]',
+    text: 'text-slate-200',
+  },
+  slate: {
+    shell: 'bg-[#1c1f26] border-zinc-700/80',
+    aside: 'bg-[#22262f] border-zinc-700',
+    codeBg: 'bg-[#1c1f26]',
+    text: 'text-zinc-200',
+  },
+};
 
 function buildTree(paths) {
   const root = { name: '', pathKey: '', children: {}, files: [] };
@@ -100,6 +124,20 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
   const code = (activeFile && files?.[activeFile]) || '';
   const lines = code ? code.split('\n') : [''];
   const tree = useMemo(() => buildTree(fileNames), [fileNames]);
+  const [prefs, setPrefs] = useState(() => getUserSettings());
+
+  useEffect(() => {
+    const sync = () => setPrefs(getUserSettings());
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    return () => {
+      window.removeEventListener('storage', sync);
+      window.removeEventListener('focus', sync);
+    };
+  }, []);
+
+  const fontSize = FONT_SIZE_PX[prefs.editorFontSize] || FONT_SIZE_PX.md;
+  const theme = CODE_THEME_STYLES[prefs.codeTheme] || CODE_THEME_STYLES.dark;
 
   const allFolderKeys = useMemo(() => {
     const keys = new Set(['__root__']);
@@ -135,7 +173,7 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
 
   if (!fileNames.length) {
     return (
-      <div className="w-full h-full bg-[#1e1e1e] rounded-xl border border-zinc-800 shadow-2xl flex flex-col items-center justify-center gap-2 px-6 text-center">
+      <div className={`w-full h-full rounded-xl border shadow-2xl flex flex-col items-center justify-center gap-2 px-6 text-center ${theme.shell}`}>
         <FileCode size={28} className="text-zinc-600" />
         <p className="text-sm text-zinc-400">Nenhum código gerado ainda</p>
         <p className="text-xs text-zinc-600 max-w-sm">
@@ -146,9 +184,9 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
   }
 
   return (
-    <div className="w-full h-full bg-[#1e1e1e] rounded-xl border border-zinc-800 shadow-2xl overflow-hidden flex animate-in">
-      <aside className="w-52 shrink-0 border-r border-[#3c3c3c] bg-[#252526] overflow-y-auto custom-scrollbar">
-        <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-zinc-500 font-semibold border-b border-[#3c3c3c] flex items-center justify-between">
+    <div className={`w-full h-full rounded-xl border shadow-2xl overflow-hidden flex animate-in ${theme.shell}`}>
+      <aside className={`w-52 shrink-0 border-r overflow-y-auto custom-scrollbar ${theme.aside}`}>
+        <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-zinc-500 font-semibold border-b border-inherit flex items-center justify-between">
           <span>Explorer</span>
           <span className="normal-case tracking-normal text-zinc-600 font-normal">
             {fileNames.length} ficheiro{fileNames.length === 1 ? '' : 's'}
@@ -166,23 +204,28 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
         </div>
       </aside>
 
-      <div className="flex-1 min-w-0 flex flex-col">
-        <div className="bg-[#252526] border-b border-[#3c3c3c] px-4 py-2 text-xs font-mono text-[#cccccc]/80 truncate">
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        <div className={`border-b border-inherit px-4 py-2 text-xs font-mono text-zinc-400 truncate ${theme.aside}`}>
           {activeFile || '—'}
         </div>
-        <div className="flex-1 p-4 overflow-auto custom-scrollbar font-mono text-sm leading-relaxed bg-[#1e1e1e]">
+        <div
+          className={`flex-1 min-h-0 p-4 overflow-auto custom-scrollbar font-mono leading-relaxed ${theme.codeBg} ${theme.text}`}
+          style={{ fontSize }}
+        >
           <div className="flex min-w-max">
-            <div className="text-[#858585] text-right pr-6 select-none opacity-50 flex flex-col items-end sticky left-0 bg-[#1e1e1e]">
+            <div
+              className={`text-[#858585] text-right pr-6 select-none opacity-50 flex flex-col items-end sticky left-0 ${theme.codeBg}`}
+            >
               {lines.map((_, i) => (
                 <div key={i} className="h-5 leading-5">
                   {i + 1}
                 </div>
               ))}
             </div>
-            <pre className="text-[#d4d4d4] flex-1">
+            <pre className="flex-1">
               <code>
                 {lines.map((line, i) => (
-                  <div key={i} className="h-5 leading-5 whitespace-pre hover:bg-[#2a2d2e]/50 px-1">
+                  <div key={i} className="h-5 leading-5 whitespace-pre hover:bg-white/5 px-1">
                     {highlightLine(line, activeFile) || ' '}
                   </div>
                 ))}

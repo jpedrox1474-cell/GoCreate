@@ -681,7 +681,7 @@ export default function Editor() {
   }
 
   return (
-    <div className="gc-app-shell flex flex-col h-screen w-full bg-zinc-950 text-zinc-300 font-sans selection:bg-indigo-500/30">
+    <div className="gc-app-shell flex flex-col h-screen max-h-screen w-full overflow-hidden bg-zinc-950 text-zinc-300 font-sans selection:bg-indigo-500/30">
       <header className="flex items-center justify-between px-3 sm:px-4 h-14 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md z-10 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
@@ -783,8 +783,8 @@ export default function Editor() {
         </div>
       </header>
 
-      <main className="flex flex-1 overflow-hidden relative">
-        <div className="hidden lg:flex h-full">
+      <main className="flex flex-1 min-h-0 overflow-hidden relative">
+        <div className="hidden lg:flex h-full min-h-0 shrink-0">
           <HistoryDrawer
             open={historyOpen}
             onToggle={() => setHistoryOpen((v) => !v)}
@@ -803,7 +803,7 @@ export default function Editor() {
         <section
           className={`
             ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-            absolute lg:relative z-20 h-full w-[340px] sm:w-[380px] border-r border-zinc-800 bg-zinc-950 flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none
+            absolute lg:relative z-20 h-full min-h-0 w-[340px] sm:w-[380px] border-r border-zinc-800 bg-zinc-950 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none
           `}
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/50">
@@ -818,7 +818,7 @@ export default function Editor() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar bg-gradient-to-b from-zinc-950 to-zinc-950">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-5 custom-scrollbar bg-zinc-950">
             {messages.map((msg) => (
               <div
                 key={msg.id}
@@ -912,7 +912,7 @@ export default function Editor() {
             <div ref={messagesEndRef} className="h-1" />
           </div>
 
-          <div className="p-4 bg-zinc-950 border-t border-zinc-800/50">
+          <div className="p-4 bg-zinc-950 border-t border-zinc-800/50 shrink-0">
             {creditsExhausted && (
               <div className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3.5">
                 <p className="text-sm text-amber-100 font-medium mb-1">

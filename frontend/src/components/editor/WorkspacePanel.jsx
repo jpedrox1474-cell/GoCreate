@@ -15,8 +15,8 @@ export default function WorkspacePanel({
   onAskFix,
 }) {
   return (
-    <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 h-full">
-      <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-zinc-800 gap-2">
+    <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 h-full overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-zinc-800 gap-2 shrink-0">
         <div className="flex p-0.5 bg-zinc-900 rounded-lg border border-zinc-800">
           <button
             type="button"
@@ -70,19 +70,21 @@ export default function WorkspacePanel({
         )}
       </div>
 
-      <div className="flex-1 p-2 sm:p-4 overflow-hidden flex justify-center items-center">
+      <div className="flex-1 min-h-0 p-2 sm:p-4 overflow-hidden flex justify-center items-stretch bg-zinc-950">
         {activeTab === 'preview' ? (
           <div
-            className={`h-full transition-all duration-500 ${
+            className={`h-full min-h-0 transition-all duration-500 ${
               previewMode === 'mobile'
-                ? 'w-[375px] max-h-[812px] rounded-[2rem] overflow-hidden border-8 border-zinc-900 ring-1 ring-zinc-700'
+                ? 'w-[375px] max-h-[812px] self-center rounded-[2rem] overflow-hidden border-8 border-zinc-900 ring-1 ring-zinc-700'
                 : 'w-full'
             }`}
           >
             <PreviewPane files={files} isGenerating={isGenerating} onAskFix={onAskFix} />
           </div>
         ) : (
-          <CodeEditor files={files} activeFile={activeFile} onSelectFile={setActiveFile} />
+          <div className="w-full h-full min-h-0 overflow-y-auto custom-scrollbar">
+            <CodeEditor files={files} activeFile={activeFile} onSelectFile={setActiveFile} />
+          </div>
         )}
       </div>
     </section>

@@ -1,5 +1,4 @@
 // Preferências do utilizador persistidas no cliente.
-// Chaves de API ficam só em localStorage (nunca enviadas automaticamente).
 
 export const SETTINGS_KEYS = {
   theme: 'gocreate-theme',
@@ -8,6 +7,8 @@ export const SETTINGS_KEYS = {
   notifications: 'gocreate-notifications',
   bio: 'gocreate-profile-bio',
   photoURL: 'gocreate-profile-photo',
+  editorFontSize: 'gocreate-editor-font-size',
+  codeTheme: 'gocreate-code-theme',
 };
 
 const DEFAULTS = {
@@ -17,6 +18,8 @@ const DEFAULTS = {
   notifications: true,
   bio: '',
   photoURL: '',
+  editorFontSize: 'md',
+  codeTheme: 'dark',
 };
 
 function readString(key, fallback = '') {
@@ -46,6 +49,9 @@ export function getUserSettings() {
     notifications: notificationsRaw === '1' || notificationsRaw === 'true',
     bio: readString(SETTINGS_KEYS.bio, DEFAULTS.bio),
     photoURL: readString(SETTINGS_KEYS.photoURL, DEFAULTS.photoURL),
+    editorFontSize:
+      readString(SETTINGS_KEYS.editorFontSize, DEFAULTS.editorFontSize) || DEFAULTS.editorFontSize,
+    codeTheme: readString(SETTINGS_KEYS.codeTheme, DEFAULTS.codeTheme) || DEFAULTS.codeTheme,
   };
 }
 
@@ -61,6 +67,10 @@ export function saveUserSettings(partial = {}) {
   }
   if (partial.bio !== undefined) writeString(SETTINGS_KEYS.bio, partial.bio);
   if (partial.photoURL !== undefined) writeString(SETTINGS_KEYS.photoURL, partial.photoURL.trim());
+  if (partial.editorFontSize != null) {
+    writeString(SETTINGS_KEYS.editorFontSize, partial.editorFontSize);
+  }
+  if (partial.codeTheme != null) writeString(SETTINGS_KEYS.codeTheme, partial.codeTheme);
   return getUserSettings();
 }
 
