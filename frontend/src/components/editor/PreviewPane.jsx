@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SandpackProvider,
   SandpackPreview,
@@ -15,11 +15,22 @@ import SandpackErrorBoundary from './SandpackErrorBoundary';
 
 function CompilingOverlay({ externalLoading }) {
   const state = useLoadingOverlayState(undefined, Boolean(externalLoading));
-  const visible =
-    state === 'LOADING' ||
-    state === 'PRE_FADING' ||
-    state === 'TIMEOUT' ||
-    Boolean(externalLoading);
+  const [holdAfterGen, setHoldAfterGen] = useState(false);
+
+  useEffect(() => {
+    if (externalLoading) {
+      setHoldAfterGen(true);
+      return undefined;
+    }
+    // Keep spinner briefly after generation ends while Sandpack remounts/bundlers.
+    const t = setTimeout(() => setHoldAfterGen(false), 2800);
+    return () => clearTimeout(t);
+  }, [externalLoading]);
+
+  const sandpackBusy =
+    state === 'LOADING' || state === 'PRE_FADING' || state === 'TIMEOUT';
+
+  const visible = sandpackBusy || Boolean(externalLoading) || holdAfterGen;
 
   if (!visible) return null;
 
@@ -28,11 +39,13 @@ function CompilingOverlay({ externalLoading }) {
       ? 'Preview a demorar…'
       : externalLoading
         ? 'A gerar / compilar…'
-        : 'A compilar dependências…';
+        : holdAfterGen && !sandpackBusy
+          ? 'A atualizar preview…'
+          : 'A compilar dependências…';
 
   return (
     <div
-      className="absolute inset-0 z-20 bg-zinc-950/80 backdrop-blur-md flex flex-col items-center justify-center pointer-events-none"
+      className="absolute inset-0 z-40 bg-zinc-950/80 backdrop-blur-md flex flex-col items-center justify-center pointer-events-none"
       aria-live="polite"
       aria-busy="true"
     >
@@ -53,9 +66,9 @@ function CompilingOverlay({ externalLoading }) {
   );
 }
 
-function RuntimeErrorOverlay({ onAskFix }) {
+function RuntimeErrorOverlay({ onAskFix, hidden }) {
   const error = useErrorMessage();
-  if (!error) return null;
+  if (hidden || !error) return null;
 
   return (
     <div className="absolute inset-0 z-30 bg-zinc-950/90 backdrop-blur-sm flex flex-col items-center justify-center px-6 text-center">
@@ -105,7 +118,7 @@ function PreviewInner({ isGenerating, onAskFix, publicMode }) {
         />
       </SandpackLayout>
       <CompilingOverlay externalLoading={Boolean(isGenerating)} />
-      <RuntimeErrorOverlay onAskFix={onAskFix} />
+      <RuntimeErrorOverlay onAskFix={onAskFix} hidden={Boolean(isGenerating)} />
     </div>
   );
 }
@@ -170,7 +183,7 @@ export default function PreviewPane({
             )}
           </div>
         ) : (
-          <SandpackErrorBoundary onAskFix={onAskFix} key={sandpackKey}>
+          <SandpackErrorBoundary onAskFix={onAskFix} isGenerating={isGenerating} key={sandpackKey}>
             <SandpackProvider
               key={sandpackKey}
               template="react"

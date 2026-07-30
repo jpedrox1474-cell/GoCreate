@@ -57,6 +57,16 @@ const TOAST_BY_TYPE = {
   test_coverage: '🤖 Agente GoCreate: Analisando cobertura de testes...',
 };
 
+const DONE_BY_TYPE = {
+  bug_hunter: 'Agente: análise de bugs concluída.',
+  security_scan: 'Agente: scan de segurança concluído.',
+  doc_generator: 'Agente: documentação gerada.',
+  test_coverage: 'Agente: cobertura de testes analisada.',
+};
+
+/** Simulated agent work duration before recording the run. */
+const SIMULATION_MS = 7_500;
+
 const DEBOUNCE_MS = 4000;
 const debounceTimers = new Map();
 const lastRunAt = new Map();
@@ -67,6 +77,10 @@ function toMillis(ts) {
   if (typeof ts.seconds === 'number') return ts.seconds * 1000;
   if (ts instanceof Date) return ts.getTime();
   return 0;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function rememberLastProjectId(projectId) {
@@ -89,6 +103,10 @@ export function getRememberedProjectId() {
 
 export function toastMessageForType(type) {
   return TOAST_BY_TYPE[type] || '🤖 Agente GoCreate: A analisar o código...';
+}
+
+export function doneMessageForType(type) {
+  return DONE_BY_TYPE[type] || 'Agente GoCreate: execução concluída.';
 }
 
 function mapAutomationDoc(d, projectId) {
@@ -196,19 +214,27 @@ export async function recordRun(projectId, { type, status = 'success' } = {}) {
 
 /**
  * Simulate a background agent run for one automation type.
- * Records a successful run and returns the toast message.
+ * Keeps "running" for SIMULATION_MS, then records the run only at the end.
  */
-export async function triggerAutomation(projectId, type) {
+export async function triggerAutomation(projectId, type, { durationMs = SIMULATION_MS } = {}) {
   if (!projectId || !type) return null;
+  await sleep(durationMs);
   await recordRun(projectId, { type, status: 'success' });
   return toastMessageForType(type);
 }
 
 /**
  * After code gen / save: if the project has active automations, debounce and
- * simulate discreet background runs (toast + metrics).
+ * simulate discreet background runs (persistent banner + toast + metrics).
+ *
+ * @param {string} projectId
+ * @param {{
+ *   onStart?: (info: { type: string, message: string }) => void,
+ *   onToast?: (payload: { message: string, type: string, duration?: number }) => void,
+ *   onComplete?: (info: { type: string, message: string }) => void,
+ * }} [opts]
  */
-export function scheduleAutomationCheck(projectId, { onToast } = {}) {
+export function scheduleAutomationCheck(projectId, { onStart, onToast, onComplete } = {}) {
   if (!projectId) return;
 
   const existing = debounceTimers.get(projectId);
@@ -230,16 +256,49 @@ export function scheduleAutomationCheck(projectId, { onToast } = {}) {
       const preferred =
         active.find((a) => a.type === 'security_scan') || active[0];
 
-      await Promise.all(active.map((a) => triggerAutomation(projectId, a.type)));
+      if (typeof onStart === 'function') {
+        onStart({
+          type: preferred.type,
+          message: 'Agente em execução…',
+        });
+      }
 
       if (typeof onToast === 'function') {
         onToast({
           message: toastMessageForType(preferred.type),
           type: 'info',
+          duration: SIMULATION_MS + 500,
+        });
+      }
+
+      await Promise.all(active.map((a) => triggerAutomation(projectId, a.type)));
+
+      if (typeof onComplete === 'function') {
+        onComplete({
+          type: preferred.type,
+          message: doneMessageForType(preferred.type),
+        });
+      }
+
+      if (typeof onToast === 'function') {
+        onToast({
+          message: doneMessageForType(preferred.type),
+          type: 'success',
+          duration: 3200,
         });
       }
     } catch (err) {
       console.warn('[automations] schedule failed:', err);
+      if (typeof onComplete === 'function') {
+        onComplete({ type: null, message: null, error: true });
+      }
+      if (typeof onToast === 'function') {
+        onToast({
+          message: err?.message || 'Falha na execução do agente.',
+          type: 'error',
+          duration: 4500,
+        });
+      }
     }
   }, 1200);
 

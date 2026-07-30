@@ -6,6 +6,12 @@
 
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
+/** No chunks for this long → heartbeat UI ("Ainda a gerar…"). */
+const STALL_HEARTBEAT_MS = 20_000;
+/** Hard cap — fail gracefully instead of hanging forever. */
+const ABSOLUTE_TIMEOUT_MS = 150_000;
+const HEARTBEAT_POLL_MS = 4_000;
+
 function chatEndpoint() {
   return `${API_URL}/api/chat`;
 }
@@ -26,6 +32,7 @@ export class InsufficientCreditsError extends Error {
  *   attachmentUrl?: string|null,
  *   idToken: string,
  *   onChunk?: (text: string) => void,
+ *   onHeartbeat?: (message: string) => void,
  *   signal?: AbortSignal,
  * }} opts
  * @returns {Promise<{ text: string, model: string|null }>}
@@ -36,6 +43,7 @@ export async function streamChat({
   attachmentUrl = null,
   idToken,
   onChunk,
+  onHeartbeat,
   signal,
 }) {
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -81,37 +89,88 @@ export async function streamChat({
   let buffer = '';
   let full = '';
   let model = null;
+  let lastActivityAt = Date.now();
+  let heartbeatSent = false;
+  let timedOut = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  const absoluteTimer = setTimeout(() => {
+    timedOut = true;
+    try {
+      reader.cancel();
+    } catch {
+      /* ignore */
+    }
+  }, ABSOLUTE_TIMEOUT_MS);
 
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+  const heartbeatTimer = setInterval(() => {
+    if (Date.now() - lastActivityAt < STALL_HEARTBEAT_MS) {
+      heartbeatSent = false;
+      return;
+    }
+    if (!heartbeatSent && typeof onHeartbeat === 'function') {
+      heartbeatSent = true;
+      onHeartbeat('Ainda a gerar…');
+    }
+  }, HEARTBEAT_POLL_MS);
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const payload = trimmed.slice(5).trim();
-      if (!payload) continue;
+  const cleanup = () => {
+    clearTimeout(absoluteTimer);
+    clearInterval(heartbeatTimer);
+  };
 
-      let evt;
-      try {
-        evt = JSON.parse(payload);
-      } catch {
-        continue;
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+      if (timedOut) {
+        throw new Error(
+          'A geração demorou demasiado sem resposta. Verifica a ligação e tenta novamente.'
+        );
       }
 
-      if (evt.type === 'chunk' && evt.text) {
-        full += evt.text;
-        if (typeof onChunk === 'function') onChunk(evt.text);
-      } else if (evt.type === 'done') {
-        model = evt.model || null;
-      } else if (evt.type === 'error') {
-        throw new Error(evt.message || 'Erro ao gerar resposta.');
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastActivityAt = Date.now();
+      heartbeatSent = false;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload) continue;
+
+        let evt;
+        try {
+          evt = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+
+        if (evt.type === 'chunk' && evt.text) {
+          full += evt.text;
+          lastActivityAt = Date.now();
+          heartbeatSent = false;
+          if (typeof onChunk === 'function') onChunk(evt.text);
+        } else if (evt.type === 'done') {
+          model = evt.model || null;
+        } else if (evt.type === 'error') {
+          throw new Error(evt.message || 'Erro ao gerar resposta.');
+        }
       }
     }
+  } finally {
+    cleanup();
+  }
+
+  if (timedOut) {
+    throw new Error(
+      'A geração demorou demasiado sem resposta. Verifica a ligação e tenta novamente.'
+    );
   }
 
   return { text: full, model };

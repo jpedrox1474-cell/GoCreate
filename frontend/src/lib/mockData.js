@@ -241,6 +241,9 @@ ${DEMO_ARTIFACT}`,
 
 export const PENDING_PROMPT_KEY = 'gocreate_pending_prompt';
 
+/** Mid-generation snapshot so reload doesn't leave ghost "AI will fix" / blank UI. */
+export const GENERATION_STATE_KEY = 'gocreate_generation_in_progress';
+
 export function getProjectById(id) {
   return MOCK_PROJECTS.find((p) => p.id === id) || {
     id,

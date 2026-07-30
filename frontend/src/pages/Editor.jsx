@@ -44,8 +44,35 @@ import {
   getProjectById,
   getMessagesForProject,
   PENDING_PROMPT_KEY,
+  GENERATION_STATE_KEY,
 } from '../lib/mockData';
 import { useTheme } from '../context/ThemeContext';
+
+function readGenerationSession() {
+  try {
+    const raw = sessionStorage.getItem(GENERATION_STATE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function writeGenerationSession(payload) {
+  try {
+    sessionStorage.setItem(GENERATION_STATE_KEY, JSON.stringify(payload));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearGenerationSession() {
+  try {
+    sessionStorage.removeItem(GENERATION_STATE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 function EditorLogo() {
   const { isLight } = useTheme();
@@ -114,6 +141,11 @@ export default function Editor() {
   const [uploading, setUploading] = useState(false);
   const [jarvisOpen, setJarvisOpen] = useState(false);
   const [chatMicListening, setChatMicListening] = useState(false);
+  const [agentRunning, setAgentRunning] = useState(null); // { type, message }
+  const [streamHeartbeat, setStreamHeartbeat] = useState(null); // string | null
+  const [resumeNotice, setResumeNotice] = useState(null); // string | null
+  const [askFixPending, setAskFixPending] = useState(false);
+  const [awaitingHistory, setAwaitingHistory] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -126,11 +158,56 @@ export default function Editor() {
   const chatRecognitionRef = useRef(null);
   const chatFinalTranscriptRef = useRef('');
   const chatMicBaseInputRef = useRef('');
+  const pendingUserTextRef = useRef(null);
+  const optimisticClearTimerRef = useRef(null);
   const useLiveChat = HAS_API && firestoreId && !MOCK_IDS.has(routeId);
+  const isBusy = isGenerating || Boolean(agentRunning) || askFixPending;
 
   useEffect(() => {
     attachmentRef.current = attachment;
   }, [attachment]);
+
+  useEffect(() => {
+    pendingUserTextRef.current = pendingUserText;
+  }, [pendingUserText]);
+
+  // Reload mid-generation: clear ghost incomplete states, show resume notice (stream can't resume).
+  useEffect(() => {
+    const stale = readGenerationSession();
+    if (!stale) return;
+    clearGenerationSession();
+    if (stale.askFix) {
+      setResumeNotice(
+        'A correção pela IA foi interrompida ao recarregar. Pede novamente “Pedir para a IA consertar” se o erro continuar.'
+      );
+    } else {
+      setResumeNotice(
+        'A geração anterior foi interrompida ao recarregar. O histórico pode aparecer em breve — envia de novo se nada chegar.'
+      );
+    }
+  }, []);
+
+  // Clear optimistic bubbles once Firestore history catches up (or after timeout).
+  useEffect(() => {
+    if (!awaitingHistory || !pendingUserText) return undefined;
+    const matched = messages.some(
+      (m) => m.role === 'user' && m.text === pendingUserText
+    );
+    if (matched) {
+      setPendingUserText(null);
+      setStreamingText('');
+      streamBufferRef.current = '';
+      setAwaitingHistory(false);
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      setPendingUserText(null);
+      setStreamingText('');
+      streamBufferRef.current = '';
+      setAwaitingHistory(false);
+    }, 3500);
+    return () => clearTimeout(t);
+  }, [messages, awaitingHistory, pendingUserText]);
 
   useEffect(() => {
     return () => {
@@ -173,7 +250,9 @@ export default function Editor() {
     (projectId) => {
       if (!projectId) return;
       scheduleAutomationCheck(projectId, {
+        onStart: (info) => setAgentRunning(info),
         onToast: (payload) => setToast(payload),
+        onComplete: () => setAgentRunning(null),
       });
     },
     []
@@ -294,12 +373,13 @@ export default function Editor() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping, streamingText, pendingUserText]);
+  }, [messages, isTyping, streamingText, pendingUserText, isGenerating, streamHeartbeat]);
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
       if (mockTimerRef.current) clearTimeout(mockTimerRef.current);
+      if (optimisticClearTimerRef.current) clearTimeout(optimisticClearTimerRef.current);
     };
   }, []);
 
@@ -312,18 +392,32 @@ export default function Editor() {
     [mergeGeneratedFiles]
   );
 
-  const finishGeneration = useCallback(() => {
+  const finishGeneration = useCallback((opts = {}) => {
+    const { clearOptimistic = true, waitForHistory = false } = opts;
     setIsGenerating(false);
     setIsTyping(false);
-    setTimeout(() => {
+    setAskFixPending(false);
+    setStreamHeartbeat(null);
+    clearGenerationSession();
+    if (optimisticClearTimerRef.current) {
+      clearTimeout(optimisticClearTimerRef.current);
+      optimisticClearTimerRef.current = null;
+    }
+    if (waitForHistory) {
+      setAwaitingHistory(true);
+      return;
+    }
+    if (!clearOptimistic) return;
+    optimisticClearTimerRef.current = setTimeout(() => {
       setPendingUserText(null);
       setStreamingText('');
       streamBufferRef.current = '';
+      optimisticClearTimerRef.current = null;
     }, 400);
   }, []);
 
   const sendMessageText = useCallback(
-    async (userText) => {
+    async (userText, { askFix = false } = {}) => {
       if (!userText?.trim() || isGenerating || !user) return;
       const trimmed = userText.trim();
       const currentAttachment = attachmentRef.current;
@@ -331,12 +425,23 @@ export default function Editor() {
       setAttachment(null);
       attachmentRef.current = null;
       setCreditsExhausted(false);
+      setResumeNotice(null);
+      setAskFixPending(Boolean(askFix));
       setIsGenerating(true);
       setIsTyping(true);
       setPendingUserText(trimmed);
       setStreamingText('');
+      setStreamHeartbeat(null);
+      setAwaitingHistory(false);
       streamBufferRef.current = '';
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
+      writeGenerationSession({
+        projectId: firestoreId || routeId,
+        prompt: trimmed.slice(0, 240),
+        askFix: Boolean(askFix),
+        startedAt: Date.now(),
+      });
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -354,6 +459,7 @@ export default function Editor() {
         ]);
         setStreamingText('');
         setPendingUserText(null);
+        setAwaitingHistory(false);
       };
 
       // Demo-only mock projects — never invent replies for real projects.
@@ -386,16 +492,23 @@ export default function Editor() {
           attachmentUrl: currentAttachment?.url || null,
           idToken,
           signal: controller.signal,
+          onHeartbeat: (msg) => {
+            setStreamHeartbeat(msg);
+            setStreamingText((prev) => prev || msg);
+          },
           onChunk: (chunk) => {
             setIsTyping(false);
+            setStreamHeartbeat(null);
             streamBufferRef.current += chunk;
             const { cleanText, files, hadArtifacts } = parseArtifacts(streamBufferRef.current);
             if (Object.keys(files).length) mergeGeneratedFiles(files);
             const display =
               cleanText ||
               (Object.keys(files).length || hadArtifacts
-                ? 'Interface gerada com sucesso. Verifique o painel ao lado.'
-                : '');
+                ? 'A construir a interface…'
+                : streamBufferRef.current.trim()
+                  ? 'A gerar…'
+                  : '');
             setStreamingText(display);
           },
         });
@@ -404,19 +517,24 @@ export default function Editor() {
           return;
         }
         if (result?.text) {
-          applyAiRaw(result.text);
+          const display = applyAiRaw(result.text);
+          if (display) setStreamingText(display);
           notifyAutomations(firestoreId);
+          finishGeneration({ waitForHistory: true });
         } else if (!streamBufferRef.current.trim()) {
           setIsTyping(false);
           pushLocalTurn(
             'A API respondeu sem conteúdo. Confirma que o backend tem GEMINI_API_KEY e tenta de novo.'
           );
+          finishGeneration();
         } else {
           notifyAutomations(firestoreId);
+          finishGeneration({ waitForHistory: true });
         }
       } catch (err) {
         if (err?.name === 'AbortError' || controller.signal.aborted) {
           setStreamingText((prev) => prev || 'Geração interrompida.');
+          setToast({ message: 'Geração interrompida.', type: 'info', duration: 2800 });
           finishGeneration();
           return;
         }
@@ -428,17 +546,26 @@ export default function Editor() {
           streamBufferRef.current = '';
           setCreditsExhausted(true);
           openPricing();
-          finishGeneration();
+          finishGeneration({ clearOptimistic: false });
           return;
         }
         console.error('[Editor] chat:', err);
         setIsTyping(false);
         const detail = err?.message || 'erro desconhecido';
+        setToast({
+          message: `Falha na geração: ${detail}`,
+          type: 'error',
+          duration: 5200,
+        });
         pushLocalTurn(
           `Não consegui gerar a app: ${detail}\n\nO teu pedido foi: «${trimmed.slice(0, 200)}${trimmed.length > 200 ? '…' : ''}». Corrigi a API e envia outra vez — não uso respostas de demonstração.`
         );
+        finishGeneration({ clearOptimistic: false });
       } finally {
-        if (!controller.signal.aborted) finishGeneration();
+        // Safety net: never leave loaders spinning after the request settles.
+        if (!controller.signal.aborted) {
+          clearGenerationSession();
+        }
       }
     },
     [
@@ -460,13 +587,20 @@ export default function Editor() {
     if (mockTimerRef.current) clearTimeout(mockTimerRef.current);
     setIsTyping(false);
     setIsGenerating(false);
+    setAskFixPending(false);
+    setStreamHeartbeat(null);
+    setAwaitingHistory(false);
+    clearGenerationSession();
     if (!streamingText) {
       setStreamingText('Geração interrompida.');
     }
-    setTimeout(() => {
+    setToast({ message: 'Geração interrompida.', type: 'info', duration: 2800 });
+    if (optimisticClearTimerRef.current) clearTimeout(optimisticClearTimerRef.current);
+    optimisticClearTimerRef.current = setTimeout(() => {
       setPendingUserText(null);
       setStreamingText('');
       streamBufferRef.current = '';
+      optimisticClearTimerRef.current = null;
     }, 600);
   }
 
@@ -603,12 +737,26 @@ export default function Editor() {
   }
 
   function handleAskFix(errorMsg) {
+    if (isGenerating) {
+      setToast({
+        message: 'Já há uma geração em curso. Aguarda ou para com ■.',
+        type: 'info',
+        duration: 3200,
+      });
+      return;
+    }
     const prompt = `Há um erro no preview. Por favor corrige o código.\n\nErro:\n${errorMsg}`;
-    sendMessageText(prompt);
+    sendMessageText(prompt, { askFix: true });
   }
 
   function handleNewChat() {
     abortRef.current?.abort();
+    clearGenerationSession();
+    setAskFixPending(false);
+    setStreamHeartbeat(null);
+    setAwaitingHistory(false);
+    setAgentRunning(null);
+    setResumeNotice(null);
     if (routeId && MOCK_IDS.has(routeId)) {
       setMessages(sanitizeMessages(getMessagesForProject(routeId || 'default'), mergeGeneratedFiles));
       setInput('');
@@ -701,6 +849,14 @@ export default function Editor() {
 
   return (
     <div className="gc-app-shell flex flex-col h-screen max-h-screen w-full overflow-hidden bg-zinc-950 text-zinc-300 font-sans selection:bg-indigo-500/30">
+      {isBusy && (
+        <div
+          className="fixed top-0 left-0 right-0 z-[60] h-0.5 overflow-hidden pointer-events-none"
+          aria-hidden
+        >
+          <div className="h-full w-1/3 bg-gradient-to-r from-blue-500 via-indigo-400 to-blue-500 animate-[gc-progress_1.4s_ease-in-out_infinite]" />
+        </div>
+      )}
       <header className="flex items-center justify-between px-3 sm:px-4 h-14 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md z-10 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
@@ -839,6 +995,34 @@ export default function Editor() {
 
           <IntegrationsBanner user={user} projectId={firestoreId} files={generatedFiles} />
 
+          {(resumeNotice || agentRunning) && (
+            <div className="px-4 pt-3 space-y-2 shrink-0">
+              {resumeNotice && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-700/40 bg-amber-950/40 px-3 py-2.5">
+                  <p className="text-[11px] text-amber-100/90 leading-relaxed flex-1">{resumeNotice}</p>
+                  <button
+                    type="button"
+                    onClick={() => setResumeNotice(null)}
+                    className="p-0.5 text-amber-400/70 hover:text-amber-200 shrink-0"
+                    aria-label="Fechar aviso"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+              {agentRunning && (
+                <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[11px] font-medium text-blue-200">
+                  <Loader2 size={12} className="animate-spin text-blue-400" />
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-400" />
+                  </span>
+                  {agentRunning.message || 'Agente em execução…'}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-5 custom-scrollbar bg-zinc-950">
             {messages.map((msg) => (
               <div
@@ -904,10 +1088,12 @@ export default function Editor() {
                       <Zap size={12} className="text-blue-400" />
                     </div>
                     <span className="text-xs font-medium text-zinc-500">GoCreate AI</span>
-                    {isGenerating && (
-                      <span className="ml-auto flex gap-1 items-center">
-                        <span className="w-1 h-1 bg-blue-400 rounded-full animate-pulse" />
-                        <span className="text-[10px] text-blue-400/80">a escrever</span>
+                    {(isGenerating || awaitingHistory) && (
+                      <span className="ml-auto flex gap-1.5 items-center">
+                        <Loader2 size={11} className="text-blue-400 animate-spin" />
+                        <span className="text-[10px] text-blue-400/80">
+                          {streamHeartbeat || (awaitingHistory ? 'a guardar…' : 'a escrever')}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -916,17 +1102,25 @@ export default function Editor() {
               </div>
             )}
 
-            {isTyping && !streamingText && (
+            {isGenerating && !streamingText && (
               <div className="flex w-full justify-start">
                 <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-tl-sm px-4 py-3.5 text-sm flex items-center gap-3">
-                  <div className="flex items-center gap-1.5" aria-label="AI a gerar">
-                    <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-duration:0.7s]" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-duration:0.7s]" style={{ animationDelay: '140ms' }} />
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.7s]" style={{ animationDelay: '280ms' }} />
+                  <div className="relative shrink-0">
+                    <div className="absolute inset-0 rounded-full bg-blue-600/25 blur-sm animate-pulse" />
+                    <Loader2 size={16} className="relative text-blue-400 animate-spin" />
                   </div>
-                  <span className="text-zinc-500 text-xs font-medium">
-                    {useLiveChat || HAS_API ? 'IA a gerar…' : 'IA a pensar…'}
-                  </span>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-zinc-300 text-xs font-medium">
+                      {askFixPending
+                        ? 'IA a corrigir o código…'
+                        : streamHeartbeat || (useLiveChat || HAS_API ? 'IA a gerar…' : 'IA a pensar…')}
+                    </span>
+                    <div className="flex items-center gap-1.5" aria-hidden>
+                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-duration:0.7s]" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-duration:0.7s]" style={{ animationDelay: '140ms' }} />
+                      <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.7s]" style={{ animationDelay: '280ms' }} />
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1129,7 +1323,7 @@ export default function Editor() {
           files={generatedFiles}
           activeFile={activeFile}
           setActiveFile={setActiveFile}
-          isGenerating={isGenerating}
+          isGenerating={isBusy}
           onAskFix={handleAskFix}
           projectId={firestoreId}
         />
@@ -1166,7 +1360,12 @@ export default function Editor() {
         onConfirmBuild={handleJarvisConfirmBuild}
       />
 
-      <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+      <Toast
+        message={toast?.message}
+        type={toast?.type}
+        duration={toast?.duration ?? 2800}
+        onClose={() => setToast(null)}
+      />
     </div>
   );
 }

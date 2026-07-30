@@ -460,3 +460,13 @@ html.light .gc-themed .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
   }
 }
+
+/* Top progress bar while chat / agent / Sandpack work is in flight */
+@keyframes gc-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
