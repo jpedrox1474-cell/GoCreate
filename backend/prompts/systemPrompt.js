@@ -150,48 +150,12 @@ NUNCA emita \`<gocreate_entities>\` incompleto. Se não couber, omita o bloco �
 ## Tom
 Seja direto e técnico, mas amigável, em português do Brasil. Não repita o pedido do usuário palavra por palavra antes de responder.`;
 
-
-/**
- * Complemento injectado quando o utilizador tem providers ligados.
- * @param {string[]} connectedIds
- */
-export function buildIntegrationsPromptAddon(connectedIds = []) {
-  if (!connectedIds?.length) {
-    return `
-
-## Integrações do utilizador
-Nenhuma integração BYO ligada ainda. Para checkouts Pix/cartão, continue a emitir window.GoCreatePayments / fetch public-create-payment e trate o erro de “não ligado” com CTA para /integrations. Para WhatsApp, use wa.me + CTA para ligar WhatsApp em Integrações — nunca whatsapp-web.js no preview.`;
-  }
-
-  const list = connectedIds.map((id) => `- ${id}`).join('\n');
-  const hasMp = connectedIds.includes('mercadopago') || connectedIds.includes('pix');
-  const hasStripe = connectedIds.includes('stripe');
-  const hasWa =
-    connectedIds.includes('whatsapp') ||
-    connectedIds.includes('whatsapp_evolution');
-
-  return `
-
-## Integrações ligadas neste utilizador
-O utilizador tem as seguintes integrações ativas no GoCreate:
-${list}
-
-${
-  hasMp
-    ? `Mercado Pago está LIGADO — use sempre window.GoCreatePayments.createPix / createCheckout (ou o fetch para /api/integrations/mercadopago/…). Pagamentos serão reais.`
-    : `Mercado Pago ainda não ligado — emita o hook na mesma e mostre CTA se falhar.`
-}
-${
-  hasStripe
-    ? `Stripe está LIGADO — para cartão internacional pode usar fetch autenticado a /api/integrations/stripe/create-payment (owner) ou documentar Payment Element com clientSecret.`
-    : ''
-}
-${
-  hasWa
-    ? `WhatsApp está LIGADO (Evolution/bridge GoCreate) — na UI use CTAs wa.me e mencione o bridge GoCreate; NÃO uses whatsapp-web.js no código do preview.`
-    : `WhatsApp ainda não ligado — wa.me + CTA para Integrações; nunca whatsapp-web.js no browser.`
-}
-Não peça ao utilizador para colar Access Tokens no código gerado; as credenciais ficam no servidor GoCreate.`;
-}
+// Addon dinâmico (tokens/IDs) vive em buildDynamicSystemPrompt.js — re-export
+// após a constante para evitar TDZ em import circular.
+export {
+  buildIntegrationsAddonFromObject as buildIntegrationsPromptAddon,
+  buildIntegrationsPromptAddonFromIds,
+  buildDynamicSystemPrompt,
+} from './buildDynamicSystemPrompt.js';
 
 export default GOCREATE_SYSTEM_PROMPT;
