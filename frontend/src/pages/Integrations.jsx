@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   Wallet,
   CreditCard,
@@ -35,7 +34,6 @@ import {
   Check,
   Loader2,
   Search,
-  Sparkles,
 } from 'lucide-react';
 import Toast from '../components/Toast';
 import ConnectIntegrationModal from '../components/integrations/ConnectIntegrationModal';
@@ -241,33 +239,21 @@ export default function Integrations() {
     <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400/90 mb-2 flex items-center gap-1.5">
-            <Sparkles size={12} /> Catálogo competitivo
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2 flex items-center gap-1.5">
+            <Plug size={12} /> Conta
           </p>
           <h1 className="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-1">
             Integrações
           </h1>
           <p className="text-sm text-zinc-500 max-w-xl">
-            Liga Mercado Pago, Stripe, GitHub e mais — para checkouts Pix/cartão e apps gerados
-            funcionarem de verdade, no nível de Lovable, Bolt, v0 e Nova.
+            Liga provedores à tua conta — Mercado Pago, Stripe, GitHub e outros — para os apps
+            gerados usarem as tuas credenciais.
           </p>
         </div>
         <div className="text-right shrink-0">
           <p className="text-2xl font-bold text-zinc-100 tabular-nums">{connectedCount}</p>
           <p className="text-[11px] text-zinc-500">ligadas / {INTEGRATIONS_CATALOG.length} no catálogo</p>
         </div>
-      </div>
-
-      <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 mb-6 text-sm text-zinc-300">
-        <strong className="text-blue-300 font-semibold">Checkout Pix:</strong> ao gerar um checkout,
-        o código chama{' '}
-        <code className="text-xs text-blue-200/90 bg-zinc-950/60 px-1 py-0.5 rounded">
-          window.GoCreatePayments.createPix
-        </code>{' '}
-        → API Mercado Pago. Liga o teu Access Token abaixo para pagamentos reais.
-        <Link to="/editor/new" className="ml-2 text-blue-400 hover:text-blue-300 underline-offset-2 hover:underline">
-          Testar no editor
-        </Link>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">

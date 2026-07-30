@@ -33,9 +33,8 @@ import HistoryDrawer from '../components/editor/HistoryDrawer';
 import ExportModal from '../components/editor/ExportModal';
 import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
-import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import IntegrationsBanner from '../components/editor/IntegrationsBanner';
-import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, duplicateProject } from '../lib/projects';
+import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, deleteProjects, duplicateProject } from '../lib/projects';
 import { scheduleAutomationCheck, rememberLastProjectId } from '../lib/automations';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { uploadFile } from '../lib/uploadApi';
@@ -139,8 +138,10 @@ export default function Editor() {
   const [creditsExhausted, setCreditsExhausted] = useState(false);
   const [attachment, setAttachment] = useState(null); // { url, name, resourceType }
   const [uploading, setUploading] = useState(false);
-  const [jarvisOpen, setJarvisOpen] = useState(false);
   const [chatMicListening, setChatMicListening] = useState(false);
+  const [historySelectMode, setHistorySelectMode] = useState(false);
+  const [historySelectedIds, setHistorySelectedIds] = useState(() => new Set());
+  const [historyBulkDeleting, setHistoryBulkDeleting] = useState(false);
   const [agentRunning, setAgentRunning] = useState(null); // { type, message }
   const [streamHeartbeat, setStreamHeartbeat] = useState(null); // string | null
   const [resumeNotice, setResumeNotice] = useState(null); // string | null
@@ -158,6 +159,7 @@ export default function Editor() {
   const chatRecognitionRef = useRef(null);
   const chatFinalTranscriptRef = useRef('');
   const chatMicBaseInputRef = useRef('');
+  const chatMicActiveRef = useRef(false);
   const pendingUserTextRef = useRef(null);
   const optimisticClearTimerRef = useRef(null);
   const useLiveChat = HAS_API && firestoreId && !MOCK_IDS.has(routeId);
@@ -636,6 +638,7 @@ export default function Editor() {
   }
 
   function stopChatMic() {
+    chatMicActiveRef.current = false;
     const rec = chatRecognitionRef.current;
     chatRecognitionRef.current = null;
     setChatMicListening(false);
@@ -650,10 +653,19 @@ export default function Editor() {
     }
   }
 
-  /** Chat mic = normal speech-to-text into the input. Does NOT open Jarvis. */
+  /** Continuous push-to-talk: click to start, click again to stop and finalize into input. */
   function handleMicClick() {
+    const mergeTranscript = (spoken) => {
+      const base = chatMicBaseInputRef.current;
+      if (!spoken) return base;
+      return base ? `${base} ${spoken}` : spoken;
+    };
+
     if (chatMicListening) {
+      const finalText = chatFinalTranscriptRef.current.trim();
+      if (finalText) setInput(mergeTranscript(finalText));
       stopChatMic();
+      requestAnimationFrame(() => textareaRef.current?.focus());
       return;
     }
     if (projectLoading || isGenerating) return;
@@ -673,20 +685,15 @@ export default function Editor() {
     stopChatMic();
     chatFinalTranscriptRef.current = '';
     chatMicBaseInputRef.current = input.trim();
+    chatMicActiveRef.current = true;
     setChatMicListening(true);
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'pt-BR';
     recognition.interimResults = true;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.maxAlternatives = 1;
     chatRecognitionRef.current = recognition;
-
-    const mergeTranscript = (spoken) => {
-      const base = chatMicBaseInputRef.current;
-      if (!spoken) return base;
-      return base ? `${base} ${spoken}` : spoken;
-    };
 
     recognition.onresult = (event) => {
       let interim = '';
@@ -700,23 +707,40 @@ export default function Editor() {
         }
       }
       chatFinalTranscriptRef.current = finalText;
-      const live = (finalText || interim).trim();
+      const live = `${finalText} ${interim}`.trim();
       if (live) setInput(mergeTranscript(live));
     };
 
     recognition.onerror = (event) => {
+      if (event.error === 'aborted') return;
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         setToast({ message: 'Permissão do microfone negada.', type: 'error' });
+        const finalText = chatFinalTranscriptRef.current.trim();
+        if (finalText) setInput(mergeTranscript(finalText));
+        stopChatMic();
+        return;
       }
-      const finalText = chatFinalTranscriptRef.current.trim();
-      if (finalText) setInput(mergeTranscript(finalText));
-      stopChatMic();
+      // no-speech / network: keep session if user still wants continuous dictation
+      if (!chatMicActiveRef.current) {
+        const finalText = chatFinalTranscriptRef.current.trim();
+        if (finalText) setInput(mergeTranscript(finalText));
+        stopChatMic();
+      }
     };
 
     recognition.onend = () => {
+      if (chatMicActiveRef.current && chatRecognitionRef.current === recognition) {
+        try {
+          recognition.start();
+          return;
+        } catch {
+          /* fall through to finalize */
+        }
+      }
       const finalText = chatFinalTranscriptRef.current.trim();
       if (finalText) setInput(mergeTranscript(finalText));
       chatRecognitionRef.current = null;
+      chatMicActiveRef.current = false;
       setChatMicListening(false);
       requestAnimationFrame(() => textareaRef.current?.focus());
     };
@@ -724,15 +748,9 @@ export default function Editor() {
     try {
       recognition.start();
     } catch {
+      chatMicActiveRef.current = false;
       setChatMicListening(false);
       setToast({ message: 'Não foi possível iniciar o microfone.', type: 'error' });
-    }
-  }
-
-  function handleJarvisConfirmBuild(prompt) {
-    setJarvisOpen(false);
-    if (prompt?.trim()) {
-      sendMessageText(prompt.trim());
     }
   }
 
@@ -837,6 +855,11 @@ export default function Editor() {
     try {
       await deleteProject(project.id);
       setHistoryProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setHistorySelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(project.id);
+        return next;
+      });
       setToast({ message: 'Projeto eliminado.', type: 'success' });
       if (firestoreId === project.id || routeId === project.id) {
         navigate('/dashboard');
@@ -844,6 +867,69 @@ export default function Editor() {
     } catch (err) {
       console.error('[Editor] delete:', err);
       setToast({ message: 'Não foi possível eliminar.', type: 'error' });
+    }
+  }
+
+  function enterHistorySelectMode(project) {
+    setHistorySelectMode(true);
+    setHistorySelectedIds(new Set([project.id]));
+  }
+
+  function exitHistorySelectMode() {
+    setHistorySelectMode(false);
+    setHistorySelectedIds(new Set());
+  }
+
+  function toggleHistorySelected(id) {
+    setHistorySelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllHistoryProjects() {
+    setHistorySelectedIds(new Set(historyProjects.map((p) => p.id)));
+  }
+
+  async function handleHistoryBulkDelete() {
+    const ids = [...historySelectedIds];
+    if (!ids.length || historyBulkDeleting) return;
+    if (
+      !window.confirm(
+        `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`
+      )
+    ) {
+      return;
+    }
+    setHistoryBulkDeleting(true);
+    try {
+      const result = await deleteProjects(ids);
+      const deleted = new Set(result.deleted || []);
+      setHistoryProjects((prev) => prev.filter((p) => !deleted.has(p.id)));
+      setHistorySelectedIds(new Set());
+      setHistorySelectMode(false);
+      if (result.failed?.length) {
+        setToast({
+          message: `${deleted.size} eliminado(s); ${result.failed.length} falhou(aram).`,
+          type: 'error',
+        });
+      } else {
+        setToast({
+          message: `${ids.length} projeto${ids.length === 1 ? '' : 's'} eliminado${ids.length === 1 ? '' : 's'}.`,
+          type: 'success',
+        });
+      }
+      if (firestoreId && deleted.has(firestoreId)) {
+        navigate('/dashboard');
+      }
+    } catch (err) {
+      console.error('[Editor] bulk delete:', err);
+      setToast({ message: 'Falha ao apagar selecionados.', type: 'error' });
+      await refreshHistory();
+    } finally {
+      setHistoryBulkDeleting(false);
     }
   }
 
@@ -896,20 +982,6 @@ export default function Editor() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
-          <button
-            type="button"
-            onClick={() => setJarvisOpen(true)}
-            disabled={projectLoading || isGenerating}
-            className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-indigo-200/90 hover:text-white rounded-md transition-all border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-40"
-            title="Modo Jarvis — assistente por voz (confirma antes de gerar)"
-          >
-            <span
-              className="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shadow-sm shadow-indigo-500/40 shrink-0"
-              aria-hidden
-            />
-            <span className="hidden sm:inline">Modo Jarvis</span>
-            <span className="sm:hidden">Jarvis</span>
-          </button>
           <CreditsBadge />
           {user?.photoURL ? (
             <img
@@ -972,6 +1044,14 @@ export default function Editor() {
             onRenameProject={handleRenameHistoryProject}
             onDuplicateProject={handleDuplicateHistoryProject}
             onDeleteProject={handleDeleteHistoryProject}
+            selectMode={historySelectMode}
+            selectedIds={historySelectedIds}
+            onToggleSelect={toggleHistorySelected}
+            onEnterSelectMode={enterHistorySelectMode}
+            onExitSelectMode={exitHistorySelectMode}
+            onSelectAll={selectAllHistoryProjects}
+            onBulkDelete={handleHistoryBulkDelete}
+            bulkDeleting={historyBulkDeleting}
           />
         </div>
 
@@ -993,7 +1073,7 @@ export default function Editor() {
             </button>
           </div>
 
-          <IntegrationsBanner user={user} projectId={firestoreId} files={generatedFiles} />
+          <IntegrationsBanner projectId={firestoreId} />
 
           {(resumeNotice || agentRunning) && (
             <div className="px-4 pt-3 space-y-2 shrink-0">
@@ -1268,12 +1348,8 @@ export default function Editor() {
                             ? 'text-red-400 bg-red-500/10 animate-pulse'
                             : 'text-zinc-500 hover:text-zinc-300'
                         }`}
-                        title={
-                          chatMicListening
-                            ? 'Parar ditado (mensagem normal)'
-                            : 'Ditar mensagem (voz → texto no chat)'
-                        }
-                        aria-label={chatMicListening ? 'Parar microfone' : 'Microfone do chat'}
+                        title={chatMicListening ? 'Concluir ditado' : 'Iniciar ditado'}
+                        aria-label={chatMicListening ? 'Concluir ditado' : 'Iniciar ditado'}
                         aria-pressed={chatMicListening}
                       >
                         <Mic size={16} />
@@ -1353,11 +1429,6 @@ export default function Editor() {
         projectId={firestoreId}
         onProjectUpdated={handleProjectUpdated}
         onToast={setToast}
-      />
-      <VoiceAssistantModal
-        open={jarvisOpen}
-        onClose={() => setJarvisOpen(false)}
-        onConfirmBuild={handleJarvisConfirmBuild}
       />
 
       <Toast

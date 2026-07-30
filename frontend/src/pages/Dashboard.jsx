@@ -19,8 +19,10 @@ import {
   createProject,
   renameProject,
   deleteProject,
+  deleteProjects,
   duplicateProject,
 } from '../lib/projects';
+import { buildProjectThumbnailDataUrl } from '../lib/projectsApi';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import Toast from '../components/Toast';
@@ -33,34 +35,11 @@ const STATUS_LABEL = {
 
 const HIDDEN_DEMOS_KEY = 'gocreate-hidden-demos';
 
-const THUMB_POOL = [
-  'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80&auto=format&fit=crop',
-  'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&q=80&auto=format&fit=crop',
-  'https://images.unsplash.com/photo-1556155092-490a1ba16284?w=800&q=80&auto=format&fit=crop',
-  'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&q=80&auto=format&fit=crop',
-  'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800&q=80&auto=format&fit=crop',
-  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=800&q=80&auto=format&fit=crop',
-];
-
-const DEMO_THUMBS = {
-  'landing-saas':
-    'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80&auto=format&fit=crop',
-  'dashboard-analytics':
-    'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&q=80&auto=format&fit=crop',
-  'checkout-pix':
-    'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=800&q=80&auto=format&fit=crop',
-};
-
-function hashId(id = '') {
-  let h = 0;
-  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h;
-}
-
 function getProjectThumb(project) {
-  if (project.thumbnail) return project.thumbnail;
-  if (DEMO_THUMBS[project.id]) return DEMO_THUMBS[project.id];
-  return THUMB_POOL[hashId(project.id) % THUMB_POOL.length];
+  return (
+    project.thumbnail ||
+    buildProjectThumbnailDataUrl(project.name, project.color)
+  );
 }
 
 function loadHiddenDemos() {
@@ -137,6 +116,15 @@ export default function Dashboard() {
     });
   }
 
+  function selectAllFiltered() {
+    setSelectedIds(new Set(filteredProjects.map((p) => p.id)));
+  }
+
+  function enterSelectWithProject(project) {
+    setSelectMode(true);
+    setSelectedIds(new Set([project.id]));
+  }
+
   async function handleCreate() {
     if (!user?.uid || creating) return;
     setCreating(true);
@@ -209,14 +197,22 @@ export default function Dashboard() {
     }
     setBulkDeleting(true);
     try {
-      await Promise.all(ids.map((id) => deleteProject(id)));
-      setProjects((prev) => prev.filter((p) => !selectedIds.has(p.id)));
+      const result = await deleteProjects(ids);
+      const deleted = new Set(result.deleted || ids);
+      setProjects((prev) => prev.filter((p) => !deleted.has(p.id)));
       setSelectedIds(new Set());
       setSelectMode(false);
-      setToast({
-        message: `${ids.length} projeto${ids.length === 1 ? '' : 's'} eliminado${ids.length === 1 ? '' : 's'}.`,
-        type: 'success',
-      });
+      if (result.failed?.length) {
+        setToast({
+          message: `${deleted.size} eliminado(s); ${result.failed.length} falhou(aram).`,
+          type: 'error',
+        });
+      } else {
+        setToast({
+          message: `${deleted.size} projeto${deleted.size === 1 ? '' : 's'} eliminado${deleted.size === 1 ? '' : 's'}.`,
+          type: 'success',
+        });
+      }
     } catch (err) {
       console.error('[Dashboard] bulk delete:', err);
       setToast({ message: 'Falha ao apagar selecionados.', type: 'error' });
@@ -350,6 +346,7 @@ export default function Dashboard() {
               <ProjectActionsMenu
                 project={project}
                 buttonClassName="bg-black/40 text-white/90 hover:bg-black/60 hover:text-white"
+                onSelect={enterSelectWithProject}
                 onOpen={(proj) => navigate(`/editor/${proj.id}`)}
                 onRename={handleRename}
                 onDuplicate={handleDuplicate}
@@ -388,23 +385,33 @@ export default function Dashboard() {
             }`}
           >
             {selectMode ? <X size={15} /> : <CheckSquare size={15} />}
-            {selectMode ? 'Cancelar' : 'Selecionar Vários'}
+            {selectMode ? 'Cancelar' : 'Selecionar'}
           </button>
           {selectMode && (
-            <button
-              type="button"
-              onClick={handleBulkDelete}
-              disabled={!selectedIds.size || bulkDeleting}
-              className="inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold rounded-lg border border-red-500/40 bg-red-600/15 text-red-400 hover:bg-red-600/25 hover:text-red-300 transition-all disabled:opacity-40"
-            >
-              {bulkDeleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-              Apagar Selecionados
-              {selectedIds.size > 0 && (
-                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-500/20">
-                  {selectedIds.size}
-                </span>
-              )}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={selectAllFiltered}
+                disabled={!filteredProjects.length}
+                className="inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-medium rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100 transition-all disabled:opacity-40"
+              >
+                Selecionar todos
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDelete}
+                disabled={!selectedIds.size || bulkDeleting}
+                className="inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold rounded-lg border border-red-500/40 bg-red-600/15 text-red-400 hover:bg-red-600/25 hover:text-red-300 transition-all disabled:opacity-40"
+              >
+                {bulkDeleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                Apagar selecionados
+                {selectedIds.size > 0 && (
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-500/20">
+                    {selectedIds.size}
+                  </span>
+                )}
+              </button>
+            </>
           )}
           <button
             type="button"

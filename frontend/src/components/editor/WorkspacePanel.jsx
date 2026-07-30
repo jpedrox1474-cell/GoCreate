@@ -1,7 +1,8 @@
 import React from 'react';
-import { Monitor, Code, Layout, Smartphone } from 'lucide-react';
+import { Monitor, Code, Layout, Smartphone, Database } from 'lucide-react';
 import PreviewPane from './PreviewPane';
 import CodeEditor from './CodeEditor';
+import EntitiesPanel from './EntitiesPanel';
 
 export default function WorkspacePanel({
   activeTab,
@@ -42,6 +43,18 @@ export default function WorkspacePanel({
           >
             <Code size={14} />
             Código
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('entities')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+              activeTab === 'entities'
+                ? 'bg-zinc-800 text-white shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <Database size={14} />
+            Entidades
           </button>
         </div>
 
@@ -86,6 +99,10 @@ export default function WorkspacePanel({
               onAskFix={onAskFix}
               projectId={projectId}
             />
+          </div>
+        ) : activeTab === 'entities' ? (
+          <div className="w-full h-full min-h-0 overflow-hidden">
+            <EntitiesPanel projectId={projectId} files={files} />
           </div>
         ) : (
           <div className="w-full h-full min-h-0 overflow-y-auto custom-scrollbar">

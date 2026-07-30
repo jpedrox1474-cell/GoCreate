@@ -73,8 +73,9 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      allow read, write: if isSignedIn()
-        && request.auth.uid == resource.data.ownerId;
+      // Owner can read/update/delete their project doc (create checks request.resource).
+      allow read, update, delete: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn()
         && request.auth.uid == request.resource.data.ownerId;
 
@@ -137,7 +138,14 @@ service cloud.firestore {
         );
 
       allow delete: if isSignedIn()
-        && resource.data.ownerId == request.auth.uid;
+        && (
+          resource.data.ownerId == request.auth.uid
+          || (
+            'projectId' in resource.data
+            && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.ownerId
+              == request.auth.uid
+          )
+        );
     }
   }
 }

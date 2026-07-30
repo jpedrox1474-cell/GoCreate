@@ -6,9 +6,6 @@ import {
   Zap,
   LogOut,
   Loader2,
-  Check,
-  RotateCcw,
-  X,
   ChevronDown,
   LayoutTemplate,
   LayoutDashboard,
@@ -16,7 +13,6 @@ import {
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import VideoBackground from '../components/VideoBackground';
-import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import { useAuth } from '../context/AuthContext';
 import { PENDING_PROMPT_KEY } from '../lib/mockData';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
@@ -53,44 +49,35 @@ const MODELOS = [
 ];
 
 /**
- * Landing pública — Dark Mode Premium (sempre escuro).
- * Mic = speech-to-text + confirmação; Jarvis = modal dedicado.
+ * Landing pública — Dark Mode Premium.
+ * Mic = push-to-talk: click start → click stop → texto no input.
  */
 export default function Landing() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [jarvisOpen, setJarvisOpen] = useState(false);
   const [modelosOpen, setModelosOpen] = useState(false);
-  /** idle | listening | review */
-  const [micPhase, setMicPhase] = useState('idle');
   const [liveTranscript, setLiveTranscript] = useState('');
-  const [capturedText, setCapturedText] = useState('');
   const [micError, setMicError] = useState('');
 
   const textareaRef = useRef(null);
   const modelosRef = useRef(null);
-  const micPhaseRef = useRef('idle');
 
-  const finishListening = useCallback((transcript) => {
+  const onCommit = useCallback((transcript) => {
     const text = (transcript || '').trim();
     setLiveTranscript('');
     if (!text) {
-      setMicPhase('idle');
-      micPhaseRef.current = 'idle';
-      setCapturedText('');
       setMicError((prev) => prev || 'Não capturou áudio. Tente de novo.');
       return;
     }
-    setCapturedText(text);
     setMicError('');
-    setMicPhase('review');
-    micPhaseRef.current = 'review';
+    setInput(text);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
   const {
-    listening: sttListening,
+    listening,
     transcript: sttTranscript,
     volume: micVolume,
     start: startStt,
@@ -98,12 +85,11 @@ export default function Landing() {
     cancel: cancelStt,
     supported: sttSupported,
   } = useSpeechRecognition({
-    onCommit: finishListening,
+    onCommit,
     onInterim: setLiveTranscript,
     onError: (msg) => setMicError(msg),
     lang: 'pt-BR',
-    autoCommitOnSilence: true,
-    silenceMs: 1600,
+    autoCommitOnSilence: false,
   });
 
   useEffect(() => {
@@ -129,8 +115,8 @@ export default function Landing() {
   }, []);
 
   useEffect(() => {
-    if (sttListening && sttTranscript) setLiveTranscript(sttTranscript);
-  }, [sttListening, sttTranscript]);
+    if (listening && sttTranscript) setLiveTranscript(sttTranscript);
+  }, [listening, sttTranscript]);
 
   function submitPrompt(text) {
     const trimmed = (text || '').trim();
@@ -167,67 +153,21 @@ export default function Landing() {
     await logout();
   }
 
-  function startMicListening() {
-    if (loading || micPhase === 'listening' || sttListening) return;
+  async function handleMicClick() {
+    if (loading) return;
+    if (listening) {
+      stopStt();
+      return;
+    }
     setLiveTranscript('');
-    setCapturedText('');
     setMicError('');
     if (!sttSupported) {
       setMicError('Reconhecimento de voz indisponível neste navegador (use Chrome)');
-      setMicPhase('idle');
-      micPhaseRef.current = 'idle';
-      setInput((prev) => prev || 'Descreve o que queres criar por voz…');
       textareaRef.current?.focus();
       return;
     }
-    setMicPhase('listening');
-    micPhaseRef.current = 'listening';
-    void startStt();
+    await startStt();
   }
-
-  function stopMicEarly() {
-    if (micPhase !== 'listening' && !sttListening) return;
-    stopStt();
-  }
-
-  function handleMicClick() {
-    if (micPhase === 'listening' || sttListening) {
-      stopMicEarly();
-      return;
-    }
-    startMicListening();
-  }
-
-  function handleConfirmVoice() {
-    const text = capturedText.trim();
-    if (!text) return;
-    setInput(text);
-    setMicPhase('idle');
-    micPhaseRef.current = 'idle';
-    setCapturedText('');
-    setLiveTranscript('');
-    requestAnimationFrame(() => submitPrompt(text));
-  }
-
-  function handleCancelVoice() {
-    cancelStt();
-    setMicPhase('idle');
-    micPhaseRef.current = 'idle';
-    setCapturedText('');
-    setLiveTranscript('');
-    setMicError('');
-  }
-
-  function handleJarvisConfirmBuild(prompt) {
-    setJarvisOpen(false);
-    if (prompt?.trim()) {
-      setInput(prompt.trim());
-      submitPrompt(prompt.trim());
-    }
-  }
-
-  const listening = micPhase === 'listening' || sttListening;
-  const reviewing = micPhase === 'review';
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden font-display text-zinc-100 bg-zinc-950">
@@ -307,32 +247,9 @@ export default function Landing() {
           <Link to="/automations" className="hover:text-zinc-100 transition-colors">
             Automations
           </Link>
-          <button
-            type="button"
-            onClick={() => setJarvisOpen(true)}
-            className="inline-flex items-center gap-2 transition-all hover:text-zinc-100 text-indigo-300"
-          >
-            <span
-              className="w-2.5 h-2.5 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shrink-0"
-              aria-hidden
-            />
-            Modo Jarvis
-          </button>
         </nav>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => setJarvisOpen(true)}
-            className="lg:hidden inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-lg border transition-all text-indigo-200 border-indigo-500/30 bg-indigo-500/10"
-            title="Modo Jarvis"
-          >
-            <span
-              className="w-2 h-2 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shrink-0"
-              aria-hidden
-            />
-            Jarvis
-          </button>
           {user ? (
             <>
               <Link
@@ -392,7 +309,7 @@ export default function Landing() {
             id="prompt"
             onSubmit={handleSubmit}
             className={`w-full backdrop-blur-md rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2.5 sm:py-2 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-1 transition-all focus-within:shadow-lg bg-zinc-900/80 shadow-[0_8px_40px_rgba(0,0,0,0.35)] border-zinc-700/90 focus-within:border-blue-500/50 ${
-              listening ? 'ring-2 ring-indigo-500/40' : ''
+              listening ? 'ring-2 ring-red-500/40' : ''
             }`}
           >
             <div className="hidden sm:flex w-8 h-8 shrink-0 rounded-lg items-center justify-center bg-zinc-800 text-zinc-400">
@@ -401,8 +318,10 @@ export default function Landing() {
 
             <textarea
               ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+              value={listening && liveTranscript ? liveTranscript : input}
+              onChange={(e) => {
+                if (!listening) setInput(e.target.value);
+              }}
               disabled={loading || listening}
               placeholder="Ex.: app de reservas com agenda e confirmação por WhatsApp…"
               rows={1}
@@ -418,7 +337,7 @@ export default function Landing() {
             <div className="flex items-center justify-end gap-1 sm:gap-0.5 shrink-0 pb-0.5 sm:pb-0">
               <button
                 type="submit"
-                disabled={!input.trim() || loading || listening || reviewing}
+                disabled={!input.trim() || loading || listening}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-semibold text-white transition-all rounded-lg disabled:opacity-40 bg-blue-600 hover:bg-blue-500 disabled:hover:bg-blue-600"
               >
                 {loading ? (
@@ -432,15 +351,15 @@ export default function Landing() {
               </button>
               <button
                 type="button"
-                disabled={loading || reviewing}
+                disabled={loading}
                 onClick={handleMicClick}
                 className={`relative p-2.5 rounded-lg transition-all disabled:opacity-40 ${
                   listening
-                    ? 'text-indigo-200 bg-indigo-500/25 landing-mic-listening'
+                    ? 'text-red-200 bg-red-500/25 landing-mic-listening'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
                 }`}
-                title={listening ? 'Parar de ouvir' : 'Falar'}
-                aria-label={listening ? 'Parar microfone' : 'Microfone'}
+                title={listening ? 'Concluir gravação' : 'Falar (segurar com cliques)'}
+                aria-label={listening ? 'Parar e usar texto' : 'Iniciar microfone'}
                 aria-pressed={listening}
               >
                 {listening && <span className="landing-mic-pulse" aria-hidden />}
@@ -449,19 +368,30 @@ export default function Landing() {
             </div>
           </form>
 
-          {(listening || reviewing || micError) && (
+          {(listening || micError) && (
             <div className="mt-4 w-full rounded-xl border backdrop-blur-md px-4 py-3.5 landing-mic-panel-in bg-zinc-900/85 border-zinc-700/80 text-left">
               {listening && (
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2">
                     <span className="landing-mic-dot" aria-hidden />
-                    <span className="text-sm font-semibold text-indigo-300">Ouvindo...</span>
+                    <span className="text-sm font-semibold text-red-300">A gravar…</span>
                     <button
                       type="button"
-                      onClick={stopMicEarly}
-                      className="ml-auto text-xs font-medium px-2.5 py-1 rounded-md transition-all text-zinc-400 hover:bg-zinc-800"
+                      onClick={() => stopStt()}
+                      className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-md transition-all text-white bg-red-600/80 hover:bg-red-500"
                     >
-                      Parar
+                      Concluir
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cancelStt();
+                        setLiveTranscript('');
+                        setMicError('');
+                      }}
+                      className="text-xs font-medium px-2 py-1 rounded-md text-zinc-400 hover:bg-zinc-800"
+                    >
+                      Cancelar
                     </button>
                   </div>
                   <p className="text-sm leading-relaxed min-h-[1.25rem] text-zinc-300">
@@ -469,55 +399,14 @@ export default function Landing() {
                   </p>
                   <div className="w-full h-1 rounded-full bg-zinc-800 overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-indigo-400 transition-[width] duration-75"
+                      className="h-full rounded-full bg-red-400 transition-[width] duration-75"
                       style={{ width: `${Math.round(Math.min(1, micVolume) * 100)}%` }}
                     />
                   </div>
-                  {micError ? (
-                    <p className="text-xs text-amber-300/90">{micError}</p>
-                  ) : null}
                 </div>
               )}
 
-              {reviewing && (
-                <div className="flex flex-col gap-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Texto capturado
-                  </p>
-                  <p className="text-sm leading-relaxed text-zinc-200">{capturedText}</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleConfirmVoice}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-semibold text-white rounded-lg transition-all disabled:opacity-40 bg-blue-600 hover:bg-blue-500"
-                    >
-                      <Check size={14} />
-                      Confirmar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={startMicListening}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium rounded-lg border transition-all disabled:opacity-40 text-zinc-300 border-zinc-700 hover:bg-zinc-800"
-                    >
-                      <RotateCcw size={14} />
-                      Gravar de novo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelVoice}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium rounded-lg transition-all disabled:opacity-40 text-zinc-500 hover:text-zinc-200"
-                    >
-                      <X size={14} />
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {micError && !listening && !reviewing && (
+              {micError && !listening && (
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm text-red-400">{micError}</p>
                   <button
@@ -547,12 +436,6 @@ export default function Landing() {
           </div>
         </div>
       </main>
-
-      <VoiceAssistantModal
-        open={jarvisOpen}
-        onClose={() => setJarvisOpen(false)}
-        onConfirmBuild={handleJarvisConfirmBuild}
-      />
     </div>
   );
 }

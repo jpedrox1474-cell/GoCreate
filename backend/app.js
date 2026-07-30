@@ -8,6 +8,7 @@ import githubRouter from './routes/github.js';
 import integrationsRouter from './routes/integrations.js';
 import meRouter from './routes/me.js';
 import deployRouter from './routes/deploy.js';
+import projectsRouter from './routes/projects.js';
 
 export function createApp() {
   const app = express();
@@ -49,6 +50,8 @@ export function createApp() {
   app.use('/api/me', meRouter);
   // Deploy production — premium gated (preview permanece free no cliente)
   app.use('/api/deploy', deployRouter);
+  // Cascade delete de projetos (Admin SDK) — owner only
+  app.use('/api/projects', projectsRouter);
 
   app.use((err, _req, res, _next) => {
     console.error('[server] Erro não tratado:', err);

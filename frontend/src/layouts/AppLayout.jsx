@@ -12,26 +12,25 @@ import {
   Loader2,
   Plug,
   Bot,
-  Database,
+  CheckSquare,
+  Trash2,
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
 import ProjectActionsMenu from '../components/ProjectActionsMenu';
 import Toast from '../components/Toast';
-import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import {
   listUserProjects,
   renameProject,
   deleteProject,
+  deleteProjects,
   duplicateProject,
 } from '../lib/projects';
-import { PENDING_PROMPT_KEY } from '../lib/mockData';
 
 const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
-  { to: '/entities', label: 'Banco de Dados', icon: Database },
   { to: '/automations', label: 'Automations', icon: Bot },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },
@@ -43,10 +42,12 @@ export default function AppLayout() {
   const { isLight } = useTheme();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [jarvisOpen, setJarvisOpen] = useState(false);
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const refreshProjects = useCallback(async () => {
     if (!user?.uid) return;
@@ -68,14 +69,6 @@ export default function AppLayout() {
   async function handleLogout() {
     await logout();
     navigate('/');
-  }
-
-  function handleJarvisConfirmBuild(prompt) {
-    setJarvisOpen(false);
-    const trimmed = (prompt || '').trim();
-    if (!trimmed) return;
-    sessionStorage.setItem(PENDING_PROMPT_KEY, trimmed);
-    navigate('/editor/new');
   }
 
   async function handleRename(project) {
@@ -113,10 +106,73 @@ export default function AppLayout() {
     try {
       await deleteProject(project.id);
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(project.id);
+        return next;
+      });
       setToast({ message: 'Projeto eliminado.', type: 'success' });
     } catch (err) {
       console.error('[AppLayout] delete:', err);
-      setToast({ message: 'Não foi possível eliminar.', type: 'error' });
+      setToast({
+        message: err?.message || 'Não foi possível eliminar.',
+        type: 'error',
+      });
+    }
+  }
+
+  function enterSelectFor(project) {
+    setSelectMode(true);
+    setSelectedIds(new Set([project.id]));
+  }
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(projects.map((p) => p.id)));
+  }
+
+  async function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (!ids.length || bulkDeleting) return;
+    if (
+      !window.confirm(
+        `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`
+      )
+    ) {
+      return;
+    }
+    setBulkDeleting(true);
+    try {
+      const result = await deleteProjects(ids);
+      const deleted = new Set(result.deleted || []);
+      setProjects((prev) => prev.filter((p) => !deleted.has(p.id)));
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      if (result.failed?.length) {
+        setToast({
+          message: `${deleted.size} eliminado(s); ${result.failed.length} falhou(aram).`,
+          type: 'error',
+        });
+      } else {
+        setToast({
+          message: `${ids.length} projeto${ids.length === 1 ? '' : 's'} eliminado${ids.length === 1 ? '' : 's'}.`,
+          type: 'success',
+        });
+      }
+    } catch (err) {
+      console.error('[AppLayout] bulk delete:', err);
+      setToast({ message: 'Falha ao apagar selecionados.', type: 'error' });
+      await refreshProjects();
+    } finally {
+      setBulkDeleting(false);
     }
   }
 
@@ -153,25 +209,48 @@ export default function AppLayout() {
           Novo Projeto
         </button>
 
-        <button
-          type="button"
-          onClick={() => {
-            setMobileOpen(false);
-            setJarvisOpen(true);
-          }}
-          className="w-full flex items-center gap-3 px-3 py-2.5 mt-2 rounded-lg text-sm font-medium text-indigo-200/90 hover:text-white border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 transition-all"
-        >
-          <span
-            className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shadow-sm shadow-indigo-500/40 shrink-0"
-            aria-hidden
-          />
-          Modo Jarvis
-        </button>
-
         <div className="mt-4 pt-3 border-t border-zinc-800/80">
-          <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-600 flex items-center gap-1">
-            <FolderKanban size={10} /> Recentes
-          </p>
+          <div className="px-2 mb-1.5 flex items-center justify-between gap-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600 flex items-center gap-1">
+              <FolderKanban size={10} /> Recentes
+            </p>
+            {projects.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectMode((v) => {
+                    if (v) setSelectedIds(new Set());
+                    return !v;
+                  });
+                }}
+                className="text-[10px] font-medium text-zinc-500 hover:text-zinc-300"
+              >
+                {selectMode ? 'Cancelar' : 'Selecionar'}
+              </button>
+            )}
+          </div>
+
+          {selectMode && projects.length > 0 && (
+            <div className="flex flex-wrap gap-1 px-1 mb-2">
+              <button
+                type="button"
+                onClick={selectAll}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-md border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              >
+                <CheckSquare size={10} /> Todos
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDelete}
+                disabled={!selectedIds.size || bulkDeleting}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded-md border border-red-500/40 text-red-400 hover:bg-red-600/15 disabled:opacity-40"
+              >
+                {bulkDeleting ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+                Apagar ({selectedIds.size})
+              </button>
+            </div>
+          )}
+
           {projectsLoading && !projects.length ? (
             <div className="flex items-center gap-2 px-2 py-2 text-zinc-500 text-xs">
               <Loader2 size={12} className="animate-spin" /> A carregar…
@@ -180,34 +259,63 @@ export default function AppLayout() {
             <p className="px-2 py-1 text-[11px] text-zinc-600">Ainda sem projetos.</p>
           ) : (
             <ul className="space-y-0.5">
-              {projects.map((p) => (
-                <li key={p.id} className="group flex items-center gap-0.5 rounded-lg hover:bg-zinc-900/60">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileOpen(false);
-                      navigate(`/editor/${p.id}`);
-                    }}
-                    className="flex-1 min-w-0 text-left px-2.5 py-2 text-xs text-zinc-400 hover:text-zinc-100 truncate"
-                    title={p.name}
+              {projects.map((p) => {
+                const selected = selectedIds.has(p.id);
+                return (
+                  <li
+                    key={p.id}
+                    className={`group flex items-center gap-0.5 rounded-lg hover:bg-zinc-900/60 ${
+                      selected ? 'bg-blue-600/10 ring-1 ring-blue-500/30' : ''
+                    }`}
                   >
-                    {p.name}
-                  </button>
-                  <div className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity pr-0.5">
-                    <ProjectActionsMenu
-                      project={p}
-                      size="xs"
-                      onOpen={(proj) => {
+                    {selectMode && (
+                      <button
+                        type="button"
+                        onClick={() => toggleSelected(p.id)}
+                        className={`ml-1 w-4 h-4 rounded border shrink-0 flex items-center justify-center ${
+                          selected
+                            ? 'bg-blue-600 border-blue-500 text-white'
+                            : 'border-zinc-600'
+                        }`}
+                        aria-label={selected ? 'Desselecionar' : 'Selecionar'}
+                      >
+                        {selected ? <CheckSquare size={10} /> : null}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectMode) {
+                          toggleSelected(p.id);
+                          return;
+                        }
                         setMobileOpen(false);
-                        navigate(`/editor/${proj.id}`);
+                        navigate(`/editor/${p.id}`);
                       }}
-                      onRename={handleRename}
-                      onDuplicate={handleDuplicate}
-                      onDelete={handleDelete}
-                    />
-                  </div>
-                </li>
-              ))}
+                      className="flex-1 min-w-0 text-left px-2.5 py-2 text-xs text-zinc-400 hover:text-zinc-100 truncate"
+                      title={p.name}
+                    >
+                      {p.name}
+                    </button>
+                    {!selectMode && (
+                      <div className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity pr-0.5">
+                        <ProjectActionsMenu
+                          project={p}
+                          size="xs"
+                          onSelect={enterSelectFor}
+                          onOpen={(proj) => {
+                            setMobileOpen(false);
+                            navigate(`/editor/${proj.id}`);
+                          }}
+                          onRename={handleRename}
+                          onDuplicate={handleDuplicate}
+                          onDelete={handleDelete}
+                        />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -292,11 +400,6 @@ export default function AppLayout() {
       </div>
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
-      <VoiceAssistantModal
-        open={jarvisOpen}
-        onClose={() => setJarvisOpen(false)}
-        onConfirmBuild={handleJarvisConfirmBuild}
-      />
     </div>
   );
 }

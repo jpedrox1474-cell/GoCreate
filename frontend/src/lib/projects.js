@@ -17,6 +17,12 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getAuth } from 'firebase/auth';
+import {
+  buildProjectThumbnailDataUrl,
+  deleteProjectViaApi,
+  bulkDeleteProjectsViaApi,
+} from './projectsApi';
 
 const WELCOME_MESSAGE = 'Olá! Bem-vindo ao GoCreate. O que vamos construir hoje?';
 
@@ -58,13 +64,24 @@ export function formatRelativeTime(ts) {
 
 export function mapProjectDoc(d) {
   const data = d.data();
+  const name = data.name || 'Projeto';
+  const color = data.color || 'from-blue-600 to-indigo-600';
+  const thumbnail =
+    data.thumbnailUrl ||
+    data.thumbnail ||
+    buildProjectThumbnailDataUrl(name, color);
   return {
     id: d.id,
-    name: data.name || 'Projeto',
+    name,
     description: data.description || 'Projeto criado com GoCreate',
     status: data.status || 'draft',
     framework: data.framework || 'React + Tailwind',
-    color: data.color || 'from-blue-600 to-indigo-600',
+    color,
+    thumbnail,
+    thumbnailUrl: data.thumbnailUrl || data.thumbnail || null,
+    customDomain: data.customDomain || '',
+    publishedUrl: data.publishedUrl || null,
+    publishedEnv: data.publishedEnv || null,
     isDefault: Boolean(data.isDefault),
     ownerId: data.ownerId,
     createdAt: data.createdAt,
@@ -139,24 +156,49 @@ export async function renameProject(projectId, name) {
   });
 }
 
-/**
- * Cascade delete: messages subcollection + publicProjects snapshots + project doc.
- * Batches of ≤400 ops (Firestore limit 500).
- */
-export async function deleteProject(projectId) {
+export async function updateProjectSettings(
+  projectId,
+  { name, description, customDomain } = {}
+) {
   if (!projectId) throw new Error('Projeto inválido.');
+  const patch = { updatedAt: serverTimestamp() };
+  if (name != null) {
+    const trimmed = String(name).trim();
+    if (!trimmed) throw new Error('Nome inválido.');
+    patch.name = trimmed;
+  }
+  if (description != null) {
+    patch.description = String(description).trim();
+  }
+  if (customDomain != null) {
+    patch.customDomain = String(customDomain).trim().toLowerCase();
+  }
+  await updateDoc(doc(db, 'projects', projectId), patch);
+}
 
+async function clientCascadeDelete(projectId) {
   const messagesSnap = await getDocs(collection(db, 'projects', projectId, 'messages'));
   const automationsSnap = await getDocs(collection(db, 'projects', projectId, 'automations'));
   const runsSnap = await getDocs(collection(db, 'projects', projectId, 'automationRuns'));
+  const entitiesSnap = await getDocs(collection(db, 'projects', projectId, 'entities'));
+
   const toDelete = [
     ...messagesSnap.docs.map((d) => d.ref),
     ...automationsSnap.docs.map((d) => d.ref),
     ...runsSnap.docs.map((d) => d.ref),
+  ];
+
+  for (const ent of entitiesSnap.docs) {
+    const rowsSnap = await getDocs(collection(db, 'projects', projectId, 'entities', ent.id, 'rows'));
+    toDelete.push(...rowsSnap.docs.map((d) => d.ref));
+    toDelete.push(ent.ref);
+  }
+
+  toDelete.push(
     doc(db, 'publicProjects', projectId),
     doc(db, 'publicProjects', `${projectId}_preview`),
-    doc(db, 'projects', projectId),
-  ];
+    doc(db, 'projects', projectId)
+  );
 
   const CHUNK = 400;
   for (let i = 0; i < toDelete.length; i += CHUNK) {
@@ -166,6 +208,75 @@ export async function deleteProject(projectId) {
     }
     await batch.commit();
   }
+}
+
+async function getIdTokenOptional() {
+  try {
+    const user = getAuth().currentUser;
+    if (!user) return null;
+    return await user.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cascade delete: API Admin first, client fallback (messages, automations,
+ * entities+rows, publicProjects, project doc).
+ */
+export async function deleteProject(projectId) {
+  if (!projectId) throw new Error('Projeto inválido.');
+
+  const token = await getIdTokenOptional();
+  if (token) {
+    try {
+      await deleteProjectViaApi(projectId, token);
+      return;
+    } catch (err) {
+      console.warn('[projects] API delete falhou, a tentar cliente:', err?.message || err);
+    }
+  }
+
+  await clientCascadeDelete(projectId);
+}
+
+/** Bulk delete via API when possible; otherwise sequential client cascade. */
+export async function deleteProjects(projectIds) {
+  const ids = [...new Set((projectIds || []).filter(Boolean))];
+  if (!ids.length) return { deleted: [], failed: [] };
+
+  const token = await getIdTokenOptional();
+  if (token) {
+    try {
+      const result = await bulkDeleteProjectsViaApi(ids, token);
+      const failedIds = new Set((result.failed || []).map((f) => f.projectId));
+      // Retry any API failures with client cascade
+      for (const id of failedIds) {
+        try {
+          await clientCascadeDelete(id);
+          result.deleted = [...(result.deleted || []), id];
+          result.failed = (result.failed || []).filter((f) => f.projectId !== id);
+        } catch {
+          /* keep in failed */
+        }
+      }
+      return result;
+    } catch (err) {
+      console.warn('[projects] bulk API delete falhou:', err?.message || err);
+    }
+  }
+
+  const deleted = [];
+  const failed = [];
+  for (const id of ids) {
+    try {
+      await clientCascadeDelete(id);
+      deleted.push(id);
+    } catch (err) {
+      failed.push({ projectId: id, error: err?.message || 'Falha' });
+    }
+  }
+  return { ok: failed.length === 0, deleted, failed };
 }
 
 /** Cria um novo projeto com o mesmo nome/descrição (sem histórico). */
@@ -271,12 +382,14 @@ export async function publishProject(
 
   await setDoc(doc(db, 'publicProjects', pubId), payload, { merge: true });
 
+  const thumb = buildProjectThumbnailDataUrl(name || 'Projeto');
   try {
     await updateDoc(doc(db, 'projects', projectId), {
       status: 'preview',
       publishedUrl: url,
       publishedEnv: 'preview',
       publishedAt: serverTimestamp(),
+      thumbnailUrl: thumb,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {

@@ -28,6 +28,7 @@ const FILES = [
   'routes/integrations.js',
   'routes/me.js',
   'routes/deploy.js',
+  'routes/projects.js',
   'services/gemini.js',
   'services/mercadopago.js',
   'services/stripe.js',

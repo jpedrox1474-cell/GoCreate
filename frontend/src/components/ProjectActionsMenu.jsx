@@ -6,11 +6,11 @@ import {
   Pencil,
   Copy,
   Trash2,
+  CheckSquare,
 } from 'lucide-react';
 
 /**
- * Three-dots project menu — Abrir / Renomear / Duplicar / Eliminar.
- * Dark Premium zinc dropdown; portals to body so overflow parents don't clip.
+ * Three-dots project menu — Selecionar / Abrir / Renomear / Duplicar / Eliminar.
  */
 export default function ProjectActionsMenu({
   project,
@@ -18,6 +18,7 @@ export default function ProjectActionsMenu({
   onRename,
   onDuplicate,
   onDelete,
+  onSelect,
   disabled = false,
   size = 'sm',
   align = 'right',
@@ -41,7 +42,7 @@ export default function ProjectActionsMenu({
       let left = align === 'left' ? r.left : r.right - menuW;
       left = Math.max(pad, Math.min(left, window.innerWidth - menuW - pad));
       let top = r.bottom + 4;
-      const approxH = 160;
+      const approxH = 200;
       if (top + approxH > window.innerHeight - pad) {
         top = Math.max(pad, r.top - approxH - 4);
       }
@@ -75,6 +76,15 @@ export default function ProjectActionsMenu({
   const btnPad = size === 'xs' ? 'p-1' : 'p-1.5';
 
   const items = [
+    onSelect && {
+      key: 'select',
+      label: 'Selecionar',
+      icon: CheckSquare,
+      onClick: () => {
+        setOpen(false);
+        onSelect(project);
+      },
+    },
     onOpen && {
       key: 'open',
       label: 'Abrir',
