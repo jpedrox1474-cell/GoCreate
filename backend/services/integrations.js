@@ -13,6 +13,8 @@ import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import Stripe from 'stripe';
 import { isMercadoPagoConfigured, getAccessToken as getPlatformMpToken } from './mercadopago.js';
 import { isStripeConfigured } from './stripe.js';
+import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js';
+import { isMetaConfigured } from './meta.js';
 
 /** Providers que aceitam connect via API key no backend. */
 export const CONNECTABLE_PROVIDERS = new Set([
@@ -25,6 +27,13 @@ export const CONNECTABLE_PROVIDERS = new Set([
   'ga4',
   'posthog',
   'google_maps',
+]);
+
+/** Canais premium (VPS Evolution / Meta) — estado em users.integrations. */
+export const SOCIAL_CHANNEL_PROVIDERS = new Set([
+  'whatsapp_evolution',
+  'instagram',
+  'facebook',
 ]);
 
 /** Providers “sempre ligados” via plataforma GoCreate. */
@@ -202,13 +211,148 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
     },
   };
 
+  // —— Canais premium (Evolution / Meta) ——
+  const waEvo = integrationsMeta.whatsapp_evolution;
+  providers.whatsapp_evolution = {
+    id: 'whatsapp_evolution',
+    status: waEvo?.connected ? 'connected' : 'available',
+    source: 'evolution',
+    meta: waEvo?.connected
+      ? stripTimestamps(waEvo)
+      : { evolutionConfigured: isEvolutionConfigured() },
+  };
+
+  const ig = integrationsMeta.instagram;
+  const fb = integrationsMeta.facebook;
+  providers.instagram = {
+    id: 'instagram',
+    status: ig?.connected ? 'connected' : 'available',
+    source: 'meta',
+    meta: ig?.connected
+      ? stripTimestamps(ig)
+      : { metaConfigured: isMetaConfigured() },
+  };
+  providers.facebook = {
+    id: 'facebook',
+    status: fb?.connected ? 'connected' : 'available',
+    source: 'meta',
+    meta: fb?.connected
+      ? stripTimestamps(fb)
+      : { metaConfigured: isMetaConfigured() },
+  };
+
   return {
     providers,
     platform: {
       mercadopagoBilling: isMercadoPagoConfigured(),
       stripeBilling: isStripeConfigured(),
+      evolutionApi: isEvolutionConfigured(),
+      metaApp: isMetaConfigured(),
     },
   };
+}
+
+/**
+ * Persiste estado público WhatsApp Evolution (após QR confirmado).
+ */
+export async function markWhatsAppEvolutionConnected(uid, { instanceName } = {}) {
+  const name = String(instanceName || '').trim() || buildInstanceNameForUser(uid);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const meta = {
+    connected: true,
+    instanceName: name,
+    connectedAt: now,
+    updatedAt: now,
+  };
+  await userRef(uid).set({ integrations: { whatsapp_evolution: meta } }, { merge: true });
+  return { providerId: 'whatsapp_evolution', connected: true, meta: stripTimestamps(meta) };
+}
+
+export async function clearWhatsAppEvolutionConnection(uid) {
+  await userRef(uid).set(
+    { integrations: { whatsapp_evolution: admin.firestore.FieldValue.delete() } },
+    { merge: true }
+  );
+  return { providerId: 'whatsapp_evolution', connected: false };
+}
+
+/**
+ * Guarda tokens Meta (secrets) + meta pública Instagram/Facebook.
+ */
+export async function saveMetaSocialConnection(uid, payload) {
+  const {
+    pageId,
+    pageName,
+    pageAccessToken,
+    instagramAccountId,
+    instagramUsername,
+    userAccessToken,
+  } = payload || {};
+
+  if (!pageId || !pageAccessToken || !instagramAccountId) {
+    const err = new Error('Dados Meta incompletos (página + Instagram Business).');
+    err.status = 400;
+    err.code = 'META_INCOMPLETE';
+    throw err;
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await secretsRef(uid, 'meta').set(
+    {
+      providerId: 'meta',
+      metaPageAccessToken: pageAccessToken,
+      metaUserAccessToken: userAccessToken || null,
+      metaFacebookPageId: pageId,
+      metaInstagramAccountId: instagramAccountId,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
+
+  const igMeta = {
+    connected: true,
+    username: instagramUsername || null,
+    accountId: instagramAccountId,
+    connectedAt: now,
+    updatedAt: now,
+  };
+  const fbMeta = {
+    connected: true,
+    pageName: pageName || null,
+    pageId,
+    connectedAt: now,
+    updatedAt: now,
+  };
+
+  await userRef(uid).set(
+    {
+      integrations: {
+        instagram: igMeta,
+        facebook: fbMeta,
+      },
+    },
+    { merge: true }
+  );
+
+  return {
+    success: true,
+    instagram: stripTimestamps(igMeta),
+    facebook: stripTimestamps(fbMeta),
+  };
+}
+
+export async function clearMetaSocialConnection(uid) {
+  await secretsRef(uid, 'meta').delete().catch(() => {});
+  await userRef(uid).set(
+    {
+      integrations: {
+        instagram: admin.firestore.FieldValue.delete(),
+        facebook: admin.firestore.FieldValue.delete(),
+      },
+    },
+    { merge: true }
+  );
+  return { success: true, connected: false };
 }
 
 function stripTimestamps(obj) {

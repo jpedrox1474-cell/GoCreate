@@ -30,6 +30,7 @@ import {
   MapPin,
   QrCode,
   FileText,
+  Share2,
   Plug,
   Check,
   Loader2,
@@ -37,6 +38,7 @@ import {
 } from 'lucide-react';
 import Toast from '../components/Toast';
 import ConnectIntegrationModal from '../components/integrations/ConnectIntegrationModal';
+import SocialChannelsSection from '../components/integrations/SocialChannelsSection';
 import {
   INTEGRATIONS_CATALOG,
   INTEGRATION_CATEGORIES,
@@ -82,6 +84,7 @@ const ICONS = {
   MapPin,
   QrCode,
   FileText,
+  Share2,
   Plug,
 };
 
@@ -102,6 +105,8 @@ export default function Integrations() {
   const { user } = useAuth();
   const { canUsePremium, openPremiumPaywall } = useCredits();
   const [statusMap, setStatusMap] = useState({});
+  const [platformFlags, setPlatformFlags] = useState({});
+  const [idToken, setIdToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -113,8 +118,10 @@ export default function Integrations() {
     if (!user) return;
     try {
       const token = await user.getIdToken();
+      setIdToken(token);
       const data = await getIntegrationsStatus({ idToken: token });
       setStatusMap(data?.providers || {});
+      setPlatformFlags(data?.platform || {});
     } catch (err) {
       console.error('[Integrations] status:', err);
       setToast({ message: err.message || 'Erro ao carregar integrações.', type: 'error' });
@@ -129,7 +136,10 @@ export default function Integrations() {
 
   const cards = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const SOCIAL_SECTION_IDS = new Set(['whatsapp_evolution', 'instagram', 'facebook']);
     return INTEGRATIONS_CATALOG.filter((item) => {
+      // Secção premium dedicada — evita cartões duplicados no grid
+      if (SOCIAL_SECTION_IDS.has(item.id)) return false;
       if (category !== 'all' && item.category !== category) return false;
       if (!q) return true;
       return (
@@ -295,6 +305,18 @@ export default function Integrations() {
           ))}
         </div>
       </div>
+
+      {!loading ? (
+        <SocialChannelsSection
+          canUsePremium={canUsePremium}
+          openPremiumPaywall={openPremiumPaywall}
+          idToken={idToken}
+          statusMap={statusMap}
+          platform={platformFlags}
+          onRefresh={refresh}
+          onToast={setToast}
+        />
+      ) : null}
 
       {loading ? (
         <div className="flex items-center justify-center py-24 text-zinc-500 gap-2">

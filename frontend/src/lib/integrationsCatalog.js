@@ -16,6 +16,7 @@ export const INTEGRATION_CATEGORIES = [
   { id: 'database', label: 'Base de dados' },
   { id: 'email', label: 'E-mail' },
   { id: 'messaging', label: 'Mensagens' },
+  { id: 'social', label: 'Atendimento & Social' },
   { id: 'analytics', label: 'Analytics' },
   { id: 'storage', label: 'Storage' },
   { id: 'ecommerce', label: 'E-commerce' },
@@ -23,7 +24,7 @@ export const INTEGRATION_CATEGORIES = [
   { id: 'brazil', label: 'Brasil' },
 ];
 
-/** @typedef {'payments'|'auth'|'database'|'email'|'messaging'|'analytics'|'storage'|'ecommerce'|'maps'|'brazil'} CategoryId */
+/** @typedef {'payments'|'auth'|'database'|'email'|'messaging'|'social'|'analytics'|'storage'|'ecommerce'|'maps'|'brazil'} CategoryId */
 /** @typedef {'platform'|'oauth'|'api_key'|'coming_soon'} ConnectType */
 
 /**
@@ -259,37 +260,65 @@ export const INTEGRATIONS_CATALOG = [
     competitors: ['Base44'],
   },
 
-  // —— Messaging ——
+  // —— Messaging / Social (ver também secção premium Canais) ——
   {
     id: 'whatsapp',
-    name: 'WhatsApp Business',
+    name: 'WhatsApp (wa.me)',
     category: 'messaging',
-    description: 'Links wa.me e Cloud API (Meta).',
+    description:
+      'Telefone padrão para links wa.me. Para QR Evolution (VPS), usa a secção Canais de Atendimento & Social.',
     icon: 'MessageCircle',
     connectType: 'api_key',
     fields: [
-      {
-        key: 'phoneNumberId',
-        label: 'Phone Number ID',
-        placeholder: '1234567890',
-        required: false,
-      },
-      {
-        key: 'accessToken',
-        label: 'Access Token (Cloud API)',
-        placeholder: 'EAAG…',
-        secret: true,
-        required: false,
-      },
       {
         key: 'defaultPhone',
         label: 'Telefone padrão (wa.me)',
         placeholder: '5511999999999',
         required: true,
       },
+      {
+        key: 'phoneNumberId',
+        label: 'Phone Number ID (Cloud API, opcional)',
+        placeholder: '1234567890',
+        required: false,
+      },
+      {
+        key: 'accessToken',
+        label: 'Access Token Cloud API (opcional)',
+        placeholder: 'EAAG…',
+        secret: true,
+        required: false,
+      },
     ],
     docsUrl: 'https://developers.facebook.com/docs/whatsapp',
     competitors: ['Nova', 'Base44', 'Lovable'],
+  },
+  {
+    id: 'whatsapp_evolution',
+    name: 'WhatsApp Evolution',
+    category: 'social',
+    description: 'QR Code Evolution API no VPS — secção premium acima.',
+    icon: 'MessageCircle',
+    connectType: 'coming_soon',
+    competitors: ['BarberPro'],
+  },
+  {
+    id: 'instagram',
+    name: 'Instagram',
+    category: 'social',
+    description: 'Conta Professional via Meta — secção premium Canais.',
+    icon: 'Image',
+    connectType: 'coming_soon',
+    competitors: ['ManuTV'],
+  },
+  {
+    id: 'facebook',
+    name: 'Facebook',
+    category: 'social',
+    description: 'Página Facebook via Meta — secção premium Canais.',
+    icon: 'Share2',
+    connectType: 'coming_soon',
+    competitors: ['ManuTV'],
   },
   {
     id: 'twilio',

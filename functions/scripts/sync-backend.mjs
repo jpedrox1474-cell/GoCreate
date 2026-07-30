@@ -35,6 +35,8 @@ const FILES = [
   'services/github.js',
   'services/integrations.js',
   'services/entities.js',
+  'services/evolution.js',
+  'services/meta.js',
 ];
 
 function ensureDir(filePath) {
