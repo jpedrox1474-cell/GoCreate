@@ -19,6 +19,7 @@ import VideoBackground from '../components/VideoBackground';
 import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import { useAuth } from '../context/AuthContext';
 import { PENDING_PROMPT_KEY } from '../lib/mockData';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 
 const PROMPT_STARTERS = [
   'Painel com métricas ao vivo',
@@ -51,11 +52,6 @@ const MODELOS = [
   },
 ];
 
-function getSpeechRecognition() {
-  if (typeof window === 'undefined') return null;
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
-
 /**
  * Landing pública — Dark Mode Premium (sempre escuro).
  * Mic = speech-to-text + confirmação; Jarvis = modal dedicado.
@@ -74,10 +70,41 @@ export default function Landing() {
   const [micError, setMicError] = useState('');
 
   const textareaRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const finalTranscriptRef = useRef('');
-  const finishedRef = useRef(false);
   const modelosRef = useRef(null);
+  const micPhaseRef = useRef('idle');
+
+  const finishListening = useCallback((transcript) => {
+    const text = (transcript || '').trim();
+    setLiveTranscript('');
+    if (!text) {
+      setMicPhase('idle');
+      micPhaseRef.current = 'idle';
+      setCapturedText('');
+      setMicError((prev) => prev || 'Não capturou áudio. Tente de novo.');
+      return;
+    }
+    setCapturedText(text);
+    setMicError('');
+    setMicPhase('review');
+    micPhaseRef.current = 'review';
+  }, []);
+
+  const {
+    listening: sttListening,
+    transcript: sttTranscript,
+    volume: micVolume,
+    start: startStt,
+    stop: stopStt,
+    cancel: cancelStt,
+    supported: sttSupported,
+  } = useSpeechRecognition({
+    onCommit: finishListening,
+    onInterim: setLiveTranscript,
+    onError: (msg) => setMicError(msg),
+    lang: 'pt-BR',
+    autoCommitOnSilence: true,
+    silenceMs: 1600,
+  });
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -101,21 +128,9 @@ export default function Landing() {
     };
   }, []);
 
-  const stopRecognition = useCallback(() => {
-    const rec = recognitionRef.current;
-    recognitionRef.current = null;
-    if (!rec) return;
-    try {
-      rec.onresult = null;
-      rec.onerror = null;
-      rec.onend = null;
-      rec.stop();
-    } catch {
-      /* already stopped */
-    }
-  }, []);
-
-  useEffect(() => () => stopRecognition(), [stopRecognition]);
+  useEffect(() => {
+    if (sttListening && sttTranscript) setLiveTranscript(sttTranscript);
+  }, [sttListening, sttTranscript]);
 
   function submitPrompt(text) {
     const trimmed = (text || '').trim();
@@ -152,92 +167,31 @@ export default function Landing() {
     await logout();
   }
 
-  function finishListening(transcript) {
-    stopRecognition();
-    finishedRef.current = true;
-    const text = (transcript || '').trim();
-    setLiveTranscript('');
-    if (!text) {
-      setMicPhase('idle');
-      setCapturedText('');
-      if (!micError) {
-        setMicError('Não capturou áudio. Tente de novo.');
-      }
-      return;
-    }
-    setCapturedText(text);
-    setMicError('');
-    setMicPhase('review');
-  }
-
   function startMicListening() {
-    if (loading || micPhase === 'listening') return;
-    stopRecognition();
-    finishedRef.current = false;
-    finalTranscriptRef.current = '';
+    if (loading || micPhase === 'listening' || sttListening) return;
     setLiveTranscript('');
     setCapturedText('');
     setMicError('');
-    setMicPhase('listening');
-
-    const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition) {
-      setMicError('Microfone indisponível neste navegador.');
+    if (!sttSupported) {
+      setMicError('Reconhecimento de voz indisponível neste navegador (use Chrome)');
       setMicPhase('idle');
+      micPhaseRef.current = 'idle';
       setInput((prev) => prev || 'Descreve o que queres criar por voz…');
       textareaRef.current?.focus();
       return;
     }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'pt-BR';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
-    recognitionRef.current = recognition;
-
-    recognition.onresult = (event) => {
-      let interim = '';
-      let finalText = finalTranscriptRef.current;
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const piece = event.results[i][0]?.transcript || '';
-        if (event.results[i].isFinal) {
-          finalText = `${finalText} ${piece}`.trim();
-        } else {
-          interim += piece;
-        }
-      }
-      finalTranscriptRef.current = finalText;
-      setLiveTranscript((finalText || interim).trim());
-    };
-
-    recognition.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        setMicError('Permissão do microfone negada.');
-      }
-      finishListening(finalTranscriptRef.current);
-    };
-
-    recognition.onend = () => {
-      if (finishedRef.current) return;
-      finishListening(finalTranscriptRef.current);
-    };
-
-    try {
-      recognition.start();
-    } catch {
-      setMicError('Não foi possível iniciar o microfone.');
-      setMicPhase('idle');
-    }
+    setMicPhase('listening');
+    micPhaseRef.current = 'listening';
+    void startStt();
   }
 
   function stopMicEarly() {
-    if (micPhase !== 'listening') return;
-    finishListening(finalTranscriptRef.current);
+    if (micPhase !== 'listening' && !sttListening) return;
+    stopStt();
   }
 
   function handleMicClick() {
-    if (micPhase === 'listening') {
+    if (micPhase === 'listening' || sttListening) {
       stopMicEarly();
       return;
     }
@@ -249,14 +203,16 @@ export default function Landing() {
     if (!text) return;
     setInput(text);
     setMicPhase('idle');
+    micPhaseRef.current = 'idle';
     setCapturedText('');
     setLiveTranscript('');
     requestAnimationFrame(() => submitPrompt(text));
   }
 
   function handleCancelVoice() {
-    stopRecognition();
+    cancelStt();
     setMicPhase('idle');
+    micPhaseRef.current = 'idle';
     setCapturedText('');
     setLiveTranscript('');
     setMicError('');
@@ -270,7 +226,7 @@ export default function Landing() {
     }
   }
 
-  const listening = micPhase === 'listening';
+  const listening = micPhase === 'listening' || sttListening;
   const reviewing = micPhase === 'review';
 
   return (
@@ -505,6 +461,15 @@ export default function Landing() {
                   <p className="text-sm leading-relaxed min-h-[1.25rem] text-zinc-300">
                     {liveTranscript || <span className="text-zinc-500">Fale o que quer criar…</span>}
                   </p>
+                  <div className="w-full h-1 rounded-full bg-zinc-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-indigo-400 transition-[width] duration-75"
+                      style={{ width: `${Math.round(Math.min(1, micVolume) * 100)}%` }}
+                    />
+                  </div>
+                  {micError ? (
+                    <p className="text-xs text-amber-300/90">{micError}</p>
+                  ) : null}
                 </div>
               )}
 

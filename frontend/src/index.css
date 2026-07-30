@@ -255,7 +255,10 @@ html.light .gc-themed .custom-scrollbar::-webkit-scrollbar-thumb:hover {
 }
 
 .jarvis-orb--listening {
-  animation: jarvis-pulse-organic 0.85s ease-in-out infinite;
+  /* Volume scale from --jarvis-vol (0–1); pulse lives on filter/shadow so it doesn't fight transform */
+  transform: scale(calc(1 + var(--jarvis-vol, 0) * 0.45));
+  animation: jarvis-pulse-listen 0.85s ease-in-out infinite;
+  transition: transform 80ms linear;
 }
 
 .jarvis-orb--thinking {
@@ -339,6 +342,16 @@ html.light .gc-themed .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   75% {
     transform: scale(1.06) translate(1px, 1px);
     filter: brightness(1.1);
+  }
+}
+
+@keyframes jarvis-pulse-listen {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.2);
   }
 }
 

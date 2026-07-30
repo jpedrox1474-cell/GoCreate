@@ -1,11 +1,15 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { X, Mic } from 'lucide-react';
+import {
+  useSpeechRecognition,
+  stopTts,
+  speechErrorMessage,
+} from '../../hooks/useSpeechRecognition';
 
-const IDLE_MESSAGE = 'Pressione espaço ou clique para falar...';
-const LISTENING_MESSAGE = 'Ouvindo...';
+const IDLE_MESSAGE = 'Toque no orbe ou em Falar para começar';
+const LISTENING_MESSAGE = 'Ouvindo… fale agora';
 const CONFIRM_CAPTION =
   'Confirme para gerar. Diga «confirmar» ou toque em Sim, execute.';
-const DEFAULT_CHAT_REPLY = 'Estou aqui! O que gostaria de criar hoje?';
 
 /** PT creation-intent keywords (case-insensitive). */
 const CREATION_INTENT_RE =
@@ -16,11 +20,6 @@ const CONFIRM_VOICE_RE =
   /\b(confirmar?|confirma|confirmado|sim|execute|executar|pode|ok|okay|vai|gerar)\b/i;
 
 const CANCEL_VOICE_RE = /\b(cancelar?|cancela|n[aã]o|parar|para)\b/i;
-
-function getSpeechRecognition() {
-  if (typeof window === 'undefined') return null;
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
 
 function hasCreationIntent(text) {
   return CREATION_INTENT_RE.test((text || '').trim());
@@ -57,18 +56,7 @@ function craftBuildPrompt(text) {
   if (!cleaned) {
     return 'Crie um projeto web moderno conforme a conversa.';
   }
-  // Capitalize first letter
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-}
-
-function stopTts() {
-  try {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-  } catch {
-    /* ignore */
-  }
 }
 
 /** Browser TTS (pt-BR) for voice-to-voice replies. */
@@ -93,30 +81,39 @@ function speakText(text) {
   }
 }
 
+function useShowDebug() {
+  return useMemo(() => {
+    if (import.meta.env.DEV) return true;
+    try {
+      return new URLSearchParams(window.location.search).has('debug');
+    } catch {
+      return false;
+    }
+  }, []);
+}
+
 /**
  * Modo Jarvis — voice helper. Helps craft ideas; never builds until confirm.
  * States: idle → listening → chatting | awaiting_confirm
  * Props: open, onClose, onConfirmBuild(prompt)
  */
 export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
-  const [conversationState, setConversationState] = useState('idle'); // idle | listening | chatting | awaiting_confirm
-  const [statusHint, setStatusHint] = useState(''); // unsupported | denied | ''
+  const [conversationState, setConversationState] = useState('idle');
+  const [statusHint, setStatusHint] = useState('');
   const [closing, setClosing] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [caption, setCaption] = useState('');
   const [buildPrompt, setBuildPrompt] = useState('');
   const [debugInput, setDebugInput] = useState('');
+  const [listenError, setListenError] = useState('');
 
-  const recognitionRef = useRef(null);
-  const finalTranscriptRef = useRef('');
-  const finishedRef = useRef(false);
   const chatIdleTimerRef = useRef(null);
-  const listenSafetyRef = useRef(null);
+  const autoListenTimerRef = useRef(null);
   const conversationStateRef = useRef('idle');
   const buildPromptRef = useRef('');
-  /** True while we have a crafted prompt waiting for confirm (survives listen toggles). */
   const pendingConfirmRef = useRef(false);
   const confirmBuildRef = useRef(null);
+  const showDebug = useShowDebug();
 
   const setState = useCallback((next) => {
     conversationStateRef.current = next;
@@ -130,70 +127,32 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     }
   }, []);
 
-  const clearListenSafety = useCallback(() => {
-    if (listenSafetyRef.current) {
-      clearTimeout(listenSafetyRef.current);
-      listenSafetyRef.current = null;
+  const clearAutoListen = useCallback(() => {
+    if (autoListenTimerRef.current) {
+      clearTimeout(autoListenTimerRef.current);
+      autoListenTimerRef.current = null;
     }
   }, []);
 
-  const stopRecognition = useCallback(() => {
-    clearListenSafety();
-    const rec = recognitionRef.current;
-    recognitionRef.current = null;
-    if (!rec) return;
-    try {
-      rec.onresult = null;
-      rec.onerror = null;
-      rec.onend = null;
-      rec.stop();
-    } catch {
-      /* already stopped */
-    }
-  }, [clearListenSafety]);
-
-  const resetToIdle = useCallback(() => {
-    clearChatIdleTimer();
-    stopRecognition();
-    stopTts();
-    finishedRef.current = false;
-    finalTranscriptRef.current = '';
-    buildPromptRef.current = '';
-    pendingConfirmRef.current = false;
-    setLiveTranscript('');
-    setCaption('');
-    setBuildPrompt('');
-    setStatusHint('');
-    setState('idle');
-  }, [clearChatIdleTimer, stopRecognition, setState]);
-
-  const enterAwaitingConfirm = useCallback(
-    (rawText) => {
-      const prompt = craftBuildPrompt(rawText);
-      buildPromptRef.current = prompt;
-      pendingConfirmRef.current = true;
-      setBuildPrompt(prompt);
-      setCaption(CONFIRM_CAPTION);
-      setLiveTranscript('');
-      setState('awaiting_confirm');
-      speakText(CONFIRM_CAPTION);
-    },
-    [setState]
-  );
-
-  const handleSimulatedVoiceInput = useCallback(
+  const handleVoiceCommit = useCallback(
     (text) => {
       clearChatIdleTimer();
-      stopRecognition();
-      finishedRef.current = true;
       const raw = (text || '').trim();
       setLiveTranscript('');
-      setStatusHint('');
+      setListenError('');
 
-      // While a crafted prompt awaits confirm (including mid-listen for voice confirm)
       if (pendingConfirmRef.current) {
         if (isCancelPhrase(raw)) {
-          resetToIdle();
+          clearChatIdleTimer();
+          stopTts();
+          buildPromptRef.current = '';
+          pendingConfirmRef.current = false;
+          setLiveTranscript('');
+          setCaption('');
+          setBuildPrompt('');
+          setStatusHint('');
+          setListenError('');
+          setState('idle');
           return;
         }
         if (isConfirmPhrase(raw)) {
@@ -201,7 +160,14 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
           return;
         }
         if (hasCreationIntent(raw)) {
-          enterAwaitingConfirm(raw);
+          const prompt = craftBuildPrompt(raw);
+          buildPromptRef.current = prompt;
+          pendingConfirmRef.current = true;
+          setBuildPrompt(prompt);
+          setCaption(CONFIRM_CAPTION);
+          setLiveTranscript('');
+          setState('awaiting_confirm');
+          speakText(CONFIRM_CAPTION);
           return;
         }
         const clarify = 'Não entendi. Diga «confirmar» para gerar, ou «cancelar».';
@@ -212,13 +178,26 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
       }
 
       if (hasCreationIntent(raw)) {
-        enterAwaitingConfirm(raw);
+        const prompt = craftBuildPrompt(raw);
+        buildPromptRef.current = prompt;
+        pendingConfirmRef.current = true;
+        setBuildPrompt(prompt);
+        setCaption(CONFIRM_CAPTION);
+        setLiveTranscript('');
+        setState('awaiting_confirm');
+        speakText(CONFIRM_CAPTION);
         return;
       }
 
       setBuildPrompt('');
       buildPromptRef.current = '';
       pendingConfirmRef.current = false;
+      // Empty commit after auto-start silence → soft idle, not error chatter
+      if (!raw) {
+        setCaption('');
+        setState('idle');
+        return;
+      }
       const reply = chatReplyFor(raw);
       setCaption(reply);
       setState('chatting');
@@ -231,18 +210,54 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
         }
       }, 5500);
     },
-    [clearChatIdleTimer, stopRecognition, setState, resetToIdle, enterAwaitingConfirm]
+    [clearChatIdleTimer, setState]
   );
 
-  const startListening = useCallback(() => {
-    if (conversationStateRef.current === 'listening') return;
+  const {
+    listening,
+    transcript,
+    volume,
+    error: sttError,
+    start: startStt,
+    stop: stopStt,
+    cancel: cancelStt,
+    supported,
+  } = useSpeechRecognition({
+    onCommit: handleVoiceCommit,
+    onInterim: setLiveTranscript,
+    onError: (msg) => {
+      setListenError(msg);
+      if (msg.includes('negada') || msg.includes('indisponível')) {
+        setStatusHint(msg.includes('negada') ? 'denied' : 'unsupported');
+      }
+    },
+    lang: 'pt-BR',
+    autoCommitOnSilence: true,
+    silenceMs: 1600,
+  });
+
+  const resetToIdle = useCallback(() => {
     clearChatIdleTimer();
-    stopRecognition();
+    clearAutoListen();
+    cancelStt();
     stopTts();
-    finishedRef.current = false;
-    finalTranscriptRef.current = '';
+    buildPromptRef.current = '';
+    pendingConfirmRef.current = false;
     setLiveTranscript('');
-    // Keep crafted prompt when re-listening for voice confirm
+    setCaption('');
+    setBuildPrompt('');
+    setStatusHint('');
+    setListenError('');
+    setState('idle');
+  }, [clearChatIdleTimer, clearAutoListen, cancelStt, setState]);
+
+  const startListening = useCallback(() => {
+    if (conversationStateRef.current === 'listening' || listening) return;
+    clearChatIdleTimer();
+    clearAutoListen();
+    stopTts();
+    setLiveTranscript('');
+    setListenError('');
     if (pendingConfirmRef.current) {
       setCaption('Ouvindo confirmação… diga «confirmar»');
     } else {
@@ -252,96 +267,47 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     }
     setStatusHint('');
     setState('listening');
-
-    const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition) {
-      setStatusHint('unsupported');
-      setTimeout(() => {
-        if (conversationStateRef.current === 'listening') {
-          handleSimulatedVoiceInput('');
-        }
-      }, 1200);
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'pt-BR';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
-    recognitionRef.current = recognition;
-
-    recognition.onresult = (event) => {
-      let interim = '';
-      let finalText = finalTranscriptRef.current;
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const piece = event.results[i][0]?.transcript || '';
-        if (event.results[i].isFinal) {
-          finalText = `${finalText} ${piece}`.trim();
-        } else {
-          interim += piece;
-        }
-      }
-      finalTranscriptRef.current = finalText;
-      setLiveTranscript((finalText || interim).trim());
-    };
-
-    recognition.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        setStatusHint('denied');
-        handleSimulatedVoiceInput(finalTranscriptRef.current);
-        return;
-      }
-      handleSimulatedVoiceInput(finalTranscriptRef.current);
-    };
-
-    recognition.onend = () => {
-      if (finishedRef.current) return;
-      handleSimulatedVoiceInput(finalTranscriptRef.current);
-    };
-
-    try {
-      recognition.start();
-    } catch {
-      handleSimulatedVoiceInput('');
-      return;
-    }
-
-    clearListenSafety();
-    listenSafetyRef.current = setTimeout(() => {
-      listenSafetyRef.current = null;
-      if (!finishedRef.current && conversationStateRef.current === 'listening') {
-        handleSimulatedVoiceInput(finalTranscriptRef.current);
-      }
-    }, 12000);
+    void startStt();
   }, [
+    listening,
     clearChatIdleTimer,
-    clearListenSafety,
-    stopRecognition,
+    clearAutoListen,
     setState,
-    handleSimulatedVoiceInput,
+    startStt,
   ]);
 
   const stopListeningEarly = useCallback(() => {
-    if (conversationStateRef.current !== 'listening') return;
-    const transcript = finalTranscriptRef.current;
-    stopRecognition();
-    handleSimulatedVoiceInput(transcript);
-  }, [stopRecognition, handleSimulatedVoiceInput]);
+    if (conversationStateRef.current !== 'listening' && !listening) return;
+    stopStt();
+  }, [listening, stopStt]);
 
   const toggleListen = useCallback(() => {
-    if (conversationStateRef.current === 'listening') {
+    if (conversationStateRef.current === 'listening' || listening) {
       stopListeningEarly();
       return;
     }
     startListening();
-  }, [startListening, stopListeningEarly]);
+  }, [listening, startListening, stopListeningEarly]);
 
-  // Open / close lifecycle
+  // Sync listening flag from hook → conversation state if STT dies unexpectedly
+  useEffect(() => {
+    if (!open) return;
+    if (!listening && conversationStateRef.current === 'listening') {
+      // commit handler will move state; if cancelled without commit, park idle
+    }
+  }, [listening, open]);
+
+  // Keep live transcript from hook while listening
+  useEffect(() => {
+    if (listening && transcript) setLiveTranscript(transcript);
+  }, [listening, transcript]);
+
+  // Open / close lifecycle — auto-start listening after a short beat
   useEffect(() => {
     if (!open) {
       clearChatIdleTimer();
-      stopRecognition();
+      clearAutoListen();
+      cancelStt();
       stopTts();
       setClosing(false);
       setLiveTranscript('');
@@ -350,27 +316,46 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
       buildPromptRef.current = '';
       pendingConfirmRef.current = false;
       setStatusHint('');
+      setListenError('');
       setDebugInput('');
-      finalTranscriptRef.current = '';
-      finishedRef.current = false;
       conversationStateRef.current = 'idle';
       setConversationState('idle');
       return undefined;
     }
 
-    resetToIdle();
-    // Warm TTS voices (Chrome loads async)
+    clearChatIdleTimer();
+    cancelStt();
+    stopTts();
+    buildPromptRef.current = '';
+    pendingConfirmRef.current = false;
+    setLiveTranscript('');
+    setCaption('');
+    setBuildPrompt('');
+    setStatusHint('');
+    setListenError('');
+    setState('idle');
+
     try {
       window.speechSynthesis?.getVoices?.();
     } catch {
       /* ignore */
     }
+
+    // Auto-enter listening so speaking works without an extra click
+    autoListenTimerRef.current = setTimeout(() => {
+      autoListenTimerRef.current = null;
+      if (!open) return;
+      startListening();
+    }, 400);
+
     return () => {
       clearChatIdleTimer();
-      stopRecognition();
+      clearAutoListen();
+      cancelStt();
       stopTts();
     };
-  }, [open, resetToIdle, clearChatIdleTimer, stopRecognition]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on open toggle
+  }, [open]);
 
   // Space to toggle listen; Escape to close
   useEffect(() => {
@@ -394,7 +379,8 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
   const smoothClose = useCallback(
     (afterClose) => {
       clearChatIdleTimer();
-      stopRecognition();
+      clearAutoListen();
+      cancelStt();
       stopTts();
       setClosing(true);
       setTimeout(() => {
@@ -402,7 +388,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
         afterClose?.();
       }, 280);
     },
-    [clearChatIdleTimer, stopRecognition]
+    [clearChatIdleTimer, clearAutoListen, cancelStt]
   );
 
   const handleClose = useCallback(() => {
@@ -429,37 +415,44 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
       const text = (phrase ?? debugInput).trim();
       if (!text) return;
       setDebugInput('');
-      handleSimulatedVoiceInput(text);
+      cancelStt();
+      setState(pendingConfirmRef.current ? 'awaiting_confirm' : 'idle');
+      handleVoiceCommit(text);
     },
-    [debugInput, handleSimulatedVoiceInput]
+    [debugInput, cancelStt, setState, handleVoiceCommit]
   );
 
   if (!open) return null;
 
-  const orbAnim =
-    conversationState === 'listening'
-      ? 'listening'
-      : conversationState === 'awaiting_confirm'
-        ? 'thinking'
-        : 'speaking';
+  const isListening = conversationState === 'listening' || listening;
+
+  const orbAnim = isListening
+    ? 'listening'
+    : conversationState === 'awaiting_confirm'
+      ? 'thinking'
+      : 'speaking';
 
   const showRings =
-    conversationState === 'chatting' || conversationState === 'awaiting_confirm';
+    conversationState === 'chatting' ||
+    conversationState === 'awaiting_confirm' ||
+    isListening;
+
+  const errorBanner = listenError || sttError || '';
 
   const statusText =
-    statusHint === 'unsupported'
-      ? 'Microfone indisponível neste navegador'
+    statusHint === 'unsupported' || (!supported && conversationState === 'idle')
+      ? speechErrorMessage('unsupported')
       : statusHint === 'denied'
         ? 'Permissão do microfone negada'
-        : conversationState === 'idle'
-          ? IDLE_MESSAGE
-          : conversationState === 'listening'
-            ? caption || LISTENING_MESSAGE
-            : conversationState === 'chatting'
+        : isListening
+          ? caption || LISTENING_MESSAGE
+          : conversationState === 'chatting'
+            ? caption
+            : conversationState === 'awaiting_confirm'
               ? caption
-              : conversationState === 'awaiting_confirm'
-                ? caption
-                : IDLE_MESSAGE;
+              : IDLE_MESSAGE;
+
+  const volumeGlow = isListening ? 0.45 + volume * 0.55 : 0.45;
 
   const orbClass = [
     'jarvis-orb',
@@ -496,43 +489,102 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
         <button
           type="button"
           onClick={toggleListen}
-          className="relative flex items-center justify-center mb-10 bg-transparent border-0 p-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60 rounded-full"
-          aria-label={conversationState === 'listening' ? 'Parar de ouvir' : 'Começar a falar'}
+          className="relative flex items-center justify-center mb-6 bg-transparent border-0 p-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60 rounded-full"
+          aria-label={isListening ? 'Parar de ouvir' : 'Começar a falar'}
         >
           {showRings && (
             <>
-              <span className="jarvis-ring jarvis-ring--1" aria-hidden />
+              <span
+                className="jarvis-ring jarvis-ring--1"
+                style={
+                  isListening
+                    ? { transform: `scale(${1.2 + volume * 1.2})`, opacity: 0.35 + volume * 0.45 }
+                    : undefined
+                }
+                aria-hidden
+              />
               <span className="jarvis-ring jarvis-ring--2" aria-hidden />
-              <span className="jarvis-ring jarvis-ring--3" aria-hidden />
+              {conversationState !== 'listening' && (
+                <span className="jarvis-ring jarvis-ring--3" aria-hidden />
+              )}
             </>
           )}
-          {conversationState === 'listening' && (
-            <>
-              <span className="jarvis-ring jarvis-ring--1" aria-hidden />
-              <span className="jarvis-ring jarvis-ring--2" aria-hidden />
-            </>
-          )}
-          <div className={orbClass} aria-hidden />
+          <div
+            className={orbClass}
+            style={
+              isListening
+                ? {
+                    ['--jarvis-vol']: Math.min(1, volume).toFixed(3),
+                    boxShadow: `0 0 ${40 + volume * 40}px rgba(99, 102, 241, ${volumeGlow}), 0 0 ${80 + volume * 60}px rgba(59, 130, 246, ${0.25 + volume * 0.35}), inset 0 0 30px rgba(255, 255, 255, 0.15)`,
+                  }
+                : undefined
+            }
+            aria-hidden
+          />
         </button>
+
+        {!isListening && conversationState === 'idle' && (
+          <button
+            type="button"
+            onClick={startListening}
+            className="jarvis-glass-btn jarvis-glass-btn--primary mb-5 inline-flex items-center gap-2 px-8 py-3.5 rounded-2xl text-base font-semibold text-white transition-all jarvis-actions-in"
+          >
+            <Mic size={18} />
+            Falar
+          </button>
+        )}
+
+        {isListening && (
+          <button
+            type="button"
+            onClick={stopListeningEarly}
+            className="jarvis-glass-btn mb-5 px-6 py-2.5 rounded-xl text-sm font-medium text-zinc-200 hover:text-white transition-all"
+          >
+            Pronto — processar
+          </button>
+        )}
 
         <p
           className={`text-center text-sm font-medium tracking-wide mb-3 transition-opacity duration-300 ${
             conversationState === 'chatting' || conversationState === 'awaiting_confirm'
               ? 'text-zinc-100 text-base sm:text-lg leading-relaxed jarvis-caption-in'
-              : 'text-zinc-300'
+              : isListening
+                ? 'text-indigo-200 text-base sm:text-lg'
+                : 'text-zinc-300'
           }`}
         >
           {statusText}
         </p>
 
-        {conversationState === 'listening' && liveTranscript ? (
-          <p className="text-center text-sm text-zinc-400 leading-relaxed mb-4 max-w-md">
-            {liveTranscript}
+        {errorBanner ? (
+          <p className="text-center text-xs text-amber-300/90 mb-3 max-w-sm leading-relaxed">
+            {errorBanner}
           </p>
         ) : null}
 
+        {isListening ? (
+          <div className="w-full mb-4 min-h-[3rem]">
+            {liveTranscript ? (
+              <p className="text-center text-base sm:text-lg text-zinc-100 leading-relaxed max-w-md mx-auto font-medium jarvis-caption-in">
+                {liveTranscript}
+              </p>
+            ) : (
+              <p className="text-center text-sm text-zinc-500">
+                Aguardando sua voz… o orbe reage ao volume do microfone
+              </p>
+            )}
+            {/* Mic level bar — visual proof getUserMedia works */}
+            <div className="mt-4 mx-auto w-40 h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-indigo-400 transition-[width] duration-75"
+                style={{ width: `${Math.round(Math.min(1, volume) * 100)}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
         {(conversationState === 'awaiting_confirm' ||
-          (conversationState === 'listening' && !!buildPrompt)) &&
+          (isListening && !!buildPrompt)) &&
         buildPrompt ? (
           <div className="w-full mb-6 jarvis-caption-in">
             <p className="text-center text-xs uppercase tracking-wider text-indigo-300/80 mb-2">
@@ -544,7 +596,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
           </div>
         ) : null}
 
-        {!!buildPrompt && conversationState !== 'listening' && (
+        {!!buildPrompt && !isListening && (
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto jarvis-actions-in">
             <button
               type="button"
@@ -555,7 +607,7 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
             </button>
             <button
               type="button"
-              onClick={toggleListen}
+              onClick={startListening}
               className="jarvis-glass-btn px-6 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-white transition-all"
             >
               Confirmar por áudio
@@ -569,68 +621,61 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
             </button>
           </div>
         )}
-
-        {!!buildPrompt && conversationState === 'listening' && (
-          <button
-            type="button"
-            onClick={stopListeningEarly}
-            className="jarvis-glass-btn px-6 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-white transition-all jarvis-actions-in"
-          >
-            Parar de ouvir
-          </button>
-        )}
       </div>
 
-      {/* Temporary debug footer */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-md px-4">
-        <div className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md p-3 space-y-2">
-          <p className="text-[10px] uppercase tracking-wider text-zinc-500">Debug (temporário)</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => handleDebugSubmit('Estão me ouvindo?')}
-              className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
+      {showDebug ? (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-md px-4">
+          <div className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md p-3 space-y-2">
+            <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+              Debug (?debug=1)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => handleDebugSubmit('Estão me ouvindo?')}
+                className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
+              >
+                Estão me ouvindo?
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDebugSubmit('Crie um site para mim')}
+                className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
+              >
+                Crie um site para mim
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDebugSubmit('confirmar')}
+                className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
+              >
+                confirmar
+              </button>
+            </div>
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleDebugSubmit();
+              }}
             >
-              Estão me ouvindo?
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDebugSubmit('Crie um site para mim')}
-              className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
-            >
-              Crie um site para mim
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDebugSubmit('confirmar')}
-              className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
-            >
-              confirmar
-            </button>
+              <input
+                type="text"
+                value={debugInput}
+                onChange={(e) => setDebugInput(e.target.value)}
+                placeholder="Simular frase..."
+                className="flex-1 min-w-0 rounded-lg bg-white/5 border border-white/10 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-400/40"
+              />
+              <button
+                type="submit"
+                className="jarvis-glass-btn jarvis-glass-btn--primary px-3 py-1.5 rounded-lg text-xs text-white shrink-0"
+              >
+                Enviar
+              </button>
+            </form>
           </div>
-          <form
-            className="flex gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleDebugSubmit();
-            }}
-          >
-            <input
-              type="text"
-              value={debugInput}
-              onChange={(e) => setDebugInput(e.target.value)}
-              placeholder="Simular frase..."
-              className="flex-1 min-w-0 rounded-lg bg-white/5 border border-white/10 px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-400/40"
-            />
-            <button
-              type="submit"
-              className="jarvis-glass-btn jarvis-glass-btn--primary px-3 py-1.5 rounded-lg text-xs text-white shrink-0"
-            >
-              Enviar
-            </button>
-          </form>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
