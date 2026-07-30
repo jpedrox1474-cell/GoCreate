@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
 export default function Register() {
-  const { user, loginWithGoogle, registerWithEmail, authError } = useAuth();
+  const { user, loginWithGoogle, loginWithGithub, registerWithEmail, authError } = useAuth();
   const { isLight } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
@@ -61,8 +61,17 @@ export default function Register() {
     }
   }
 
-  function handleGithub() {
-    setToast({ message: 'Login com GitHub em breve.', type: 'info' });
+  async function handleGithub() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await loginWithGithub();
+      navigate(from, { replace: true });
+    } catch {
+      // authError
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (

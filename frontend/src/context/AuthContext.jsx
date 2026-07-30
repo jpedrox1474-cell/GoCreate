@@ -12,7 +12,7 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, googleProvider, db } from '../firebase';
+import { auth, googleProvider, githubProvider, db } from '../firebase';
 
 const AuthContext = createContext(null);
 
@@ -27,6 +27,10 @@ const ERROR_MESSAGES = {
   'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
   'auth/invalid-credential': 'E-mail ou senha incorretos.',
   'auth/popup-closed-by-user': 'Login cancelado.',
+  'auth/account-exists-with-different-credential':
+    'Já existe uma conta com este e-mail (outro método de login).',
+  'auth/operation-not-allowed':
+    'Login com GitHub ainda não está ativo no Firebase. Ativa o provider GitHub na consola.',
 };
 
 function translateError(code) {
@@ -109,6 +113,17 @@ export function AuthProvider({ children }) {
     }
   }
 
+  async function loginWithGithub() {
+    setAuthError(null);
+    try {
+      const result = await signInWithPopup(auth, githubProvider);
+      await ensureUserDoc(result.user);
+    } catch (err) {
+      setAuthError(translateError(err.code));
+      throw err;
+    }
+  }
+
   async function loginWithEmail(email, password) {
     setAuthError(null);
     try {
@@ -163,6 +178,7 @@ export function AuthProvider({ children }) {
     loading,
     authError,
     loginWithGoogle,
+    loginWithGithub,
     loginWithEmail,
     registerWithEmail,
     logout,

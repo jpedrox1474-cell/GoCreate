@@ -11,15 +11,19 @@ service cloud.firestore {
 
     // Perfil do utilizador — leitura própria; créditos/plano só mudam via Admin SDK
     // (exceto bootstrap inicial: doc sem credits → 50 free).
+    // Token GitHub NUNCA neste doc — só em users/{uid}/secrets/* (Admin).
     match /users/{userId} {
       allow read: if isOwner(userId);
 
       allow create: if isOwner(userId)
         && request.resource.data.uid == userId
         && request.resource.data.plan == 'free'
-        && request.resource.data.credits == 50;
+        && request.resource.data.credits == 50
+        && !('secrets' in request.resource.data);
 
       allow update: if isOwner(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['github'])
         && (
           // Atualização de perfil: credits e plan imutáveis no cliente
           !request.resource.data.diff(resource.data).affectedKeys()
@@ -33,6 +37,11 @@ service cloud.firestore {
         );
 
       allow delete: if false;
+
+      // Segredos (ex.: accessToken GitHub) — só Admin SDK
+      match /secrets/{secretId} {
+        allow read, write: if false;
+      }
     }
 
     // Compras / packs — utilizador lê as suas; writes de conclusão via Admin/webhooks

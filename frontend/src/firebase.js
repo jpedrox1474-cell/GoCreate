@@ -3,7 +3,7 @@
 // a segurança real vem das regras do Firestore + Auth, não desta config).
 
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, GithubAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -19,6 +19,11 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export const githubProvider = new GithubAuthProvider();
+// Escopos extras só ajudam se o provider Firebase tiver Client ID com permissão;
+// o export de repos usa OAuth App dedicado (/api/github).
+githubProvider.addScope('read:user');
+githubProvider.setCustomParameters({ allow_signup: 'true' });
 export const db = getFirestore(app);
 
 export default app;

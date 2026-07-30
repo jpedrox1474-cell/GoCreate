@@ -4,6 +4,7 @@ import cors from 'cors';
 import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
 import billingRouter from './routes/billing.js';
+import githubRouter from './routes/github.js';
 
 export function createApp() {
   const app = express();
@@ -30,6 +31,8 @@ export function createApp() {
   // Mercado Pago / Stripe webhooks → POST /api/billing/webhook
   // create-payment → Preference (Pro) ou Pix (Turbo)
   app.use('/api/billing', billingRouter);
+  // GitHub OAuth (export) + create repo / push
+  app.use('/api/github', githubRouter);
 
   app.use((err, _req, res, _next) => {
     console.error('[server] Erro não tratado:', err);
