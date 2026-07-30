@@ -153,8 +153,9 @@ Seja direto e técnico, mas amigável, em português do Brasil. Não repita o pe
 // Addon dinâmico (tokens/IDs) vive em buildDynamicSystemPrompt.js — re-export
 // após a constante para evitar TDZ em import circular.
 export {
-  buildIntegrationsAddonFromObject as buildIntegrationsPromptAddon,
+  buildIntegrationsPromptAddon,
   buildIntegrationsPromptAddonFromIds,
+  buildIntegrationsAddonFromObject,
   buildDynamicSystemPrompt,
 } from './buildDynamicSystemPrompt.js';
 

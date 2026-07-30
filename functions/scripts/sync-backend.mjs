@@ -21,6 +21,7 @@ const FILES = [
   'middleware/credits.js',
   'middleware/premium.js',
   'prompts/systemPrompt.js',
+  'prompts/buildDynamicSystemPrompt.js',
   'routes/chat.js',
   'routes/upload.js',
   'routes/billing.js',

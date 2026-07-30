@@ -14,9 +14,9 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { creditCheck, debitCredit } from '../middleware/credits.js';
 import { db } from '../config/firebaseAdmin.js';
-import { GOCREATE_SYSTEM_PROMPT, buildIntegrationsPromptAddon } from '../prompts/systemPrompt.js';
+import { buildDynamicSystemPrompt } from '../prompts/buildDynamicSystemPrompt.js';
 import { streamGeminiChat, getGeminiApiKey } from '../services/gemini.js';
-import { listConnectedProviderIds } from '../services/integrations.js';
+import { loadUserIntegrationsForPrompt } from '../services/integrations.js';
 import { parseEntitiesFromAiText, upsertProjectEntities } from '../services/entities.js';
 
 const router = Router();
@@ -45,16 +45,24 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
   let fullResponse = '';
 
   try {
-    let integrationsAddon = '';
+    let systemPrompt = buildDynamicSystemPrompt({});
     try {
-      const connected = await listConnectedProviderIds(req.user.uid);
-      integrationsAddon = buildIntegrationsPromptAddon(connected);
+      // Só integrações do uid autenticado — nunca de outro user.
+      const userIntegrations = await loadUserIntegrationsForPrompt(req.user.uid);
+      const connectedKeys = Object.keys(userIntegrations).filter(
+        (k) => userIntegrations[k]?.connected
+      );
+      // Log só nomes (sem tokens)
+      if (connectedKeys.length) {
+        console.info('[api/chat] integrations for prompt:', connectedKeys.join(','));
+      }
+      systemPrompt = buildDynamicSystemPrompt(userIntegrations);
     } catch (intErr) {
       console.warn('[api/chat] integrations addon:', intErr?.message);
     }
 
     const result = await streamGeminiChat({
-      systemPrompt: GOCREATE_SYSTEM_PROMPT + integrationsAddon,
+      systemPrompt,
       messages,
       attachmentUrl,
       onChunk: (chunk) => {

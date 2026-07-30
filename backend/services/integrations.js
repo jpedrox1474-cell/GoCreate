@@ -620,6 +620,137 @@ export async function listConnectedProviderIds(uid) {
 }
 
 /**
+ * Carrega integrações do utilizador autenticado para o system prompt do chat.
+ * Inclui IDs públicos e tokens (só para o LLM gerar código DESTE uid).
+ * NUNCA logar o retorno — contém secrets.
+ *
+ * Shape:
+ * {
+ *   whatsapp: { connected, instanceId, source },
+ *   whatsappCloud?: { connected, defaultPhone, phoneNumberId, accessToken? },
+ *   instagram: { connected, username, accountId, accessToken?, pageId? },
+ *   facebook: { connected, pageName, pageId, accessToken? },
+ *   youtube: { connected, channelId, channelTitle, accessToken? },
+ *   tiktok: { connected, username, openId, accessToken? },
+ *   mercadopago: { connected, platform: true },
+ *   stripe?: { connected, mode },
+ * }
+ */
+export async function loadUserIntegrationsForPrompt(uid) {
+  if (!uid) return {};
+
+  const status = await getIntegrationsStatus(uid);
+  const providers = status?.providers || {};
+  const out = {};
+
+  const waEvo = providers.whatsapp_evolution;
+  if (waEvo?.status === 'connected') {
+    out.whatsapp = {
+      connected: true,
+      source: 'evolution',
+      instanceId: waEvo.meta?.instanceName || buildInstanceNameForUser(uid),
+      proxyPath: '/api/integrations/whatsapp',
+    };
+  }
+
+  const waByo = providers.whatsapp;
+  if (waByo?.status === 'connected') {
+    const creds = await getStoredCredentials(uid, 'whatsapp');
+    out.whatsappCloud = {
+      connected: true,
+      defaultPhone: waByo.meta?.defaultPhone || creds?.defaultPhone || null,
+      phoneNumberId: creds?.phoneNumberId || null,
+      accessToken: creds?.accessToken || null,
+      hasCloudApi: Boolean(creds?.accessToken && creds?.phoneNumberId),
+    };
+    if (!out.whatsapp) {
+      out.whatsapp = {
+        connected: true,
+        source: 'cloud_api',
+        defaultPhone: out.whatsappCloud.defaultPhone,
+      };
+    }
+  }
+
+  const needMeta =
+    providers.instagram?.status === 'connected' ||
+    providers.facebook?.status === 'connected';
+  const metaSecrets = needMeta ? await getStoredCredentials(uid, 'meta') : null;
+
+  if (providers.instagram?.status === 'connected') {
+    out.instagram = {
+      connected: true,
+      username: providers.instagram.meta?.username || null,
+      accountId:
+        providers.instagram.meta?.accountId ||
+        metaSecrets?.metaInstagramAccountId ||
+        null,
+      pageId:
+        providers.facebook?.meta?.pageId ||
+        metaSecrets?.metaFacebookPageId ||
+        null,
+      accessToken: metaSecrets?.metaPageAccessToken || null,
+    };
+  }
+
+  if (providers.facebook?.status === 'connected') {
+    out.facebook = {
+      connected: true,
+      pageName: providers.facebook.meta?.pageName || null,
+      pageId:
+        providers.facebook.meta?.pageId || metaSecrets?.metaFacebookPageId || null,
+      accessToken: metaSecrets?.metaPageAccessToken || null,
+    };
+  }
+
+  if (providers.youtube?.status === 'connected') {
+    const yt = await getStoredCredentials(uid, 'youtube');
+    out.youtube = {
+      connected: true,
+      channelId:
+        providers.youtube.meta?.channelId || yt?.youtubeChannelId || null,
+      channelTitle: providers.youtube.meta?.channelTitle || null,
+      accessToken: yt?.youtubeAccessToken || null,
+    };
+  }
+
+  if (providers.tiktok?.status === 'connected') {
+    const tt = await getStoredCredentials(uid, 'tiktok');
+    out.tiktok = {
+      connected: true,
+      username: providers.tiktok.meta?.username || null,
+      openId: providers.tiktok.meta?.openId || tt?.tiktokOpenId || null,
+      accessToken: tt?.tiktokAccessToken || null,
+    };
+  }
+
+  if (providers.mercadopago?.status === 'connected') {
+    out.mercadopago = {
+      connected: true,
+      platform: providers.mercadopago.source === 'platform',
+      source: providers.mercadopago.source || 'none',
+    };
+  }
+
+  if (providers.pix?.status === 'connected' && !out.mercadopago) {
+    out.mercadopago = {
+      connected: true,
+      platform: providers.pix.source === 'platform',
+      source: providers.pix.source || 'none',
+    };
+  }
+
+  if (providers.stripe?.status === 'connected') {
+    out.stripe = {
+      connected: true,
+      mode: providers.stripe.meta?.mode || null,
+    };
+  }
+
+  return out;
+}
+
+/**
  * Preferência: token da plataforma (MERCADOPAGO_ACCESS_TOKEN) para billing +
  * GoCreatePayments / public-create-payment. Credencial BYO do user só se a
  * plataforma não tiver token.
@@ -1158,6 +1289,7 @@ export default {
   getStoredCredentials,
   getIntegrationsStatus,
   listConnectedProviderIds,
+  loadUserIntegrationsForPrompt,
   createProjectMercadoPagoPayment,
   createProjectStripePayment,
   createProjectPayPalPaymentStub,
