@@ -38,7 +38,14 @@ import { createProject, getProject, listenToMessages, touchProject, listUserProj
 import { scheduleAutomationCheck, rememberLastProjectId } from '../lib/automations';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { uploadFile } from '../lib/uploadApi';
-import { extractAiDisplay, parseArtifacts } from '../lib/artifactParser';
+import {
+  extractAiDisplay,
+  parseArtifacts,
+  CONTINUE_PROMPT,
+  REQUEST_UI_PROMPT,
+  pickRecoveryPrompt,
+} from '../lib/artifactParser';
+import { seedDetectedEntities } from '../lib/entities';
 import {
   getProjectById,
   getMessagesForProject,
@@ -147,6 +154,11 @@ export default function Editor() {
   const [resumeNotice, setResumeNotice] = useState(null); // string | null
   const [askFixPending, setAskFixPending] = useState(false);
   const [awaitingHistory, setAwaitingHistory] = useState(false);
+  const [generationIncomplete, setGenerationIncomplete] = useState(false);
+  const [generatedEntities, setGeneratedEntities] = useState([]);
+  const continueAutoTriedRef = useRef(false);
+  const lastRawRef = useRef('');
+  const sendMessageTextRef = useRef(null);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -385,13 +397,30 @@ export default function Editor() {
     };
   }, []);
 
+  const applyEntities = useCallback(
+    async (entities) => {
+      if (!entities?.length) return;
+      setGeneratedEntities(entities);
+      if (!firestoreId) return;
+      try {
+        await seedDetectedEntities(firestoreId, entities);
+      } catch (err) {
+        console.warn('[Editor] seed entities:', err?.message);
+      }
+    },
+    [firestoreId]
+  );
+
   const applyAiRaw = useCallback(
     (raw) => {
-      const { displayText, files } = extractAiDisplay(raw);
+      const { displayText, files, entities, incomplete } = extractAiDisplay(raw);
       mergeGeneratedFiles(files);
-      return displayText;
+      if (entities?.length) {
+        void applyEntities(entities);
+      }
+      return { displayText, files, entities, incomplete };
     },
-    [mergeGeneratedFiles]
+    [mergeGeneratedFiles, applyEntities]
   );
 
   const finishGeneration = useCallback((opts = {}) => {
@@ -419,7 +448,7 @@ export default function Editor() {
   }, []);
 
   const sendMessageText = useCallback(
-    async (userText, { askFix = false } = {}) => {
+    async (userText, { askFix = false, isContinue = false } = {}) => {
       if (!userText?.trim() || isGenerating || !user) return;
       const trimmed = userText.trim();
       const currentAttachment = attachmentRef.current;
@@ -429,6 +458,10 @@ export default function Editor() {
       setCreditsExhausted(false);
       setResumeNotice(null);
       setAskFixPending(Boolean(askFix));
+      setGenerationIncomplete(false);
+      if (!askFix && !isContinue) {
+        continueAutoTriedRef.current = false;
+      }
       setIsGenerating(true);
       setIsTyping(true);
       setPendingUserText(trimmed);
@@ -436,6 +469,7 @@ export default function Editor() {
       setStreamHeartbeat(null);
       setAwaitingHistory(false);
       streamBufferRef.current = '';
+      lastRawRef.current = '';
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
       writeGenerationSession({
@@ -502,14 +536,21 @@ export default function Editor() {
             setIsTyping(false);
             setStreamHeartbeat(null);
             streamBufferRef.current += chunk;
-            const { cleanText, files, hadArtifacts } = parseArtifacts(streamBufferRef.current);
+            lastRawRef.current = streamBufferRef.current;
+            const { cleanText, files, hadArtifacts, entities, incomplete } =
+              parseArtifacts(streamBufferRef.current);
             if (Object.keys(files).length) mergeGeneratedFiles(files);
+            if (entities?.length) void applyEntities(entities);
             const display =
               cleanText ||
               (Object.keys(files).length || hadArtifacts
-                ? 'A construir a interface…'
+                ? incomplete
+                  ? 'Ainda a gerar…'
+                  : 'A construir a interface…'
                 : streamBufferRef.current.trim()
-                  ? 'A gerar…'
+                  ? incomplete
+                    ? 'Ainda a gerar…'
+                    : 'A gerar…'
                   : '');
             setStreamingText(display);
           },
@@ -518,26 +559,75 @@ export default function Editor() {
           finishGeneration();
           return;
         }
-        if (result?.text) {
-          const display = applyAiRaw(result.text);
-          if (display) setStreamingText(display);
-          notifyAutomations(firestoreId);
-          finishGeneration({ waitForHistory: true });
-        } else if (!streamBufferRef.current.trim()) {
+
+        const raw = result?.text || streamBufferRef.current || '';
+        lastRawRef.current = raw;
+        const parsed = applyAiRaw(raw);
+        const fileCount = Object.keys(parsed.files || {}).length;
+        const incomplete =
+          Boolean(result?.incomplete) || Boolean(parsed.incomplete);
+
+        if (parsed.displayText) setStreamingText(parsed.displayText);
+
+        if (!raw.trim()) {
           setIsTyping(false);
+          setGenerationIncomplete(true);
           pushLocalTurn(
             'A API respondeu sem conteúdo. Confirma que o backend tem GEMINI_API_KEY e tenta de novo.'
           );
           finishGeneration();
-        } else {
-          notifyAutomations(firestoreId);
-          finishGeneration({ waitForHistory: true });
+          return;
         }
+
+        if (incomplete) {
+          setGenerationIncomplete(true);
+          // Keep any partial files — do not clear.
+          const recovery = pickRecoveryPrompt(raw, fileCount);
+          if (!continueAutoTriedRef.current && !askFix) {
+            continueAutoTriedRef.current = true;
+            setToast({
+              message: 'Geração incompleta — a pedir o restante automaticamente…',
+              type: 'info',
+              duration: 3200,
+            });
+            finishGeneration({ clearOptimistic: false });
+            setTimeout(() => {
+              void sendMessageTextRef.current?.(recovery, { isContinue: true });
+            }, 400);
+            return;
+          }
+          setStreamingText(
+            (parsed.displayText || 'A geração ficou incompleta.') +
+              '\n\nPodes clicar em “Continuar geração” no preview ou enviar de novo.'
+          );
+          setResumeNotice(
+            'Geração incompleta — a IA não enviou ficheiros completos. Clique Continuar.'
+          );
+          setToast({
+            message: result?.timeoutMessage || 'Geração incompleta. Usa Continuar geração.',
+            type: 'info',
+            duration: 5200,
+          });
+          finishGeneration({ clearOptimistic: false });
+          return;
+        }
+
+        setGenerationIncomplete(false);
+        notifyAutomations(firestoreId);
+        finishGeneration({ waitForHistory: true });
       } catch (err) {
         if (err?.name === 'AbortError' || controller.signal.aborted) {
+          // Preserve partial files; mark incomplete if we got mid-stream XML.
+          const partial = parseArtifacts(streamBufferRef.current);
+          if (Object.keys(partial.files || {}).length) {
+            mergeGeneratedFiles(partial.files);
+          }
+          if (partial.incomplete || !Object.keys(partial.files || {}).length) {
+            setGenerationIncomplete(true);
+          }
           setStreamingText((prev) => prev || 'Geração interrompida.');
           setToast({ message: 'Geração interrompida.', type: 'info', duration: 2800 });
-          finishGeneration();
+          finishGeneration({ clearOptimistic: false });
           return;
         }
         // 403 créditos — UI dedicada, NÃO bubble de IA / mock
@@ -554,11 +644,25 @@ export default function Editor() {
         console.error('[Editor] chat:', err);
         setIsTyping(false);
         const detail = err?.message || 'erro desconhecido';
+        // Timeout with partial body may have been returned as Error before our partial-return path
+        const partial = parseArtifacts(streamBufferRef.current);
+        if (Object.keys(partial.files || {}).length) {
+          mergeGeneratedFiles(partial.files);
+          setGenerationIncomplete(true);
+          setToast({
+            message: `${detail} Ficheiros parciais mantidos — Continuar geração.`,
+            type: 'info',
+            duration: 5200,
+          });
+          finishGeneration({ clearOptimistic: false });
+          return;
+        }
         setToast({
           message: `Falha na geração: ${detail}`,
           type: 'error',
           duration: 5200,
         });
+        setGenerationIncomplete(true);
         pushLocalTurn(
           `Não consegui gerar a app: ${detail}\n\nO teu pedido foi: «${trimmed.slice(0, 200)}${trimmed.length > 200 ? '…' : ''}». Corrigi a API e envia outra vez — não uso respostas de demonstração.`
         );
@@ -577,12 +681,15 @@ export default function Editor() {
       routeId,
       messages,
       applyAiRaw,
+      applyEntities,
       mergeGeneratedFiles,
       finishGeneration,
       openPricing,
       notifyAutomations,
     ]
   );
+
+  sendMessageTextRef.current = sendMessageText;
 
   function handleStopGeneration() {
     abortRef.current?.abort();
@@ -592,6 +699,7 @@ export default function Editor() {
     setAskFixPending(false);
     setStreamHeartbeat(null);
     setAwaitingHistory(false);
+    setGenerationIncomplete(Boolean(streamBufferRef.current));
     clearGenerationSession();
     if (!streamingText) {
       setStreamingText('Geração interrompida.');
@@ -767,6 +875,29 @@ export default function Editor() {
     sendMessageText(prompt, { askFix: true });
   }
 
+  function handleContinueGeneration() {
+    if (isGenerating) {
+      setToast({
+        message: 'Já há uma geração em curso. Aguarda ou para com ■.',
+        type: 'info',
+        duration: 3200,
+      });
+      return;
+    }
+    const fileCount = Object.keys(generatedFiles).length;
+    const recovery = pickRecoveryPrompt(lastRawRef.current || '', fileCount);
+    setResumeNotice(null);
+    setGenerationIncomplete(true);
+    sendMessageText(fileCount > 0 ? CONTINUE_PROMPT : recovery || REQUEST_UI_PROMPT);
+  }
+
+  function handleRequestUi() {
+    if (isGenerating) return;
+    setResumeNotice(null);
+    setGenerationIncomplete(false);
+    sendMessageText(REQUEST_UI_PROMPT, { isContinue: true });
+  }
+
   function handleNewChat() {
     abortRef.current?.abort();
     clearGenerationSession();
@@ -775,6 +906,10 @@ export default function Editor() {
     setAwaitingHistory(false);
     setAgentRunning(null);
     setResumeNotice(null);
+    setGenerationIncomplete(false);
+    setGeneratedEntities([]);
+    continueAutoTriedRef.current = false;
+    lastRawRef.current = '';
     if (routeId && MOCK_IDS.has(routeId)) {
       setMessages(sanitizeMessages(getMessagesForProject(routeId || 'default'), mergeGeneratedFiles));
       setInput('');
@@ -1080,6 +1215,16 @@ export default function Editor() {
               {resumeNotice && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-700/40 bg-amber-950/40 px-3 py-2.5">
                   <p className="text-[11px] text-amber-100/90 leading-relaxed flex-1">{resumeNotice}</p>
+                  {generationIncomplete && !isBusy && (
+                    <button
+                      type="button"
+                      onClick={handleContinueGeneration}
+                      className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-md"
+                    >
+                      <Play size={10} />
+                      Continuar
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setResumeNotice(null)}
@@ -1401,6 +1546,15 @@ export default function Editor() {
           setActiveFile={setActiveFile}
           isGenerating={isBusy}
           onAskFix={handleAskFix}
+          onContinue={handleContinueGeneration}
+          generationIncomplete={!isBusy && generationIncomplete}
+          entitiesOnly={
+            !isBusy &&
+            !generationIncomplete &&
+            Object.keys(generatedFiles).length === 0 &&
+            generatedEntities.length > 0
+          }
+          onRequestUi={handleRequestUi}
           projectId={firestoreId}
         />
       </main>

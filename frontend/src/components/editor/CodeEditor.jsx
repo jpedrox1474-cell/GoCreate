@@ -177,7 +177,8 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
         <FileCode size={28} className="text-zinc-600" />
         <p className="text-sm text-zinc-400">Nenhum código gerado ainda</p>
         <p className="text-xs text-zinc-600 max-w-sm">
-          Quando a IA responder com código, a árvore de ficheiros aparece aqui.
+          A IA precisa enviar <span className="font-mono text-zinc-500">&lt;gocreate_artifact&gt;</span> com{' '}
+          <span className="font-mono text-zinc-500">src/App.jsx</span>. Se a geração ficou incompleta, clique Continuar no preview ou no chat.
         </p>
       </div>
     );

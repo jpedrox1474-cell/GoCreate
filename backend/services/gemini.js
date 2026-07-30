@@ -64,7 +64,7 @@ function isRetryable(status, errMsg) {
  * Monta o body generateContent / streamGenerateContent no formato Gemini.
  * messages: [{ role: 'user'|'ai'|'assistant'|'model', text }]
  */
-export function buildGeminiBody({ systemPrompt, messages, attachmentUrl, maxOutputTokens = 8192 }) {
+export function buildGeminiBody({ systemPrompt, messages, attachmentUrl, maxOutputTokens = 65536 }) {
   const contents = [];
   const list = Array.isArray(messages) ? messages : [];
 

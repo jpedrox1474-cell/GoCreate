@@ -6,7 +6,7 @@ import {
   useLoadingOverlayState,
   useErrorMessage,
 } from '@codesandbox/sandpack-react';
-import { AlertTriangle, Wand2, Loader2 } from 'lucide-react';
+import { AlertTriangle, Wand2, Loader2, LayoutTemplate } from 'lucide-react';
 import {
   toSandpackFiles,
   resolveSandpackDependencies,
@@ -99,7 +99,28 @@ function RuntimeErrorOverlay({ onAskFix, hidden }) {
   );
 }
 
-function PreviewInner({ isGenerating, onAskFix, publicMode }) {
+function IncompleteBanner({ visible, onContinue }) {
+  if (!visible || typeof onContinue !== 'function') return null;
+  return (
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 max-w-[min(100%-1.5rem,24rem)]">
+      <div className="flex items-center gap-2 rounded-lg border border-amber-700/40 bg-amber-950/90 px-3 py-2 shadow-lg backdrop-blur-sm">
+        <p className="text-[11px] text-amber-100/90 leading-snug">
+          Geração incompleta — ficheiros parciais mantidos.
+        </p>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-md"
+        >
+          <Wand2 size={12} />
+          Continuar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PreviewInner({ isGenerating, onAskFix, publicMode, generationIncomplete, onContinue }) {
   return (
     <div
       className={`relative h-full w-full [&_.sp-overlay]:!opacity-0 [&_.sp-overlay]:!pointer-events-none ${
@@ -117,8 +138,80 @@ function PreviewInner({ isGenerating, onAskFix, publicMode }) {
           style={{ height: '100%', flex: 1 }}
         />
       </SandpackLayout>
+      <IncompleteBanner visible={Boolean(generationIncomplete)} onContinue={onContinue} />
       <CompilingOverlay externalLoading={Boolean(isGenerating)} />
       <RuntimeErrorOverlay onAskFix={onAskFix} hidden={Boolean(isGenerating)} />
+    </div>
+  );
+}
+
+function EmptyPreviewPlaceholder({
+  isGenerating,
+  entitiesOnly,
+  generationIncomplete,
+  onRequestUi,
+  onContinue,
+}) {
+  if (isGenerating) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 bg-zinc-900/40 px-6 text-center">
+        <Loader2 size={28} className="text-blue-500 animate-spin mb-1" />
+        <p className="text-sm font-medium text-zinc-200">A aguardar código gerado…</p>
+        <p className="text-xs text-zinc-500 max-w-xs">
+          O preview Sandpack aparece assim que a IA enviar ficheiros React.
+        </p>
+      </div>
+    );
+  }
+
+  if (generationIncomplete) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 bg-zinc-900/40 px-6 text-center">
+        <p className="text-sm font-medium text-zinc-200">Geração incompleta</p>
+        <p className="text-xs text-zinc-500 max-w-sm">
+          A resposta foi cortada antes de fechar os ficheiros. Continua para a IA emitir o restante.
+        </p>
+        {typeof onContinue === 'function' && (
+          <button
+            type="button"
+            onClick={onContinue}
+            className="mt-1 inline-flex items-center justify-center gap-2 px-3.5 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-all"
+          >
+            <Wand2 size={14} />
+            Continuar geração
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (entitiesOnly) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 bg-zinc-900/40 px-6 text-center">
+        <p className="text-sm font-medium text-zinc-200">Só chegou o modelo de dados</p>
+        <p className="text-xs text-zinc-500 max-w-sm">
+          Entidades foram guardadas, mas ainda não há UI React para o preview. Pede a interface agora.
+        </p>
+        {typeof onRequestUi === 'function' && (
+          <button
+            type="button"
+            onClick={onRequestUi}
+            className="mt-1 inline-flex items-center justify-center gap-2 px-3.5 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-all"
+          >
+            <LayoutTemplate size={14} />
+            Pedir UI agora
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col items-center justify-center gap-2 bg-zinc-900/40 px-6 text-center">
+      <p className="text-sm font-medium text-zinc-300">Live Preview</p>
+      <p className="text-xs text-zinc-500 max-w-xs">
+        Ainda não há ficheiros gerados. Envia uma mensagem no chat para a IA criar a interface.
+      </p>
     </div>
   );
 }
@@ -129,6 +222,10 @@ export default function PreviewPane({
   onAskFix,
   publicMode = false,
   projectId = null,
+  entitiesOnly = false,
+  generationIncomplete = false,
+  onRequestUi = null,
+  onContinue = null,
 }) {
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const hasFiles = Boolean(sandpackFiles && Object.keys(sandpackFiles).length);
@@ -166,22 +263,13 @@ export default function PreviewPane({
     <div className={shellClass}>
       <div className="flex-1 min-h-0 bg-zinc-950 [&_.sp-wrapper]:h-full [&_.sp-wrapper]:!bg-zinc-950 [&_.sp-layout]:h-full [&_.sp-layout]:!bg-zinc-950 [&_.sp-layout]:!border-zinc-800 [&_.sp-preview-container]:h-full [&_.sp-preview-container]:!bg-zinc-950 [&_.sp-stack]:h-full [&_.sp-preview]:h-full [&_.sp-preview]:!bg-zinc-950">
         {!hasFiles ? (
-          <div className="h-full flex flex-col items-center justify-center gap-2 bg-zinc-900/40 px-6 text-center">
-            {isGenerating ? (
-              <>
-                <Loader2 size={28} className="text-blue-500 animate-spin mb-1" />
-                <p className="text-sm font-medium text-zinc-200">GoCreate a construir interface…</p>
-                <p className="text-xs text-zinc-500">A aguardar ficheiros da IA</p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-medium text-zinc-300">Live Preview</p>
-                <p className="text-xs text-zinc-500 max-w-xs">
-                  Ainda não há ficheiros gerados. Envia uma mensagem no chat para a IA criar a interface.
-                </p>
-              </>
-            )}
-          </div>
+          <EmptyPreviewPlaceholder
+            isGenerating={isGenerating}
+            entitiesOnly={entitiesOnly}
+            generationIncomplete={generationIncomplete}
+            onRequestUi={onRequestUi}
+            onContinue={onContinue}
+          />
         ) : (
           <SandpackErrorBoundary onAskFix={onAskFix} isGenerating={isGenerating} key={sandpackKey}>
             <SandpackProvider
@@ -209,6 +297,8 @@ export default function PreviewPane({
                 isGenerating={isGenerating}
                 onAskFix={onAskFix}
                 publicMode={publicMode}
+                generationIncomplete={generationIncomplete}
+                onContinue={onContinue}
               />
             </SandpackProvider>
           </SandpackErrorBoundary>

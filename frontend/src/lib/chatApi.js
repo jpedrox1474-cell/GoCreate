@@ -7,9 +7,15 @@
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 /** No chunks for this long → heartbeat UI ("Ainda a gerar…"). */
-const STALL_HEARTBEAT_MS = 20_000;
-/** Hard cap — fail gracefully instead of hanging forever. */
-const ABSOLUTE_TIMEOUT_MS = 150_000;
+const STALL_HEARTBEAT_MS = 25_000;
+/**
+ * Hard cap for idle/hung streams. Large prompts (full-stack) often need 4–6 min.
+ * Activity (chunks) resets the effective wait via lastActivityAt checks below —
+ * we only abort when wall-clock exceeds this OR when stall exceeds IDLE_ABORT_MS.
+ */
+const ABSOLUTE_TIMEOUT_MS = 420_000;
+/** No SSE activity at all for this long → abort (true hang). */
+const IDLE_ABORT_MS = 180_000;
 const HEARTBEAT_POLL_MS = 4_000;
 
 function chatEndpoint() {
@@ -35,7 +41,7 @@ export class InsufficientCreditsError extends Error {
  *   onHeartbeat?: (message: string) => void,
  *   signal?: AbortSignal,
  * }} opts
- * @returns {Promise<{ text: string, model: string|null }>}
+ * @returns {Promise<{ text: string, model: string|null, incomplete?: boolean, timeoutMessage?: string }>}
  */
 export async function streamChat({
   projectId,
@@ -90,26 +96,43 @@ export async function streamChat({
   let full = '';
   let model = null;
   let lastActivityAt = Date.now();
+  const startedAt = Date.now();
   let heartbeatSent = false;
   let timedOut = false;
+  let timeoutReason = '';
 
-  const absoluteTimer = setTimeout(() => {
+  const abortStream = (reason) => {
     timedOut = true;
+    timeoutReason = reason;
     try {
       reader.cancel();
     } catch {
       /* ignore */
     }
+  };
+
+  const absoluteTimer = setTimeout(() => {
+    abortStream(
+      'A geração atingiu o tempo máximo. Podes continuar com “Continuar geração” para pedir o restante.'
+    );
   }, ABSOLUTE_TIMEOUT_MS);
 
   const heartbeatTimer = setInterval(() => {
-    if (Date.now() - lastActivityAt < STALL_HEARTBEAT_MS) {
+    const idleFor = Date.now() - lastActivityAt;
+    if (idleFor >= IDLE_ABORT_MS) {
+      abortStream(
+        'A geração ficou sem resposta durante demasiado tempo. Tenta “Continuar geração” ou envia de novo.'
+      );
+      return;
+    }
+    if (idleFor < STALL_HEARTBEAT_MS) {
       heartbeatSent = false;
       return;
     }
     if (!heartbeatSent && typeof onHeartbeat === 'function') {
       heartbeatSent = true;
-      onHeartbeat('Ainda a gerar…');
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      onHeartbeat(`Ainda a gerar… (${elapsedSec}s)`);
     }
   }, HEARTBEAT_POLL_MS);
 
@@ -124,9 +147,7 @@ export async function streamChat({
         throw new DOMException('Aborted', 'AbortError');
       }
       if (timedOut) {
-        throw new Error(
-          'A geração demorou demasiado sem resposta. Verifica a ligação e tenta novamente.'
-        );
+        break;
       }
 
       const { done, value } = await reader.read();
@@ -168,12 +189,22 @@ export async function streamChat({
   }
 
   if (timedOut) {
+    // Partial text may still be useful — return it with a flag instead of discarding.
+    if (full.trim()) {
+      return {
+        text: full,
+        model,
+        incomplete: true,
+        timeoutMessage: timeoutReason,
+      };
+    }
     throw new Error(
-      'A geração demorou demasiado sem resposta. Verifica a ligação e tenta novamente.'
+      timeoutReason ||
+        'A geração demorou demasiado sem resposta. Verifica a ligação e tenta novamente.'
     );
   }
 
-  return { text: full, model };
+  return { text: full, model, incomplete: false };
 }
 
 export default streamChat;

@@ -14,6 +14,10 @@ export default function WorkspacePanel({
   setActiveFile,
   isGenerating,
   onAskFix,
+  onContinue,
+  generationIncomplete = false,
+  entitiesOnly = false,
+  onRequestUi = null,
   projectId = null,
 }) {
   return (
@@ -97,6 +101,10 @@ export default function WorkspacePanel({
               files={files}
               isGenerating={isGenerating}
               onAskFix={onAskFix}
+              onContinue={onContinue}
+              generationIncomplete={generationIncomplete}
+              entitiesOnly={entitiesOnly}
+              onRequestUi={onRequestUi}
               projectId={projectId}
             />
           </div>
