@@ -33,6 +33,7 @@ import HistoryDrawer from '../components/editor/HistoryDrawer';
 import ExportModal from '../components/editor/ExportModal';
 import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
+import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, duplicateProject } from '../lib/projects';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { uploadFile } from '../lib/uploadApi';
@@ -109,12 +110,11 @@ export default function Editor() {
   const [creditsExhausted, setCreditsExhausted] = useState(false);
   const [attachment, setAttachment] = useState(null); // { url, name, resourceType }
   const [uploading, setUploading] = useState(false);
-  const [listening, setListening] = useState(false);
+  const [jarvisOpen, setJarvisOpen] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-  const recognitionRef = useRef(null);
   const pendingSentRef = useRef(false);
   const streamBufferRef = useRef('');
   const abortRef = useRef(null);
@@ -267,11 +267,6 @@ export default function Editor() {
     return () => {
       abortRef.current?.abort();
       if (mockTimerRef.current) clearTimeout(mockTimerRef.current);
-      try {
-        recognitionRef.current?.stop?.();
-      } catch {
-        // ignore
-      }
     };
   }, []);
 
@@ -469,50 +464,13 @@ export default function Editor() {
   }
 
   function handleMicClick() {
-    const SpeechRecognition =
-      typeof window !== 'undefined'
-        ? window.SpeechRecognition || window.webkitSpeechRecognition
-        : null;
-    if (!SpeechRecognition) {
-      setToast({
-        message: 'Reconhecimento de voz não suportado neste browser.',
-        type: 'info',
-      });
-      textareaRef.current?.focus();
-      return;
-    }
+    setJarvisOpen(true);
+  }
 
-    if (listening && recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore
-      }
-      setListening(false);
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'pt-BR';
-      recognition.interimResults = false;
-      recognition.onstart = () => setListening(true);
-      recognition.onend = () => setListening(false);
-      recognition.onerror = () => {
-        setListening(false);
-        setToast({ message: 'Não foi possível ouvir. Tenta de novo.', type: 'error' });
-      };
-      recognition.onresult = (event) => {
-        const transcript = event.results?.[0]?.[0]?.transcript;
-        if (transcript) {
-          setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        }
-      };
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch {
-      setListening(false);
-      textareaRef.current?.focus();
+  function handleJarvisConfirmBuild(prompt) {
+    setJarvisOpen(false);
+    if (prompt?.trim()) {
+      sendMessageText(prompt.trim());
     }
   }
 
@@ -653,6 +611,19 @@ export default function Editor() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => setJarvisOpen(true)}
+            disabled={projectLoading || isGenerating}
+            className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-indigo-200/90 hover:text-white rounded-md transition-all border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-40"
+            title="Modo Jarvis — voz para voz"
+          >
+            <span
+              className="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shadow-sm shadow-indigo-500/40 shrink-0"
+              aria-hidden
+            />
+            Modo Jarvis
+          </button>
           <CreditsBadge />
           {user?.photoURL ? (
             <img
@@ -964,14 +935,10 @@ export default function Editor() {
                       </button>
                       <button
                         type="button"
-                        disabled={projectLoading}
+                        disabled={projectLoading || isGenerating}
                         onClick={handleMicClick}
-                        className={`p-1.5 rounded-md hover:bg-zinc-800 transition-all disabled:opacity-40 ${
-                          listening
-                            ? 'text-red-400 bg-red-500/10'
-                            : 'text-zinc-500 hover:text-zinc-300'
-                        }`}
-                        title={listening ? 'Parar gravação' : 'Falar'}
+                        className="p-1.5 rounded-md hover:bg-zinc-800 transition-all disabled:opacity-40 text-indigo-400 hover:text-indigo-300"
+                        title="Modo Jarvis — voz para voz"
                       >
                         <Mic size={16} />
                       </button>
@@ -1049,6 +1016,11 @@ export default function Editor() {
         projectId={firestoreId}
         onProjectUpdated={handleProjectUpdated}
         onToast={setToast}
+      />
+      <VoiceAssistantModal
+        open={jarvisOpen}
+        onClose={() => setJarvisOpen(false)}
+        onConfirmBuild={handleJarvisConfirmBuild}
       />
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
