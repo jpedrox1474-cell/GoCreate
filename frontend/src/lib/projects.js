@@ -200,7 +200,7 @@ export function getPublishUrl(projectId, env = 'production') {
  */
 export async function publishProject(
   projectId,
-  { files, name, env = 'production', ownerId } = {}
+  { files, name, env = 'production', ownerId, plan = 'free' } = {}
 ) {
   if (!projectId) throw new Error('Projeto inválido.');
   if (!ownerId) throw new Error('Utilizador inválido.');
@@ -210,6 +210,7 @@ export async function publishProject(
 
   const pubId = publicProjectDocId(projectId, env);
   const url = getPublishUrl(projectId, env);
+  const ownerPlan = plan === 'pro' ? 'pro' : 'free';
   const payload = {
     projectId,
     ownerId,
@@ -217,6 +218,9 @@ export async function publishProject(
     env: env === 'preview' ? 'preview' : 'production',
     files,
     url,
+    plan: ownerPlan,
+    // Free plan: discreet "Feito com GoCreate" badge on public /p pages. Pro: none.
+    showBadge: ownerPlan !== 'pro',
     updatedAt: serverTimestamp(),
   };
 

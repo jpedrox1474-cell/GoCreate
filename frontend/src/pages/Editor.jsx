@@ -74,7 +74,7 @@ function sanitizeMessages(msgs, mergeFiles) {
 export default function Editor() {
   const { projectId: routeId } = useParams();
   const { user } = useAuth();
-  const { openPricing } = useCredits();
+  const { openPricing, plan: ownerPlan } = useCredits();
   const navigate = useNavigate();
 
   const [firestoreId, setFirestoreId] = useState(null);
@@ -811,6 +811,7 @@ export default function Editor() {
         projectId={firestoreId}
         files={generatedFiles}
         ownerId={user?.uid}
+        ownerPlan={ownerPlan}
         onToast={setToast}
       />
       <SettingsModal

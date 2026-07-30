@@ -74,7 +74,11 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll([
           'projectId', 'ownerId', 'name', 'env', 'files', 'url', 'updatedAt'
         ])
-        && request.resource.data.env in ['preview', 'production'];
+        && request.resource.data.env in ['preview', 'production']
+        && (!('plan' in request.resource.data)
+          || request.resource.data.plan in ['free', 'pro'])
+        && (!('showBadge' in request.resource.data)
+          || request.resource.data.showBadge is bool);
 
       allow update: if isSignedIn()
         && resource.data.ownerId == request.auth.uid

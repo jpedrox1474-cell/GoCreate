@@ -86,14 +86,20 @@ function RuntimeErrorOverlay({ onAskFix }) {
   );
 }
 
-function PreviewInner({ isGenerating, onAskFix }) {
+function PreviewInner({ isGenerating, onAskFix, publicMode }) {
   return (
-    <div className="relative h-full w-full [&_.sp-overlay]:!opacity-0 [&_.sp-overlay]:!pointer-events-none">
+    <div
+      className={`relative h-full w-full [&_.sp-overlay]:!opacity-0 [&_.sp-overlay]:!pointer-events-none ${
+        publicMode
+          ? '[&_.sp-navigator]:!hidden [&_.sp-preview-actions]:!hidden [&_.sp-button]:!hidden'
+          : ''
+      }`}
+    >
       <SandpackLayout style={{ height: '100%', border: 'none', background: 'transparent' }}>
         <SandpackPreview
-          showNavigator
+          showNavigator={!publicMode}
           showOpenInCodeSandbox={false}
-          showRefreshButton
+          showRefreshButton={!publicMode}
           showSandpackErrorOverlay={false}
           style={{ height: '100%', flex: 1 }}
         />
@@ -104,7 +110,7 @@ function PreviewInner({ isGenerating, onAskFix }) {
   );
 }
 
-export default function PreviewPane({ files, isGenerating, onAskFix }) {
+export default function PreviewPane({ files, isGenerating, onAskFix, publicMode = false }) {
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const hasFiles = Boolean(sandpackFiles && Object.keys(sandpackFiles).length);
 
@@ -122,8 +128,12 @@ export default function PreviewPane({ files, isGenerating, onAskFix }) {
       .join('|')}`;
   }, [sandpackFiles, dependencies]);
 
+  const shellClass = publicMode
+    ? 'w-full h-full overflow-hidden bg-zinc-950 relative flex flex-col'
+    : 'w-full h-full rounded-xl border border-zinc-800/80 overflow-hidden bg-zinc-950 relative shadow-2xl flex flex-col';
+
   return (
-    <div className="w-full h-full rounded-xl border border-zinc-800/80 overflow-hidden bg-zinc-950 relative shadow-2xl flex flex-col">
+    <div className={shellClass}>
       <div className="flex-1 min-h-0 [&_.sp-wrapper]:h-full [&_.sp-layout]:h-full [&_.sp-preview-container]:h-full [&_.sp-stack]:h-full [&_.sp-preview]:h-full">
         {!hasFiles ? (
           <div className="h-full flex flex-col items-center justify-center gap-2 bg-zinc-900/40 px-6 text-center">
@@ -164,7 +174,11 @@ export default function PreviewPane({ files, isGenerating, onAskFix }) {
               }}
               style={{ height: '100%' }}
             >
-              <PreviewInner isGenerating={isGenerating} onAskFix={onAskFix} />
+              <PreviewInner
+                isGenerating={isGenerating}
+                onAskFix={onAskFix}
+                publicMode={publicMode}
+              />
             </SandpackProvider>
           </SandpackErrorBoundary>
         )}

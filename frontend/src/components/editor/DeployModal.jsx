@@ -12,6 +12,7 @@ export default function DeployModal({
   projectId,
   files,
   ownerId,
+  ownerPlan = 'free',
   onToast,
 }) {
   const [env, setEnv] = useState('production');
@@ -67,6 +68,7 @@ export default function DeployModal({
         name: projectName,
         env,
         ownerId,
+        plan: ownerPlan,
       });
       setStepIdx(STEPS.length - 1);
       setDeployUrl(result.url || getPublishUrl(projectId, env));
