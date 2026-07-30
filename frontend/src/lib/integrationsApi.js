@@ -151,6 +151,50 @@ export async function createStripeProjectPayment({
   return data;
 }
 
+/**
+ * PayPal order (BYO).
+ */
+export async function createPayPalProjectPayment({
+  idToken,
+  projectId,
+  amount,
+  description,
+  currency = 'BRL',
+}) {
+  const res = await fetch(integrationsUrl('/paypal/create-payment'), {
+    method: 'POST',
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({ projectId, amount, description, currency }),
+  });
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.message || data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = data?.code;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Teste / ping de credenciais guardadas.
+ */
+export async function testIntegration({ idToken, providerId }) {
+  const res = await fetch(integrationsUrl(`/test/${encodeURIComponent(providerId)}`), {
+    method: 'POST',
+    headers: authHeaders(idToken, true),
+    body: JSON.stringify({}),
+  });
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.message || data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = data?.code;
+    throw err;
+  }
+  return data;
+}
+
 export default {
   getIntegrationsStatus,
   connectIntegration,
@@ -158,4 +202,6 @@ export default {
   createMercadoPagoPayment,
   createPublicMercadoPagoPayment,
   createStripeProjectPayment,
+  createPayPalProjectPayment,
+  testIntegration,
 };

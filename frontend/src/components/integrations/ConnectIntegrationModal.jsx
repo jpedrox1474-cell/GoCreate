@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Loader2, Eye, EyeOff, ExternalLink, Unplug } from 'lucide-react';
+import { Loader2, Eye, EyeOff, ExternalLink, Unplug, Settings2, FlaskConical } from 'lucide-react';
 import ModalShell from '../editor/ModalShell';
 
 /**
- * Modal para ligar integração por API key / Access Token.
+ * Modal genérico para ligar / configurar / testar integração por API key.
  */
 export default function ConnectIntegrationModal({
   open,
@@ -11,19 +11,27 @@ export default function ConnectIntegrationModal({
   integration,
   onConnect,
   onDisconnect,
+  onTest,
   connected,
   connecting,
+  connectedMeta,
 }) {
   const fields = integration?.fields || [];
   const [values, setValues] = useState({});
   const [showSecret, setShowSecret] = useState({});
   const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   React.useEffect(() => {
     if (open) {
       setValues({});
       setShowSecret({});
       setError(null);
+      setEditing(false);
+      setTesting(false);
+      setTestResult(null);
     }
   }, [open, integration?.id]);
 
@@ -45,15 +53,58 @@ export default function ConnectIntegrationModal({
     }
   }
 
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    setError(null);
+    try {
+      const result = await onTest?.();
+      setTestResult(result || { ok: true, message: 'OK' });
+    } catch (err) {
+      setTestResult({ ok: false, message: err?.message || 'Teste falhou.' });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const metaHints = [];
+  if (connectedMeta?.label) metaHints.push(connectedMeta.label);
+  if (connectedMeta?.mode) metaHints.push(`modo ${connectedMeta.mode}`);
+  if (connectedMeta?.url) metaHints.push(connectedMeta.url);
+  if (connectedMeta?.shop) metaHints.push(connectedMeta.shop);
+  if (connectedMeta?.bucket) metaHints.push(`bucket ${connectedMeta.bucket}`);
+  if (connectedMeta?.fromNumber) metaHints.push(connectedMeta.fromNumber);
+  if (connectedMeta?.defaultPhone) metaHints.push(connectedMeta.defaultPhone);
+  if (connectedMeta?.measurementId) metaHints.push(connectedMeta.measurementId);
+  if (connectedMeta?.domain) metaHints.push(connectedMeta.domain);
+  if (connectedMeta?.fromEmail) metaHints.push(connectedMeta.fromEmail);
+  if (connectedMeta?.webhookUrl) metaHints.push('webhook definido');
+
+  const showForm = !connected || editing;
+
   return (
-    <ModalShell open={open} onClose={onClose} title={`Ligar ${integration.name}`} wide>
+    <ModalShell open={open} onClose={onClose} title={`${connected ? 'Gerir' : 'Ligar'} ${integration.name}`} wide>
       <p className="text-xs text-zinc-500 mb-4 leading-relaxed">{integration.description}</p>
 
-      {connected ? (
+      {connected && !editing ? (
         <div className="space-y-4">
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-300">
             Integração ligada. As credenciais estão guardadas de forma segura no servidor.
           </div>
+          {metaHints.length > 0 && (
+            <p className="text-xs text-zinc-400">{metaHints.join(' · ')}</p>
+          )}
+          {testResult && (
+            <p
+              className={`text-xs rounded-lg px-3 py-2 border ${
+                testResult.ok
+                  ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20'
+                  : 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+              }`}
+            >
+              {testResult.message || (testResult.ok ? 'Teste OK' : 'Teste falhou')}
+            </p>
+          )}
           {integration.docsUrl && (
             <a
               href={integration.docsUrl}
@@ -64,7 +115,7 @@ export default function ConnectIntegrationModal({
               Documentação <ExternalLink size={12} />
             </a>
           )}
-          <div className="flex gap-2 justify-end pt-2">
+          <div className="flex flex-wrap gap-2 justify-end pt-2">
             <button
               type="button"
               onClick={onClose}
@@ -72,6 +123,28 @@ export default function ConnectIntegrationModal({
             >
               Fechar
             </button>
+            {typeof onTest === 'function' && (
+              <button
+                type="button"
+                disabled={connecting || testing}
+                onClick={handleTest}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {testing ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
+                Testar
+              </button>
+            )}
+            {integration.connectType === 'api_key' && (
+              <button
+                type="button"
+                disabled={connecting}
+                onClick={() => setEditing(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-blue-500/40 text-blue-300 hover:bg-blue-500/10 disabled:opacity-50"
+              >
+                <Settings2 size={14} />
+                Configurar
+              </button>
+            )}
             {integration.connectType !== 'platform' && (
               <button
                 type="button"
@@ -101,8 +174,14 @@ export default function ConnectIntegrationModal({
             </button>
           </div>
         </div>
-      ) : (
+      ) : showForm ? (
         <form onSubmit={handleSubmit} className="space-y-3">
+          {editing && (
+            <p className="text-xs text-zinc-500 mb-1">
+              Introduz as novas credenciais. Campos secretos vazios não atualizam valores existentes se enviares só o
+              que muda — preenche os obrigatórios de novo.
+            </p>
+          )}
           {fields.map((f) => (
             <div key={f.key}>
               <label className="block text-xs font-medium text-zinc-400 mb-1.5">
@@ -152,7 +231,7 @@ export default function ConnectIntegrationModal({
           <div className="flex gap-2 justify-end pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => (editing ? setEditing(false) : onClose())}
               className="px-3 py-2 text-sm rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
             >
               Cancelar
@@ -163,11 +242,11 @@ export default function ConnectIntegrationModal({
               className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
             >
               {connecting ? <Loader2 size={14} className="animate-spin" /> : null}
-              Ligar
+              {editing ? 'Guardar' : 'Ligar'}
             </button>
           </div>
         </form>
-      )}
+      ) : null}
     </ModalShell>
   );
 }

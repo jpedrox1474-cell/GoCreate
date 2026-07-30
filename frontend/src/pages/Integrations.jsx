@@ -47,6 +47,7 @@ import {
   getIntegrationsStatus,
   connectIntegration,
   disconnectIntegration,
+  testIntegration,
 } from '../lib/integrationsApi';
 import { connectGitHubPopup, disconnectGitHub } from '../lib/githubApi';
 import { useAuth } from '../context/AuthContext';
@@ -245,6 +246,12 @@ export default function Integrations() {
     }
   }
 
+  async function handleModalTest() {
+    if (!modalIntegration) return;
+    const token = await user.getIdToken();
+    return testIntegration({ idToken: token, providerId: modalIntegration.id });
+  }
+
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
@@ -360,6 +367,15 @@ export default function Integrations() {
                 {item.meta?.login && (
                   <p className="text-[11px] text-zinc-500 mb-3">@{item.meta.login}</p>
                 )}
+                {!item.meta?.login && item.meta?.label && (
+                  <p className="text-[11px] text-zinc-500 mb-3 truncate">{item.meta.label}</p>
+                )}
+                {!item.meta?.login && !item.meta?.label && item.meta?.shop && (
+                  <p className="text-[11px] text-zinc-500 mb-3 truncate">{item.meta.shop}</p>
+                )}
+                {!item.meta?.login && !item.meta?.label && item.meta?.url && (
+                  <p className="text-[11px] text-zinc-500 mb-3 truncate">{item.meta.url}</p>
+                )}
                 <button
                   type="button"
                   disabled={isSoon || busy}
@@ -412,9 +428,13 @@ export default function Integrations() {
         onClose={() => setModalIntegration(null)}
         integration={modalIntegration}
         connected={modalIntegration ? statusMap[modalIntegration.id]?.status === 'connected' : false}
+        connectedMeta={modalIntegration ? statusMap[modalIntegration.id]?.meta || {} : {}}
         connecting={busyId === modalIntegration?.id}
         onConnect={handleModalConnect}
         onDisconnect={handleModalDisconnect}
+        onTest={
+          modalIntegration?.connectType === 'api_key' ? handleModalTest : undefined
+        }
       />
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />

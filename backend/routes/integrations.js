@@ -3,9 +3,13 @@
 // GET  /status                              (auth) — estado de todos os providers
 // POST /connect/:providerId                 (auth) — guarda API keys em secrets
 // POST /disconnect/:providerId              (auth)
+// POST /test/:providerId                    (auth) — ping / validação de keys
 // POST /mercadopago/create-payment          (auth) — Pix/Preference do projeto
 // POST /mercadopago/public-create-payment   (público) — checkout em /p/:id
 // POST /stripe/create-payment               (auth)
+// POST /paypal/create-payment               (auth) — order PayPal (BYO)
+// POST /telegram/webhook                    (auth) — setWebhook stub
+// POST /nfe/emit                            (auth) — emissão stub
 // —— Canais premium (Evolution / Meta) — exigem requirePremium ——
 // POST /whatsapp/qr                         — cria instância + QR Evolution
 // GET  /whatsapp/connection                 — polling connectionState
@@ -24,6 +28,10 @@ import {
   getIntegrationsStatus,
   createProjectMercadoPagoPayment,
   createProjectStripePayment,
+  createProjectPayPalPaymentStub,
+  testIntegrationConnection,
+  setupTelegramWebhookStub,
+  emitNfeStub,
   resolvePublishedProjectOwner,
   markWhatsAppEvolutionConnected,
   clearWhatsAppEvolutionConnection,
@@ -203,6 +211,91 @@ router.post('/stripe/create-payment', requireAuth, async (req, res) => {
     console.error('[integrations/stripe/create-payment]', err);
     res.status(err.status || 500).json({
       error: err.message || 'Falha ao criar pagamento Stripe.',
+      code: err.code,
+      message: err.message,
+    });
+  }
+});
+
+/**
+ * PayPal order (BYO Client ID/Secret) — autentica + cria order.
+ */
+router.post('/paypal/create-payment', requireAuth, async (req, res) => {
+  try {
+    const { projectId, amount, description, currency } = req.body || {};
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId é obrigatório.' });
+    }
+    const result = await createProjectPayPalPaymentStub({
+      uid: req.user.uid,
+      projectId,
+      amount,
+      description,
+      currency,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[integrations/paypal/create-payment]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha ao criar pagamento PayPal.',
+      code: err.code,
+      message: err.message,
+    });
+  }
+});
+
+/**
+ * Teste / ping de credenciais BYO.
+ */
+router.post('/test/:providerId', requireAuth, async (req, res) => {
+  try {
+    const providerId = String(req.params.providerId || '').trim();
+    const result = await testIntegrationConnection(req.user.uid, providerId);
+    res.json(result);
+  } catch (err) {
+    console.error('[integrations/test]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha no teste.',
+      code: err.code,
+      message: err.message,
+      ok: false,
+    });
+  }
+});
+
+/**
+ * Telegram setWebhook stub.
+ */
+router.post('/telegram/webhook', requireAuth, async (req, res) => {
+  try {
+    const result = await setupTelegramWebhookStub(req.user.uid, {
+      webhookUrl: req.body?.webhookUrl,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[integrations/telegram/webhook]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha no webhook Telegram.',
+      code: err.code,
+      message: err.message,
+    });
+  }
+});
+
+/**
+ * NF-e emissão stub (credenciais BYO).
+ */
+router.post('/nfe/emit', requireAuth, async (req, res) => {
+  try {
+    const result = await emitNfeStub(req.user.uid, {
+      amount: req.body?.amount,
+      description: req.body?.description,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[integrations/nfe/emit]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha na emissão NF-e.',
       code: err.code,
       message: err.message,
     });

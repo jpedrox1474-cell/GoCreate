@@ -16,18 +16,57 @@ import { isStripeConfigured } from './stripe.js';
 import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js';
 import { isMetaConfigured } from './meta.js';
 
-/** Providers que aceitam connect via API key no backend. */
+/** Providers que aceitam connect via API key no backend (BYO — Free ok). */
 export const CONNECTABLE_PROVIDERS = new Set([
   'mercadopago',
   'stripe',
+  'paypal',
+  'pagseguro',
+  'clerk',
+  'auth0',
   'supabase',
   'neon',
+  'planetscale',
   'resend',
+  'sendgrid',
+  'mailchimp',
   'whatsapp',
+  'twilio',
+  'telegram',
   'ga4',
+  'mixpanel',
   'posthog',
+  's3',
+  'shopify',
   'google_maps',
+  'nfe',
 ]);
+
+/** Campos obrigatórios por provider (além da limpeza genérica). */
+const REQUIRED_FIELDS = {
+  mercadopago: ['accessToken'],
+  stripe: ['secretKey'],
+  paypal: ['clientId', 'clientSecret'],
+  pagseguro: ['token'],
+  clerk: ['publishableKey', 'secretKey'],
+  auth0: ['domain', 'clientId', 'clientSecret'],
+  supabase: ['url', 'anonKey'],
+  neon: ['connectionString'],
+  planetscale: ['connectionString'],
+  resend: ['apiKey'],
+  sendgrid: ['apiKey'],
+  mailchimp: ['apiKey'],
+  whatsapp: ['defaultPhone'],
+  twilio: ['accountSid', 'authToken', 'fromNumber'],
+  telegram: ['botToken'],
+  ga4: ['measurementId'],
+  mixpanel: ['projectToken'],
+  posthog: ['apiKey'],
+  s3: ['accessKeyId', 'secretAccessKey', 'bucket'],
+  shopify: ['shop', 'accessToken'],
+  google_maps: ['apiKey'],
+  nfe: ['apiToken'],
+};
 
 /** Canais premium (VPS Evolution / Meta) — estado em users.integrations. */
 export const SOCIAL_CHANNEL_PROVIDERS = new Set([
@@ -41,6 +80,7 @@ export const PLATFORM_PROVIDERS = new Set([
   'firebase_auth',
   'google_oauth',
   'firebase_firestore',
+  'firebase_storage',
   'cloudinary',
   'viacep',
   'pix',
@@ -70,6 +110,24 @@ function sanitizePublicMeta(providerId, credentials = {}) {
     meta.hasPublishableKey = Boolean(credentials.publishableKey);
     const sk = String(credentials.secretKey || '');
     meta.mode = sk.startsWith('sk_live') ? 'live' : 'test';
+  } else if (providerId === 'paypal') {
+    meta.hasClientId = Boolean(credentials.clientId);
+    meta.hasClientSecret = Boolean(credentials.clientSecret);
+    const mode = String(credentials.mode || 'sandbox').toLowerCase();
+    meta.mode = mode === 'live' ? 'live' : 'sandbox';
+    meta.label = `PayPal (${meta.mode})`;
+  } else if (providerId === 'pagseguro') {
+    meta.hasToken = Boolean(credentials.token);
+    meta.email = credentials.email || null;
+    meta.label = credentials.email ? `PagBank (${credentials.email})` : 'PagBank token';
+  } else if (providerId === 'clerk') {
+    meta.hasPublishableKey = Boolean(credentials.publishableKey);
+    meta.hasSecretKey = Boolean(credentials.secretKey);
+    meta.domain = credentials.domain || null;
+  } else if (providerId === 'auth0') {
+    meta.domain = credentials.domain || null;
+    meta.hasClientId = Boolean(credentials.clientId);
+    meta.hasClientSecret = Boolean(credentials.clientSecret);
   } else if (providerId === 'whatsapp') {
     meta.defaultPhone = credentials.defaultPhone || null;
     meta.hasCloudApi = Boolean(credentials.accessToken && credentials.phoneNumberId);
@@ -77,13 +135,72 @@ function sanitizePublicMeta(providerId, credentials = {}) {
     meta.measurementId = credentials.measurementId || null;
   } else if (providerId === 'supabase') {
     meta.url = credentials.url || null;
-  } else if (providerId === 'resend') {
+  } else if (providerId === 'neon' || providerId === 'planetscale') {
+    meta.hasConnectionString = Boolean(credentials.connectionString);
+  } else if (providerId === 'resend' || providerId === 'sendgrid') {
     meta.fromEmail = credentials.fromEmail || null;
+    meta.hasApiKey = Boolean(credentials.apiKey);
+  } else if (providerId === 'mailchimp') {
+    meta.hasApiKey = Boolean(credentials.apiKey);
+    meta.serverPrefix = credentials.serverPrefix || inferMailchimpPrefix(credentials.apiKey);
   } else if (providerId === 'posthog') {
     meta.host = credentials.host || null;
+    meta.hasApiKey = Boolean(credentials.apiKey);
+  } else if (providerId === 'mixpanel') {
+    meta.hasProjectToken = Boolean(credentials.projectToken);
+  } else if (providerId === 'twilio') {
+    meta.fromNumber = credentials.fromNumber || null;
+    meta.hasAccountSid = Boolean(credentials.accountSid);
+  } else if (providerId === 'telegram') {
+    meta.hasBotToken = Boolean(credentials.botToken);
+    meta.webhookUrl = credentials.webhookUrl || null;
+  } else if (providerId === 's3') {
+    meta.bucket = credentials.bucket || null;
+    meta.region = credentials.region || null;
+    meta.hasAccessKey = Boolean(credentials.accessKeyId);
+  } else if (providerId === 'shopify') {
+    meta.shop = normalizeShopifyShop(credentials.shop);
+    meta.hasAccessToken = Boolean(credentials.accessToken);
+  } else if (providerId === 'google_maps') {
+    meta.hasApiKey = Boolean(credentials.apiKey);
+  } else if (providerId === 'nfe') {
+    meta.hasApiToken = Boolean(credentials.apiToken);
+    meta.cnpj = credentials.cnpj || null;
+    meta.environment = String(credentials.environment || 'homologacao').toLowerCase();
+    meta.provider = String(credentials.provider || 'focus').toLowerCase();
   }
 
   return meta;
+}
+
+function inferMailchimpPrefix(apiKey) {
+  const s = String(apiKey || '');
+  const idx = s.lastIndexOf('-');
+  if (idx > 0 && idx < s.length - 1) return s.slice(idx + 1);
+  return null;
+}
+
+function normalizeShopifyShop(shop) {
+  let s = String(shop || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/$/, '');
+  if (s && !s.includes('.')) s = `${s}.myshopify.com`;
+  return s || null;
+}
+
+function validateRequired(providerId, cleaned) {
+  const required = REQUIRED_FIELDS[providerId] || [];
+  for (const key of required) {
+    if (!cleaned[key]) {
+      const err = new Error(`Campo obrigatório em falta: ${key}`);
+      err.status = 400;
+      err.code = 'MISSING_FIELD';
+      err.field = key;
+      throw err;
+    }
+  }
 }
 
 /**
@@ -104,17 +221,18 @@ export async function saveIntegrationConnection(uid, providerId, credentials) {
     if (s) cleaned[k] = s;
   }
 
-  if (providerId === 'mercadopago' && !cleaned.accessToken) {
-    const err = new Error('Access Token do Mercado Pago é obrigatório.');
-    err.status = 400;
-    err.code = 'MISSING_ACCESS_TOKEN';
-    throw err;
+  validateRequired(providerId, cleaned);
+
+  if (providerId === 'shopify' && cleaned.shop) {
+    cleaned.shop = normalizeShopifyShop(cleaned.shop);
   }
-  if (providerId === 'stripe' && !cleaned.secretKey) {
-    const err = new Error('Secret Key do Stripe é obrigatória.');
-    err.status = 400;
-    err.code = 'MISSING_SECRET_KEY';
-    throw err;
+  if (providerId === 'paypal') {
+    const mode = String(cleaned.mode || 'sandbox').toLowerCase();
+    cleaned.mode = mode === 'live' ? 'live' : 'sandbox';
+  }
+  if (providerId === 'mailchimp' && !cleaned.serverPrefix) {
+    const inferred = inferMailchimpPrefix(cleaned.apiKey);
+    if (inferred) cleaned.serverPrefix = inferred;
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -569,6 +687,318 @@ export async function createProjectStripePayment({
 }
 
 /**
+ * Stub PayPal — valida credenciais e devolve payload de order (sem charge real).
+ * Docs: https://developer.paypal.com/docs/api/orders/v2/
+ */
+export async function createProjectPayPalPaymentStub({
+  uid,
+  projectId,
+  amount,
+  description,
+  currency = 'BRL',
+}) {
+  const creds = await getStoredCredentials(uid, 'paypal');
+  if (!creds?.clientId || !creds?.clientSecret) {
+    const err = new Error('PayPal não ligado. Adiciona Client ID e Secret em Integrações.');
+    err.status = 503;
+    err.code = 'PAYPAL_NOT_CONNECTED';
+    throw err;
+  }
+
+  const amountNum = Number(amount);
+  if (!Number.isFinite(amountNum) || amountNum <= 0) {
+    const err = new Error('Valor inválido.');
+    err.status = 400;
+    throw err;
+  }
+
+  const mode = String(creds.mode || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox';
+  const base =
+    mode === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+
+  // OAuth token — prova que as keys funcionam
+  const basic = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64');
+  const tokenRes = await fetch(`${base}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+  });
+  const tokenData = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !tokenData.access_token) {
+    const err = new Error(
+      tokenData?.error_description ||
+        tokenData?.error ||
+        'Credenciais PayPal inválidas (OAuth falhou).'
+    );
+    err.status = 401;
+    err.code = 'PAYPAL_AUTH_FAILED';
+    throw err;
+  }
+
+  const title = String(description || 'Pagamento GoCreate').slice(0, 120);
+  const orderBody = {
+    intent: 'CAPTURE',
+    purchase_units: [
+      {
+        reference_id: `gc-${projectId || 'item'}`,
+        description: title,
+        amount: {
+          currency_code: String(currency || 'BRL').toUpperCase(),
+          value: amountNum.toFixed(2),
+        },
+      },
+    ],
+  };
+
+  const orderRes = await fetch(`${base}/v2/checkout/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${tokenData.access_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(orderBody),
+  });
+  const orderData = await orderRes.json().catch(() => ({}));
+  if (!orderRes.ok) {
+    const err = new Error(
+      orderData?.message || orderData?.details?.[0]?.description || 'Falha ao criar order PayPal.'
+    );
+    err.status = orderRes.status >= 400 && orderRes.status < 600 ? orderRes.status : 502;
+    err.code = 'PAYPAL_ORDER_FAILED';
+    throw err;
+  }
+
+  const approve = (orderData.links || []).find((l) => l.rel === 'approve');
+  return {
+    mode,
+    orderId: orderData.id,
+    status: orderData.status,
+    approveUrl: approve?.href || null,
+    docsUrl: 'https://developer.paypal.com/docs/api/orders/v2/',
+    stub: false,
+  };
+}
+
+/**
+ * Test ping — valida credenciais contra API do provider quando viável.
+ */
+export async function testIntegrationConnection(uid, providerId) {
+  if (!CONNECTABLE_PROVIDERS.has(providerId)) {
+    const err = new Error('Provider não suportado.');
+    err.status = 400;
+    err.code = 'PROVIDER_NOT_CONNECTABLE';
+    throw err;
+  }
+
+  const creds = await getStoredCredentials(uid, providerId);
+  if (!creds) {
+    const err = new Error('Integração não ligada.');
+    err.status = 404;
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+
+  if (providerId === 'supabase') {
+    const url = String(creds.url || '').replace(/\/$/, '');
+    const key = creds.anonKey || creds.serviceRoleKey;
+    if (!url || !key) {
+      return { ok: false, message: 'URL ou key em falta.' };
+    }
+    const res = await fetch(`${url}/auth/v1/health`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    }).catch(() => null);
+    if (!res) return { ok: false, message: 'Sem resposta do Supabase.' };
+    return { ok: res.ok || res.status < 500, status: res.status, message: 'Supabase alcançável.' };
+  }
+
+  if (providerId === 'resend') {
+    const res = await fetch('https://api.resend.com/domains', {
+      headers: { Authorization: `Bearer ${creds.apiKey}` },
+    }).catch(() => null);
+    if (!res) return { ok: false, message: 'Sem resposta do Resend.' };
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: res.status, message: 'API Key Resend inválida.' };
+    }
+    return { ok: true, status: res.status, message: 'API Key Resend válida.' };
+  }
+
+  if (providerId === 'sendgrid') {
+    const res = await fetch('https://api.sendgrid.com/v3/user/profile', {
+      headers: { Authorization: `Bearer ${creds.apiKey}` },
+    }).catch(() => null);
+    if (!res) return { ok: false, message: 'Sem resposta do SendGrid.' };
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: res.status, message: 'API Key SendGrid inválida.' };
+    }
+    return { ok: true, status: res.status, message: 'API Key SendGrid válida.' };
+  }
+
+  if (providerId === 'telegram') {
+    const res = await fetch(
+      `https://api.telegram.org/bot${encodeURIComponent(creds.botToken)}/getMe`
+    ).catch(() => null);
+    if (!res) return { ok: false, message: 'Sem resposta do Telegram.' };
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) {
+      return { ok: false, message: data.description || 'Bot token inválido.' };
+    }
+    return {
+      ok: true,
+      message: `Bot @${data.result?.username || 'ok'}`,
+      username: data.result?.username || null,
+    };
+  }
+
+  if (providerId === 'twilio') {
+    const basic = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString('base64');
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(creds.accountSid)}.json`,
+      { headers: { Authorization: `Basic ${basic}` } }
+    ).catch(() => null);
+    if (!res) return { ok: false, message: 'Sem resposta do Twilio.' };
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: 'Credenciais Twilio inválidas.' };
+    }
+    return { ok: true, status: res.status, message: 'Conta Twilio válida.' };
+  }
+
+  if (providerId === 'shopify') {
+    const shop = normalizeShopifyShop(creds.shop);
+    const res = await fetch(`https://${shop}/admin/api/2024-01/shop.json`, {
+      headers: { 'X-Shopify-Access-Token': creds.accessToken },
+    }).catch(() => null);
+    if (!res) return { ok: false, message: 'Sem resposta do Shopify.' };
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: 'Shop ou token Shopify inválidos.' };
+    }
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: true,
+      message: data?.shop?.name ? `Loja ${data.shop.name}` : 'Shopify OK',
+      shopName: data?.shop?.name || null,
+    };
+  }
+
+  if (providerId === 'paypal') {
+    try {
+      const result = await createProjectPayPalPaymentStub({
+        uid,
+        projectId: 'ping',
+        amount: 1,
+        description: 'GoCreate ping',
+        currency: 'BRL',
+      });
+      return { ok: true, message: `PayPal ${result.mode} OK`, orderId: result.orderId };
+    } catch (err) {
+      return { ok: false, message: err.message || 'PayPal ping falhou.', code: err.code };
+    }
+  }
+
+  if (providerId === 'posthog') {
+    const host = String(creds.host || 'https://app.posthog.com').replace(/\/$/, '');
+    // Não há endpoint público simples; confirmar formato da key
+    const key = String(creds.apiKey || '');
+    if (!key.startsWith('phc_') && key.length < 16) {
+      return { ok: false, message: 'Project API Key com formato suspeito.' };
+    }
+    return { ok: true, message: 'Credenciais PostHog guardadas (formato OK).', host };
+  }
+
+  // Default: credentials present
+  return {
+    ok: true,
+    message: 'Credenciais guardadas. Teste automático não disponível para este provider.',
+    stub: true,
+  };
+}
+
+/**
+ * Stub webhook Telegram — regista URL se fornecida (setWebhook).
+ */
+export async function setupTelegramWebhookStub(uid, { webhookUrl } = {}) {
+  const creds = await getStoredCredentials(uid, 'telegram');
+  if (!creds?.botToken) {
+    const err = new Error('Telegram não ligado.');
+    err.status = 404;
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+
+  const url = String(webhookUrl || creds.webhookUrl || '').trim();
+  if (!url) {
+    return {
+      ok: true,
+      stub: true,
+      message:
+        'Bot ligado. Define webhookUrl no connect ou envia { webhookUrl } aqui para setWebhook.',
+      docsUrl: 'https://core.telegram.org/bots/api#setwebhook',
+    };
+  }
+
+  const res = await fetch(
+    `https://api.telegram.org/bot${encodeURIComponent(creds.botToken)}/setWebhook`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!data.ok) {
+    const err = new Error(data.description || 'setWebhook falhou.');
+    err.status = 400;
+    err.code = 'TELEGRAM_WEBHOOK_FAILED';
+    throw err;
+  }
+
+  await secretsRef(uid, 'telegram').set({ webhookUrl: url }, { merge: true });
+  await userRef(uid).set(
+    {
+      integrations: {
+        telegram: {
+          connected: true,
+          hasBotToken: true,
+          webhookUrl: url,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      },
+    },
+    { merge: true }
+  );
+
+  return { ok: true, webhookUrl: url, description: data.description || 'Webhook definido.' };
+}
+
+/**
+ * Stub emissão NF-e — valida credenciais guardadas e devolve payload de exemplo.
+ */
+export async function emitNfeStub(uid, { amount, description } = {}) {
+  const creds = await getStoredCredentials(uid, 'nfe');
+  if (!creds?.apiToken) {
+    const err = new Error('NF-e não ligada. Adiciona o API Token em Integrações.');
+    err.status = 503;
+    err.code = 'NFE_NOT_CONNECTED';
+    throw err;
+  }
+
+  return {
+    stub: true,
+    status: 'queued',
+    provider: String(creds.provider || 'focus').toLowerCase(),
+    environment: String(creds.environment || 'homologacao').toLowerCase(),
+    cnpj: creds.cnpj || null,
+    amount: amount != null ? Number(amount) : null,
+    description: description || null,
+    message:
+      'Emissão real ainda é stub. Credenciais guardadas — integra o provedor fiscal no app gerado.',
+    docsUrl: 'https://focusnfe.com.br/doc/',
+  };
+}
+
+/**
  * Resolve owner de um projeto publicado para checkout público.
  */
 export async function resolvePublishedProjectOwner(projectId) {
@@ -594,5 +1024,9 @@ export default {
   listConnectedProviderIds,
   createProjectMercadoPagoPayment,
   createProjectStripePayment,
+  createProjectPayPalPaymentStub,
+  testIntegrationConnection,
+  setupTelegramWebhookStub,
+  emitNfeStub,
   resolvePublishedProjectOwner,
 };
