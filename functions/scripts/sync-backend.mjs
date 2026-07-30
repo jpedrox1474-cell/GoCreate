@@ -23,6 +23,7 @@ const FILES = [
   'routes/upload.js',
   'routes/billing.js',
   'services/gemini.js',
+  'services/mercadopago.js',
 ];
 
 function ensureDir(filePath) {

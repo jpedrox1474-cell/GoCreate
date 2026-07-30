@@ -35,8 +35,9 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Compras / packs — utilizador lê as suas; writes de conclusão via Admin/webhooks.
-    // Cliente pode criar apenas docs pending (checkout placeholder).
+    // Compras / packs — utilizador lê as suas; writes de conclusão via Admin/webhooks
+    // (Mercado Pago POST /api/billing/webhook). Cliente pode criar pending (legado);
+    // create-payment cria via Admin SDK.
     match /transactions/{txId} {
       allow read: if isSignedIn()
         && resource.data.userId == request.auth.uid;

@@ -27,7 +27,8 @@ export function createApp() {
 
   app.use('/api/chat', chatRouter);
   app.use('/api/upload', uploadRouter);
-  // Stripe / Mercado Pago webhooks → POST /api/billing/webhook (ver routes/billing.js)
+  // Mercado Pago / Stripe webhooks → POST /api/billing/webhook
+  // create-payment → Preference (Pro) ou Pix (Turbo)
   app.use('/api/billing', billingRouter);
 
   app.use((err, _req, res, _next) => {

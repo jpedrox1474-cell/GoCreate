@@ -20,6 +20,8 @@ import {
   CreditCard,
   Smartphone,
   PanelLeft,
+  X,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
@@ -33,6 +35,7 @@ import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
 import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, duplicateProject } from '../lib/projects';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
+import { uploadFile } from '../lib/uploadApi';
 import { extractAiDisplay, parseArtifacts } from '../lib/artifactParser';
 import {
   getProjectById,
@@ -104,14 +107,24 @@ export default function Editor() {
   const [projectMeta, setProjectMeta] = useState(null);
   const [historyProjects, setHistoryProjects] = useState([]);
   const [creditsExhausted, setCreditsExhausted] = useState(false);
+  const [attachment, setAttachment] = useState(null); // { url, name, resourceType }
+  const [uploading, setUploading] = useState(false);
+  const [listening, setListening] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const recognitionRef = useRef(null);
   const pendingSentRef = useRef(false);
   const streamBufferRef = useRef('');
   const abortRef = useRef(null);
   const mockTimerRef = useRef(null);
+  const attachmentRef = useRef(null);
   const useLiveChat = HAS_API && firestoreId && !MOCK_IDS.has(routeId);
+
+  useEffect(() => {
+    attachmentRef.current = attachment;
+  }, [attachment]);
 
   const project = projectMeta || getProjectById(routeId || 'new');
   const showQuickActions =
@@ -254,6 +267,11 @@ export default function Editor() {
     return () => {
       abortRef.current?.abort();
       if (mockTimerRef.current) clearTimeout(mockTimerRef.current);
+      try {
+        recognitionRef.current?.stop?.();
+      } catch {
+        // ignore
+      }
     };
   }, []);
 
@@ -280,7 +298,10 @@ export default function Editor() {
     async (userText) => {
       if (!userText?.trim() || isGenerating || !user) return;
       const trimmed = userText.trim();
+      const currentAttachment = attachmentRef.current;
       setInput('');
+      setAttachment(null);
+      attachmentRef.current = null;
       setCreditsExhausted(false);
       setIsGenerating(true);
       setIsTyping(true);
@@ -295,7 +316,12 @@ export default function Editor() {
       const pushLocalTurn = (aiText) => {
         setMessages((prev) => [
           ...prev,
-          { id: `u-${Date.now()}`, role: 'user', text: trimmed },
+          {
+            id: `u-${Date.now()}`,
+            role: 'user',
+            text: trimmed,
+            attachmentUrl: currentAttachment?.url || null,
+          },
           { id: `a-${Date.now()}`, role: 'ai', text: aiText },
         ]);
         setStreamingText('');
@@ -329,6 +355,7 @@ export default function Editor() {
         const result = await streamChat({
           projectId: firestoreId,
           messages: historyForApi,
+          attachmentUrl: currentAttachment?.url || null,
           idToken,
           signal: controller.signal,
           onChunk: (chunk) => {
@@ -413,6 +440,80 @@ export default function Editor() {
   function handleSendMessage(e) {
     e.preventDefault();
     sendMessageText(input);
+  }
+
+  async function handleAttachFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !user) return;
+    if (file.size > 25 * 1024 * 1024) {
+      setToast({ message: 'Arquivo demasiado grande (máx. 25MB).', type: 'error' });
+      return;
+    }
+    setUploading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const result = await uploadFile({ file, idToken });
+      setAttachment({
+        url: result.url,
+        name: result.originalName || file.name,
+        resourceType: result.resourceType || 'raw',
+      });
+      setToast({ message: 'Anexo pronto para enviar.', type: 'success' });
+    } catch (err) {
+      console.error('[Editor] upload:', err);
+      setToast({ message: err?.message || 'Falha no upload.', type: 'error' });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleMicClick() {
+    const SpeechRecognition =
+      typeof window !== 'undefined'
+        ? window.SpeechRecognition || window.webkitSpeechRecognition
+        : null;
+    if (!SpeechRecognition) {
+      setToast({
+        message: 'Reconhecimento de voz não suportado neste browser.',
+        type: 'info',
+      });
+      textareaRef.current?.focus();
+      return;
+    }
+
+    if (listening && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'pt-BR';
+      recognition.interimResults = false;
+      recognition.onstart = () => setListening(true);
+      recognition.onend = () => setListening(false);
+      recognition.onerror = () => {
+        setListening(false);
+        setToast({ message: 'Não foi possível ouvir. Tenta de novo.', type: 'error' });
+      };
+      recognition.onresult = (event) => {
+        const transcript = event.results?.[0]?.[0]?.transcript;
+        if (transcript) {
+          setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        }
+      };
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setListening(false);
+      textareaRef.current?.focus();
+    }
   }
 
   function handleAskFix(errorMsg) {
@@ -659,6 +760,26 @@ export default function Editor() {
                       <span className="text-xs font-medium text-zinc-500">GoCreate AI</span>
                     </div>
                   )}
+                  {msg.attachmentUrl && (
+                    <a
+                      href={msg.attachmentUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block mb-2 rounded-lg overflow-hidden border border-white/20 bg-black/20"
+                    >
+                      {/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(msg.attachmentUrl) ? (
+                        <img
+                          src={msg.attachmentUrl}
+                          alt="Anexo"
+                          className="max-h-36 w-full object-cover"
+                        />
+                      ) : (
+                        <span className="block px-3 py-2 text-xs underline opacity-90 truncate">
+                          {msg.attachmentUrl}
+                        </span>
+                      )}
+                    </a>
+                  )}
                   <p className="whitespace-pre-wrap">{msg.text}</p>
                 </div>
               </div>
@@ -753,74 +874,124 @@ export default function Editor() {
             <form
               onSubmit={handleSendMessage}
               className={`
-                relative flex items-end bg-zinc-900 border rounded-xl overflow-hidden transition-all
+                relative flex flex-col bg-zinc-900 border rounded-xl overflow-hidden transition-all
                 ${isGenerating ? 'border-blue-500/30' : 'border-zinc-700 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/50'}
               `}
             >
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={isGenerating || projectLoading}
-                placeholder={
-                  projectLoading
-                    ? 'A carregar…'
-                    : isGenerating
-                      ? 'A gerar…'
-                      : 'Pede alterações, novas secções…'
-                }
-                className="w-full bg-transparent border-none py-3.5 pl-4 pr-28 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none resize-none max-h-[150px] custom-scrollbar"
-                rows={1}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage(e);
-                  }
-                }}
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.json"
+                onChange={handleAttachFile}
               />
-              <div className="absolute right-2 bottom-2 flex items-center gap-0.5 bg-zinc-900 pl-2">
-                {isGenerating ? (
-                  <button
-                    type="button"
-                    onClick={handleStopGeneration}
-                    className="p-1.5 rounded-md bg-red-600/90 hover:bg-red-500 text-white transition-all flex items-center justify-center shadow-md"
-                    title="Parar geração"
-                  >
-                    <Square size={14} className="fill-current" />
-                  </button>
-                ) : (
-                  <>
+              {(attachment || uploading) && (
+                <div className="flex items-center gap-2 px-3 pt-3">
+                  <div className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-[11px] text-zinc-300">
+                    {uploading ? (
+                      <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
+                    ) : attachment?.resourceType === 'image' ? (
+                      <img
+                        src={attachment.url}
+                        alt=""
+                        className="w-6 h-6 rounded object-cover shrink-0"
+                      />
+                    ) : (
+                      <Paperclip size={12} className="text-blue-400 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {uploading ? 'A enviar…' : attachment?.name || 'Anexo'}
+                    </span>
+                    {attachment && !uploading && (
+                      <button
+                        type="button"
+                        onClick={() => setAttachment(null)}
+                        className="p-0.5 text-zinc-500 hover:text-zinc-200"
+                        title="Remover anexo"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="relative flex items-end">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  disabled={isGenerating || projectLoading}
+                  placeholder={
+                    projectLoading
+                      ? 'A carregar…'
+                      : isGenerating
+                        ? 'A gerar…'
+                        : 'Pede alterações, novas secções…'
+                  }
+                  className="w-full bg-transparent border-none py-3.5 pl-4 pr-28 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none resize-none max-h-[150px] custom-scrollbar"
+                  rows={1}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage(e);
+                    }
+                  }}
+                />
+                <div className="absolute right-2 bottom-2 flex items-center gap-0.5 bg-zinc-900 pl-2">
+                  {isGenerating ? (
                     <button
                       type="button"
-                      onClick={() => setToast({ message: 'Anexos em breve.', type: 'info' })}
-                      className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-md hover:bg-zinc-800 transition-all"
-                      title="Anexar"
+                      onClick={handleStopGeneration}
+                      className="p-1.5 rounded-md bg-red-600/90 hover:bg-red-500 text-white transition-all flex items-center justify-center shadow-md"
+                      title="Parar geração"
                     >
-                      <Paperclip size={16} />
+                      <Square size={14} className="fill-current" />
                     </button>
-                    <button
-                      type="button"
-                      className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-md hover:bg-zinc-800 transition-all"
-                      title="Falar"
-                    >
-                      <Mic size={16} />
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={!input.trim() || projectLoading}
-                      className={`
-                        p-1.5 rounded-md transition-all flex items-center justify-center
-                        ${
-                          input.trim()
-                            ? 'bg-blue-600 text-white shadow-md hover:bg-blue-500'
-                            : 'bg-zinc-800 text-zinc-600'
-                        }
-                      `}
-                    >
-                      <Send size={16} />
-                    </button>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={uploading || projectLoading}
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-md hover:bg-zinc-800 transition-all disabled:opacity-40"
+                        title="Anexar ficheiro"
+                      >
+                        {uploading ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <Paperclip size={16} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={projectLoading}
+                        onClick={handleMicClick}
+                        className={`p-1.5 rounded-md hover:bg-zinc-800 transition-all disabled:opacity-40 ${
+                          listening
+                            ? 'text-red-400 bg-red-500/10'
+                            : 'text-zinc-500 hover:text-zinc-300'
+                        }`}
+                        title={listening ? 'Parar gravação' : 'Falar'}
+                      >
+                        <Mic size={16} />
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={!input.trim() || projectLoading || uploading}
+                        className={`
+                          p-1.5 rounded-md transition-all flex items-center justify-center
+                          ${
+                            input.trim()
+                              ? 'bg-blue-600 text-white shadow-md hover:bg-blue-500'
+                              : 'bg-zinc-800 text-zinc-600'
+                          }
+                        `}
+                      >
+                        <Send size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </form>
             <div className="mt-2 flex justify-between items-center px-1">
