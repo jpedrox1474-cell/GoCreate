@@ -10,7 +10,7 @@
   "scripts": {
     "sync": "node scripts/sync-backend.mjs",
     "predeploy": "npm run sync",
-    "deploy": "firebase deploy --only functions:gocreateApi --project vexo-ef6e2"
+    "deploy": "firebase deploy --only functions:gocreate:gocreateApi --project vexo-ef6e2"
   },
   "dependencies": {
     "cloudinary": "^2.4.0",
