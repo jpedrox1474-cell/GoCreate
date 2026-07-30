@@ -3,12 +3,19 @@ import { X } from 'lucide-react';
 
 const IDLE_MESSAGE = 'Pressione espaço ou clique para falar...';
 const LISTENING_MESSAGE = 'Ouvindo...';
-const READY_CAPTION = 'Entendi o projeto. Posso iniciar a construção do código?';
+const CONFIRM_CAPTION =
+  'Confirme para gerar. Diga «confirmar» ou toque em Sim, execute.';
 const DEFAULT_CHAT_REPLY = 'Estou aqui! O que gostaria de criar hoje?';
 
 /** PT creation-intent keywords (case-insensitive). */
 const CREATION_INTENT_RE =
-  /\b(construa|construir|crie|criar|execute|executar|fa[cç]a|fazer|gere|gerar|monte|montar|desenvolva|desenvolver)\b/i;
+  /\b(construa|construir|crie|criar|execute|executar|fa[cç]a|fazer|gere|gerar|monte|montar|desenvolva|desenvolver|prompt)\b/i;
+
+/** Voice confirmation phrases while awaiting build confirm. */
+const CONFIRM_VOICE_RE =
+  /\b(confirmar?|confirma|confirmado|sim|execute|executar|pode|ok|okay|vai|gerar)\b/i;
+
+const CANCEL_VOICE_RE = /\b(cancelar?|cancela|n[aã]o|parar|para)\b/i;
 
 function getSpeechRecognition() {
   if (typeof window === 'undefined') return null;
@@ -19,29 +26,48 @@ function hasCreationIntent(text) {
   return CREATION_INTENT_RE.test((text || '').trim());
 }
 
+function isConfirmPhrase(text) {
+  return CONFIRM_VOICE_RE.test((text || '').trim());
+}
+
+function isCancelPhrase(text) {
+  return CANCEL_VOICE_RE.test((text || '').trim());
+}
+
 function chatReplyFor(text) {
   const t = (text || '').trim().toLowerCase();
   if (/ouvindo|me ouve|escuta|hello|oi\b|ol[aá]\b|jarvis/.test(t)) {
     return 'Sim, estou ouvindo! Em que posso ajudar?';
   }
   if (t.length > 0) {
-    return DEFAULT_CHAT_REPLY;
+    return 'Entendi. Pode detalhar mais, ou diga «crie…» quando quiser que eu monte o prompt.';
   }
   return 'Não consegui ouvir bem. Pode repetir?';
 }
 
-function summarizeBuildPrompt(text) {
-  const cleaned = (text || '').trim();
-  return cleaned || 'Crie um projeto web moderno conforme a conversa.';
+/** Strip leading command verbs so the prompt reads as a clean brief. */
+function craftBuildPrompt(text) {
+  let cleaned = (text || '').trim();
+  cleaned = cleaned
+    .replace(
+      /^(por favor[, ]*)?(jarvis[, ]*)?(pode[, ]*)?(me[, ]*)?(construa|construir|crie|criar|execute|executar|fa[cç]a|fazer|gere|gerar|monte|montar|desenvolva|desenvolver)\s+(um|uma|o|a|pra mim|para mim)?\s*/i,
+      ''
+    )
+    .trim();
+  if (!cleaned) {
+    return 'Crie um projeto web moderno conforme a conversa.';
+  }
+  // Capitalize first letter
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
 /**
- * Modo Jarvis — voice UI with conversationState machine.
- * States: idle → listening → chatting | ready_to_build
+ * Modo Jarvis — voice helper. Helps craft ideas; never builds until confirm.
+ * States: idle → listening → chatting | awaiting_confirm
  * Props: open, onClose, onConfirmBuild(prompt)
  */
 export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
-  const [conversationState, setConversationState] = useState('idle'); // idle | listening | chatting | ready_to_build
+  const [conversationState, setConversationState] = useState('idle'); // idle | listening | chatting | awaiting_confirm
   const [statusHint, setStatusHint] = useState(''); // unsupported | denied | ''
   const [closing, setClosing] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
@@ -55,6 +81,10 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
   const chatIdleTimerRef = useRef(null);
   const listenSafetyRef = useRef(null);
   const conversationStateRef = useRef('idle');
+  const buildPromptRef = useRef('');
+  /** True while we have a crafted prompt waiting for confirm (survives listen toggles). */
+  const pendingConfirmRef = useRef(false);
+  const confirmBuildRef = useRef(null);
 
   const setState = useCallback((next) => {
     conversationStateRef.current = next;
@@ -95,6 +125,8 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     stopRecognition();
     finishedRef.current = false;
     finalTranscriptRef.current = '';
+    buildPromptRef.current = '';
+    pendingConfirmRef.current = false;
     setLiveTranscript('');
     setCaption('');
     setBuildPrompt('');
@@ -102,33 +134,67 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     setState('idle');
   }, [clearChatIdleTimer, stopRecognition, setState]);
 
-  const handleSimulatedVoiceInput = useCallback((text) => {
-    clearChatIdleTimer();
-    stopRecognition();
-    finishedRef.current = true;
-    const raw = (text || '').trim();
-    setLiveTranscript('');
-    setStatusHint('');
-
-    if (hasCreationIntent(raw)) {
-      const prompt = summarizeBuildPrompt(raw);
+  const enterAwaitingConfirm = useCallback(
+    (rawText) => {
+      const prompt = craftBuildPrompt(rawText);
+      buildPromptRef.current = prompt;
+      pendingConfirmRef.current = true;
       setBuildPrompt(prompt);
-      setCaption(READY_CAPTION);
-      setState('ready_to_build');
-      return;
-    }
+      setCaption(CONFIRM_CAPTION);
+      setLiveTranscript('');
+      setState('awaiting_confirm');
+    },
+    [setState]
+  );
 
-    setBuildPrompt('');
-    setCaption(chatReplyFor(raw));
-    setState('chatting');
-    chatIdleTimerRef.current = setTimeout(() => {
-      chatIdleTimerRef.current = null;
-      if (conversationStateRef.current === 'chatting') {
-        setCaption('');
-        setState('idle');
+  const handleSimulatedVoiceInput = useCallback(
+    (text) => {
+      clearChatIdleTimer();
+      stopRecognition();
+      finishedRef.current = true;
+      const raw = (text || '').trim();
+      setLiveTranscript('');
+      setStatusHint('');
+
+      // While a crafted prompt awaits confirm (including mid-listen for voice confirm)
+      if (pendingConfirmRef.current) {
+        if (isCancelPhrase(raw)) {
+          resetToIdle();
+          return;
+        }
+        if (isConfirmPhrase(raw)) {
+          confirmBuildRef.current?.();
+          return;
+        }
+        if (hasCreationIntent(raw)) {
+          enterAwaitingConfirm(raw);
+          return;
+        }
+        setCaption('Não entendi. Diga «confirmar» para gerar, ou «cancelar».');
+        setState('awaiting_confirm');
+        return;
       }
-    }, 3000);
-  }, [clearChatIdleTimer, stopRecognition, setState]);
+
+      if (hasCreationIntent(raw)) {
+        enterAwaitingConfirm(raw);
+        return;
+      }
+
+      setBuildPrompt('');
+      buildPromptRef.current = '';
+      pendingConfirmRef.current = false;
+      setCaption(chatReplyFor(raw));
+      setState('chatting');
+      chatIdleTimerRef.current = setTimeout(() => {
+        chatIdleTimerRef.current = null;
+        if (conversationStateRef.current === 'chatting') {
+          setCaption('');
+          setState('idle');
+        }
+      }, 4000);
+    },
+    [clearChatIdleTimer, stopRecognition, setState, resetToIdle, enterAwaitingConfirm]
+  );
 
   const startListening = useCallback(() => {
     if (conversationStateRef.current === 'listening') return;
@@ -137,15 +203,20 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     finishedRef.current = false;
     finalTranscriptRef.current = '';
     setLiveTranscript('');
-    setCaption('');
-    setBuildPrompt('');
+    // Keep crafted prompt when re-listening for voice confirm
+    if (pendingConfirmRef.current) {
+      setCaption('Ouvindo confirmação… diga «confirmar»');
+    } else {
+      setCaption('');
+      setBuildPrompt('');
+      buildPromptRef.current = '';
+    }
     setStatusHint('');
     setState('listening');
 
     const SpeechRecognition = getSpeechRecognition();
     if (!SpeechRecognition) {
       setStatusHint('unsupported');
-      // Keep listening UI briefly, then fall back to empty input handler
       setTimeout(() => {
         if (conversationStateRef.current === 'listening') {
           handleSimulatedVoiceInput('');
@@ -204,7 +275,13 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
         handleSimulatedVoiceInput(finalTranscriptRef.current);
       }
     }, 12000);
-  }, [clearChatIdleTimer, clearListenSafety, stopRecognition, setState, handleSimulatedVoiceInput]);
+  }, [
+    clearChatIdleTimer,
+    clearListenSafety,
+    stopRecognition,
+    setState,
+    handleSimulatedVoiceInput,
+  ]);
 
   const stopListeningEarly = useCallback(() => {
     if (conversationStateRef.current !== 'listening') return;
@@ -230,6 +307,8 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
       setLiveTranscript('');
       setCaption('');
       setBuildPrompt('');
+      buildPromptRef.current = '';
+      pendingConfirmRef.current = false;
       setStatusHint('');
       setDebugInput('');
       finalTranscriptRef.current = '';
@@ -265,15 +344,18 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose, toggleListen]);
 
-  const smoothClose = useCallback((afterClose) => {
-    clearChatIdleTimer();
-    stopRecognition();
-    setClosing(true);
-    setTimeout(() => {
-      setClosing(false);
-      afterClose?.();
-    }, 280);
-  }, [clearChatIdleTimer, stopRecognition]);
+  const smoothClose = useCallback(
+    (afterClose) => {
+      clearChatIdleTimer();
+      stopRecognition();
+      setClosing(true);
+      setTimeout(() => {
+        setClosing(false);
+        afterClose?.();
+      }, 280);
+    },
+    [clearChatIdleTimer, stopRecognition]
+  );
 
   const handleClose = useCallback(() => {
     smoothClose(() => onClose?.());
@@ -284,31 +366,37 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
   }, [resetToIdle]);
 
   const handleConfirm = useCallback(() => {
-    const prompt = buildPrompt;
+    const prompt = buildPromptRef.current || buildPrompt;
+    pendingConfirmRef.current = false;
     smoothClose(() => {
       onConfirmBuild?.(prompt);
       onClose?.();
     });
   }, [smoothClose, onConfirmBuild, onClose, buildPrompt]);
 
-  const handleDebugSubmit = useCallback((phrase) => {
-    const text = (phrase ?? debugInput).trim();
-    if (!text) return;
-    setDebugInput('');
-    handleSimulatedVoiceInput(text);
-  }, [debugInput, handleSimulatedVoiceInput]);
+  confirmBuildRef.current = handleConfirm;
+
+  const handleDebugSubmit = useCallback(
+    (phrase) => {
+      const text = (phrase ?? debugInput).trim();
+      if (!text) return;
+      setDebugInput('');
+      handleSimulatedVoiceInput(text);
+    },
+    [debugInput, handleSimulatedVoiceInput]
+  );
 
   if (!open) return null;
 
-  // Map conversationState → existing orb CSS classes (identity preserved)
   const orbAnim =
     conversationState === 'listening'
       ? 'listening'
-      : conversationState === 'ready_to_build'
+      : conversationState === 'awaiting_confirm'
         ? 'thinking'
-        : 'speaking'; // idle + chatting → soft pulse
+        : 'speaking';
 
-  const showRings = conversationState === 'chatting' || conversationState === 'ready_to_build';
+  const showRings =
+    conversationState === 'chatting' || conversationState === 'awaiting_confirm';
 
   const statusText =
     statusHint === 'unsupported'
@@ -318,10 +406,10 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
         : conversationState === 'idle'
           ? IDLE_MESSAGE
           : conversationState === 'listening'
-            ? LISTENING_MESSAGE
+            ? caption || LISTENING_MESSAGE
             : conversationState === 'chatting'
               ? caption
-              : conversationState === 'ready_to_build'
+              : conversationState === 'awaiting_confirm'
                 ? caption
                 : IDLE_MESSAGE;
 
@@ -330,7 +418,8 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
     orbAnim === 'listening' && 'jarvis-orb--listening',
     orbAnim === 'thinking' && 'jarvis-orb--thinking',
     orbAnim === 'speaking' && 'jarvis-orb--speaking',
-    conversationState === 'idle' && 'cursor-pointer',
+    (conversationState === 'idle' || conversationState === 'awaiting_confirm') &&
+      'cursor-pointer',
   ]
     .filter(Boolean)
     .join(' ');
@@ -369,12 +458,18 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
               <span className="jarvis-ring jarvis-ring--3" aria-hidden />
             </>
           )}
+          {conversationState === 'listening' && (
+            <>
+              <span className="jarvis-ring jarvis-ring--1" aria-hidden />
+              <span className="jarvis-ring jarvis-ring--2" aria-hidden />
+            </>
+          )}
           <div className={orbClass} aria-hidden />
         </button>
 
         <p
           className={`text-center text-sm font-medium tracking-wide mb-3 transition-opacity duration-300 ${
-            conversationState === 'chatting' || conversationState === 'ready_to_build'
+            conversationState === 'chatting' || conversationState === 'awaiting_confirm'
               ? 'text-zinc-100 text-base sm:text-lg leading-relaxed jarvis-caption-in'
               : 'text-zinc-300'
           }`}
@@ -388,13 +483,20 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
           </p>
         ) : null}
 
-        {conversationState === 'ready_to_build' && buildPrompt ? (
-          <p className="text-center text-xs text-zinc-500 leading-relaxed mb-6 max-w-md">
-            Projeto: {buildPrompt}
-          </p>
+        {(conversationState === 'awaiting_confirm' ||
+          (conversationState === 'listening' && !!buildPrompt)) &&
+        buildPrompt ? (
+          <div className="w-full mb-6 jarvis-caption-in">
+            <p className="text-center text-xs uppercase tracking-wider text-indigo-300/80 mb-2">
+              Vou criar este prompt
+            </p>
+            <p className="text-center text-sm text-zinc-200 leading-relaxed max-w-md mx-auto rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              {buildPrompt}
+            </p>
+          </div>
         ) : null}
 
-        {conversationState === 'ready_to_build' && (
+        {!!buildPrompt && conversationState !== 'listening' && (
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto jarvis-actions-in">
             <button
               type="button"
@@ -405,12 +507,29 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
             </button>
             <button
               type="button"
+              onClick={toggleListen}
+              className="jarvis-glass-btn px-6 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-white transition-all"
+            >
+              Confirmar por áudio
+            </button>
+            <button
+              type="button"
               onClick={handleCancelBuild}
               className="jarvis-glass-btn px-6 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-white transition-all"
             >
               Cancelar
             </button>
           </div>
+        )}
+
+        {!!buildPrompt && conversationState === 'listening' && (
+          <button
+            type="button"
+            onClick={stopListeningEarly}
+            className="jarvis-glass-btn px-6 py-3 rounded-xl text-sm font-medium text-zinc-300 hover:text-white transition-all jarvis-actions-in"
+          >
+            Parar de ouvir
+          </button>
         )}
       </div>
 
@@ -432,6 +551,13 @@ export default function VoiceAssistantModal({ open, onClose, onConfirmBuild }) {
               className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
             >
               Crie um site para mim
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDebugSubmit('confirmar')}
+              className="jarvis-glass-btn px-3 py-1.5 rounded-lg text-xs text-zinc-300 hover:text-white"
+            >
+              confirmar
             </button>
           </div>
           <form

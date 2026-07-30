@@ -15,6 +15,7 @@ import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
 import ProjectActionsMenu from '../components/ProjectActionsMenu';
 import Toast from '../components/Toast';
+import VoiceAssistantModal from '../components/editor/VoiceAssistantModal';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -23,6 +24,7 @@ import {
   deleteProject,
   duplicateProject,
 } from '../lib/projects';
+import { PENDING_PROMPT_KEY } from '../lib/mockData';
 
 const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
@@ -35,6 +37,7 @@ export default function AppLayout() {
   const { isLight } = useTheme();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [jarvisOpen, setJarvisOpen] = useState(false);
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [toast, setToast] = useState(null);
@@ -59,6 +62,14 @@ export default function AppLayout() {
   async function handleLogout() {
     await logout();
     navigate('/');
+  }
+
+  function handleJarvisConfirmBuild(prompt) {
+    setJarvisOpen(false);
+    const trimmed = (prompt || '').trim();
+    if (!trimmed) return;
+    sessionStorage.setItem(PENDING_PROMPT_KEY, trimmed);
+    navigate('/editor/new');
   }
 
   async function handleRename(project) {
@@ -134,6 +145,21 @@ export default function AppLayout() {
         >
           <Plus size={16} />
           Novo Projeto
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setMobileOpen(false);
+            setJarvisOpen(true);
+          }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 mt-2 rounded-lg text-sm font-medium text-indigo-200/90 hover:text-white border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 transition-all"
+        >
+          <span
+            className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shadow-sm shadow-indigo-500/40 shrink-0"
+            aria-hidden
+          />
+          Modo Jarvis
         </button>
 
         <div className="mt-4 pt-3 border-t border-zinc-800/80">
@@ -260,6 +286,11 @@ export default function AppLayout() {
       </div>
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+      <VoiceAssistantModal
+        open={jarvisOpen}
+        onClose={() => setJarvisOpen(false)}
+        onConfirmBuild={handleJarvisConfirmBuild}
+      />
     </div>
   );
 }

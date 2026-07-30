@@ -111,6 +111,7 @@ export default function Editor() {
   const [attachment, setAttachment] = useState(null); // { url, name, resourceType }
   const [uploading, setUploading] = useState(false);
   const [jarvisOpen, setJarvisOpen] = useState(false);
+  const [chatMicListening, setChatMicListening] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -120,11 +121,30 @@ export default function Editor() {
   const abortRef = useRef(null);
   const mockTimerRef = useRef(null);
   const attachmentRef = useRef(null);
+  const chatRecognitionRef = useRef(null);
+  const chatFinalTranscriptRef = useRef('');
+  const chatMicBaseInputRef = useRef('');
   const useLiveChat = HAS_API && firestoreId && !MOCK_IDS.has(routeId);
 
   useEffect(() => {
     attachmentRef.current = attachment;
   }, [attachment]);
+
+  useEffect(() => {
+    return () => {
+      const rec = chatRecognitionRef.current;
+      chatRecognitionRef.current = null;
+      if (!rec) return;
+      try {
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        rec.stop();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
 
   const project = projectMeta || getProjectById(routeId || 'new');
   const showQuickActions =
@@ -463,8 +483,98 @@ export default function Editor() {
     }
   }
 
+  function stopChatMic() {
+    const rec = chatRecognitionRef.current;
+    chatRecognitionRef.current = null;
+    setChatMicListening(false);
+    if (!rec) return;
+    try {
+      rec.onresult = null;
+      rec.onerror = null;
+      rec.onend = null;
+      rec.stop();
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  /** Chat mic = normal speech-to-text into the input. Does NOT open Jarvis. */
   function handleMicClick() {
-    setJarvisOpen(true);
+    if (chatMicListening) {
+      stopChatMic();
+      return;
+    }
+    if (projectLoading || isGenerating) return;
+
+    const SpeechRecognition =
+      typeof window !== 'undefined'
+        ? window.SpeechRecognition || window.webkitSpeechRecognition
+        : null;
+    if (!SpeechRecognition) {
+      setToast({
+        message: 'Microfone indisponível neste navegador.',
+        type: 'error',
+      });
+      return;
+    }
+
+    stopChatMic();
+    chatFinalTranscriptRef.current = '';
+    chatMicBaseInputRef.current = input.trim();
+    setChatMicListening(true);
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'pt-BR';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+    chatRecognitionRef.current = recognition;
+
+    const mergeTranscript = (spoken) => {
+      const base = chatMicBaseInputRef.current;
+      if (!spoken) return base;
+      return base ? `${base} ${spoken}` : spoken;
+    };
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      let finalText = chatFinalTranscriptRef.current;
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const piece = event.results[i][0]?.transcript || '';
+        if (event.results[i].isFinal) {
+          finalText = `${finalText} ${piece}`.trim();
+        } else {
+          interim += piece;
+        }
+      }
+      chatFinalTranscriptRef.current = finalText;
+      const live = (finalText || interim).trim();
+      if (live) setInput(mergeTranscript(live));
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        setToast({ message: 'Permissão do microfone negada.', type: 'error' });
+      }
+      const finalText = chatFinalTranscriptRef.current.trim();
+      if (finalText) setInput(mergeTranscript(finalText));
+      stopChatMic();
+    };
+
+    recognition.onend = () => {
+      const finalText = chatFinalTranscriptRef.current.trim();
+      if (finalText) setInput(mergeTranscript(finalText));
+      chatRecognitionRef.current = null;
+      setChatMicListening(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setChatMicListening(false);
+      setToast({ message: 'Não foi possível iniciar o microfone.', type: 'error' });
+    }
   }
 
   function handleJarvisConfirmBuild(prompt) {
@@ -615,14 +725,15 @@ export default function Editor() {
             type="button"
             onClick={() => setJarvisOpen(true)}
             disabled={projectLoading || isGenerating}
-            className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-indigo-200/90 hover:text-white rounded-md transition-all border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-40"
-            title="Modo Jarvis — voz para voz"
+            className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-indigo-200/90 hover:text-white rounded-md transition-all border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-40"
+            title="Modo Jarvis — assistente por voz (confirma antes de gerar)"
           >
             <span
               className="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 shadow-sm shadow-indigo-500/40 shrink-0"
               aria-hidden
             />
-            Modo Jarvis
+            <span className="hidden sm:inline">Modo Jarvis</span>
+            <span className="sm:hidden">Jarvis</span>
           </button>
           <CreditsBadge />
           {user?.photoURL ? (
@@ -937,8 +1048,18 @@ export default function Editor() {
                         type="button"
                         disabled={projectLoading || isGenerating}
                         onClick={handleMicClick}
-                        className="p-1.5 rounded-md hover:bg-zinc-800 transition-all disabled:opacity-40 text-indigo-400 hover:text-indigo-300"
-                        title="Modo Jarvis — voz para voz"
+                        className={`p-1.5 rounded-md hover:bg-zinc-800 transition-all disabled:opacity-40 ${
+                          chatMicListening
+                            ? 'text-red-400 bg-red-500/10 animate-pulse'
+                            : 'text-zinc-500 hover:text-zinc-300'
+                        }`}
+                        title={
+                          chatMicListening
+                            ? 'Parar ditado (mensagem normal)'
+                            : 'Ditar mensagem (voz → texto no chat)'
+                        }
+                        aria-label={chatMicListening ? 'Parar microfone' : 'Microfone do chat'}
+                        aria-pressed={chatMicListening}
                       >
                         <Mic size={16} />
                       </button>
