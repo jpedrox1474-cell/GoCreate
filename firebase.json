@@ -45,7 +45,13 @@
       "emailPassword": true,
       "googleSignIn": {
         "oAuthBrandDisplayName": "GoCreate",
-        "supportEmail": "jpedrox1474@gmail.com"
+        "supportEmail": "jpedrox1474@gmail.com",
+        "authorizedRedirectUris": [
+          "https://gocreate.web.app/__/auth/handler",
+          "https://gocreate.firebaseapp.com/__/auth/handler",
+          "https://vexo-ef6e2.firebaseapp.com/__/auth/handler",
+          "http://localhost/__/auth/handler"
+        ]
       }
     }
   }
