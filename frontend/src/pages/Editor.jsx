@@ -1575,6 +1575,7 @@ export default function Editor() {
           }
           onRequestUi={handleRequestUi}
           projectId={firestoreId}
+          backendEnabled={Boolean(projectMeta?.backendEnabled)}
         />
       </main>
 
@@ -1594,7 +1595,9 @@ export default function Editor() {
         files={generatedFiles}
         ownerId={user?.uid}
         ownerPlan={ownerPlan}
+        backendEnabled={Boolean(project.backendEnabled)}
         onToast={setToast}
+        onOpenSettings={() => setSettingsOpen(true)}
         onSlugUpdated={({ slug, publishedUrl }) => {
           handleProjectUpdated({
             ...project,

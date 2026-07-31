@@ -82,6 +82,7 @@ export function mapProjectDoc(d) {
     publishedEnv: data.publishedEnv || null,
     slug: data.slug || null,
     isDefault: Boolean(data.isDefault),
+    backendEnabled: Boolean(data.backendEnabled),
     ownerId: data.ownerId,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt || data.createdAt,
@@ -117,6 +118,7 @@ export async function createProject(uid, { name = 'Novo Projeto', description = 
     framework: 'React + Tailwind',
     color: pickColor(),
     isDefault,
+    backendEnabled: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -378,19 +380,20 @@ export async function publishProject(
     throw new Error('Não há ficheiros para publicar. Gera código no chat primeiro.');
   }
 
-  // Production must go through /api/deploy/publish (premium). Client path = preview only.
+  // Production must go through /api/deploy/publish (Admin). Client path = preview only.
   if (env === 'production') {
-    throw new Error('Deploy de produção requer API autenticada (plano Pro/Owner).');
+    throw new Error('Deploy de produção requer API autenticada. Usa o botão Deploy no editor.');
   }
 
   let resolvedSlug = slug;
-  if (!resolvedSlug) {
-    try {
-      const snap = await getDoc(doc(db, 'projects', projectId));
-      resolvedSlug = snap.data()?.slug || null;
-    } catch {
-      resolvedSlug = null;
-    }
+  let backendEnabled = false;
+  try {
+    const snap = await getDoc(doc(db, 'projects', projectId));
+    const pdata = snap.data() || {};
+    if (!resolvedSlug) resolvedSlug = pdata.slug || null;
+    backendEnabled = Boolean(pdata.backendEnabled);
+  } catch {
+    if (!resolvedSlug) resolvedSlug = null;
   }
 
   const pubId = publicProjectDocId(projectId, env);
@@ -399,6 +402,7 @@ export async function publishProject(
   const isProLike =
     plan === 'pro' || plan === 'enterprise_master' || role === 'owner';
   const ownerPlan = isProLike ? (plan === 'enterprise_master' ? 'enterprise_master' : 'pro') : 'free';
+
   const payload = {
     projectId,
     ownerId,
@@ -409,6 +413,7 @@ export async function publishProject(
     slug: publicKey,
     plan: ownerPlan === 'enterprise_master' ? 'pro' : ownerPlan,
     showBadge: ownerPlan === 'free',
+    backendEnabled,
     updatedAt: serverTimestamp(),
   };
 

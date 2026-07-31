@@ -1,4 +1,4 @@
-// Cliente deploy production (premium) — preview continua via Firestore directo.
+// Cliente deploy — Free e Pro publicam; Free mantém badge.
 // Slug APIs: check availability + update public path segment.
 
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -12,7 +12,7 @@ async function parseJson(res) {
 }
 
 /**
- * Publica via Cloud Function (production exige Pro/Owner).
+ * Publica via Cloud Function (Free + Pro).
  * Redeploy always overwrites the same publicProjects/{projectId} snapshot.
  */
 export async function publishViaApi({

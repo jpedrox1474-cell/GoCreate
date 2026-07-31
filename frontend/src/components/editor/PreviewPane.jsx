@@ -222,6 +222,7 @@ export default function PreviewPane({
   onAskFix,
   publicMode = false,
   projectId = null,
+  backendEnabled = false,
   entitiesOnly = false,
   generationIncomplete = false,
   onRequestUi = null,
@@ -252,6 +253,7 @@ export default function PreviewPane({
   const paymentsBootstrap = useMemo(() => {
     const pid = JSON.stringify(projectId || '');
     const base = JSON.stringify(apiBase);
+    const be = JSON.stringify(Boolean(backendEnabled));
     const firebaseConfig = {
       apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
       authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
@@ -261,8 +263,8 @@ export default function PreviewPane({
       appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
     };
     const cfg = JSON.stringify(firebaseConfig);
-    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};`;
-  }, [projectId, apiBase]);
+    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};`;
+  }, [projectId, apiBase, backendEnabled]);
 
   const shellClass = publicMode
     ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'
@@ -299,6 +301,7 @@ export default function PreviewPane({
                   paymentsBootstrap,
                   `${apiBase}/gocreate-payments.js`,
                   `${apiBase}/gocreate-auth.js`,
+                  `${apiBase}/gocreate-data.js`,
                 ],
               }}
               style={{ height: '100%' }}

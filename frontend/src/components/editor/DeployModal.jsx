@@ -7,8 +7,8 @@ import {
   Globe,
   Copy,
   Check,
-  Lock,
   Pencil,
+  Server,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { publishProject, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
@@ -16,7 +16,6 @@ import { publishViaApi, checkSlugAvailability, updateProjectSlug } from '../../l
 import { getUserSettings, recordDeployNotificationStub } from '../../lib/userSettings';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditsContext';
-import { PREMIUM_REQUIRED_MESSAGE } from '../../lib/plans';
 
 const STEPS = ['A preparar build…', 'A guardar snapshot…', 'A publicar…', 'Live!'];
 
@@ -29,11 +28,13 @@ export default function DeployModal({
   files,
   ownerId,
   ownerPlan = 'free',
+  backendEnabled = false,
   onToast,
   onSlugUpdated,
+  onOpenSettings,
 }) {
   const { user } = useAuth();
-  const { canUsePremium, openPremiumPaywall, plan, role } = useCredits();
+  const { canUsePremium, plan, role } = useCredits();
   const [env, setEnv] = useState('production');
   const [phase, setPhase] = useState('idle'); // idle | deploying | done | error
   const [stepIdx, setStepIdx] = useState(0);
@@ -99,12 +100,6 @@ export default function DeployModal({
       return;
     }
 
-    if (env === 'production' && !canUsePremium) {
-      openPremiumPaywall();
-      onClose?.();
-      return;
-    }
-
     setPhase('deploying');
     setStepIdx(0);
 
@@ -149,12 +144,6 @@ export default function DeployModal({
       }
     } catch (err) {
       console.error('[DeployModal]', err);
-      if (err?.code === 'PREMIUM_REQUIRED' || err?.status === 403) {
-        openPremiumPaywall();
-        onClose?.();
-        onToast?.({ message: err?.message || PREMIUM_REQUIRED_MESSAGE, type: 'error' });
-        return;
-      }
       setPhase('error');
       setErrorMsg(err?.message || 'Falha ao publicar. Tenta novamente.');
       onToast?.({ message: 'Deploy falhou.', type: 'error' });
@@ -215,8 +204,8 @@ export default function DeployModal({
     <ModalShell open={open} onClose={onClose} title="Deploy">
       <div className="space-y-4">
         <p className="text-xs text-zinc-500 leading-relaxed">
-          O link de produção é fixo para este projeto — cada deploy atualiza o mesmo URL. Preview é
-          gratuito; produção (sem badge Free) requer Pro ou Owner.
+          O link é fixo para este projeto — cada deploy atualiza o mesmo URL. Free publica com a tag
+          “Feito com GoCreate”; Pro remove a badge. Guardar dados no site exige Backend ativado.
         </p>
 
         <div className="space-y-2">
@@ -234,7 +223,6 @@ export default function DeployModal({
                     : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                 }`}
               >
-                {e === 'production' && !canUsePremium ? <Lock size={12} /> : null}
                 {e}
               </button>
             ))}
@@ -311,11 +299,41 @@ export default function DeployModal({
             ) : null}
           </div>
 
-          {env === 'production' && !canUsePremium ? (
-            <p className="text-[11px] text-amber-400/90 leading-relaxed">
-              Produção é Premium — upgrade para publicar sem limites de plano Free.
+          {!canUsePremium ? (
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              Plano Free: o site publicado mostra a tag “Feito com GoCreate” (link para signup).
+              Assina Pro para remover a badge.
             </p>
           ) : null}
+
+          {!backendEnabled ? (
+            <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2.5 flex items-start gap-2">
+              <Server size={14} className="text-amber-400 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                  Backend Functions desativadas — o site publica, mas gravar na base de dados fica
+                  bloqueado até ativares.
+                </p>
+                {typeof onOpenSettings === 'function' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose?.();
+                      onOpenSettings();
+                    }}
+                    className="text-[11px] font-semibold text-amber-300 hover:text-amber-200"
+                  >
+                    Ativar funções de Backend →
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <p className="text-[11px] text-emerald-400/90 leading-relaxed inline-flex items-center gap-1.5">
+              <Server size={12} />
+              Backend ativo — apps publicados podem guardar dados.
+            </p>
+          )}
         </div>
 
         {phase === 'idle' && (
@@ -324,8 +342,8 @@ export default function DeployModal({
             onClick={startDeploy}
             className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-md shadow-blue-900/20 transition-all"
           >
-            {env === 'production' && !canUsePremium ? <Lock size={16} /> : <Rocket size={16} />}
-            {env === 'production' && !canUsePremium ? 'Desbloquear produção' : 'Iniciar deploy'}
+            <Rocket size={16} />
+            Iniciar deploy
           </button>
         )}
 

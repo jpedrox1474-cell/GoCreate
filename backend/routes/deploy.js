@@ -1,12 +1,12 @@
-// Deploy production — Admin SDK write + premium gate.
-// Preview continua free via cliente (Sandpack / publicProjects *_preview).
+// Deploy — Admin SDK write. Free pode publicar produção (com badge GoCreate).
+// Preview também via cliente (Sandpack / publicProjects *_preview).
 // Public URL is STABLE per project: /p/{slug||projectId}; redeploy overwrites same snapshot.
 
 import { Router } from 'express';
 import admin from '../config/firebaseAdmin.js';
 import { db } from '../config/firebaseAdmin.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requirePremium } from '../middleware/premium.js';
+import { ensureUserAdmin } from '../middleware/credits.js';
 import {
   normalizeSlug,
   resolveProjectPublicKey,
@@ -98,8 +98,19 @@ async function publishHandler(req, res) {
 
     const { projectRef, project } = await assertProjectOwner(projectId, req.user.uid);
 
-    const plan = req.userPlan || 'free';
-    const isProLike = plan === 'pro' || plan === 'enterprise_master' || req.userRole === 'owner';
+    // Plan snapshot for badge (Free → showBadge)
+    let plan = req.userPlan || 'free';
+    let role = req.userRole || 'user';
+    if (!req.userPlan) {
+      try {
+        const profile = await ensureUserAdmin(req.user.uid, req.user.email);
+        plan = profile.plan;
+        role = profile.role;
+      } catch {
+        /* keep free */
+      }
+    }
+    const isProLike = plan === 'pro' || plan === 'enterprise_master' || role === 'owner';
     // Snapshot doc id stays projectId (stable overwrite on redeploy)
     const pubId = env === 'preview' ? `${projectId}_preview` : projectId;
     const publicKey = resolveProjectPublicKey(project, projectId);
@@ -130,7 +141,9 @@ async function publishHandler(req, res) {
       url,
       slug: publicKey,
       plan: isProLike ? (plan === 'enterprise_master' ? 'enterprise_master' : 'pro') : 'free',
+      // Free / no paid plan → badge "Feito com GoCreate" (signup). Pro/Owner pode esconder.
       showBadge: !isProLike,
+      backendEnabled: Boolean(project.backendEnabled),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -306,13 +319,7 @@ router.get('/resolve/:key', async (req, res) => {
   }
 });
 
-/** POST /api/deploy/publish — production exige Pro/Owner; preview livre. */
-router.post('/publish', requireAuth, (req, res, next) => {
-  const env = req.body?.env === 'preview' ? 'preview' : 'production';
-  if (env === 'production') {
-    return requirePremium(req, res, () => publishHandler(req, res));
-  }
-  return publishHandler(req, res);
-});
+/** POST /api/deploy/publish — Free e Pro; Free mantém showBadge. */
+router.post('/publish', requireAuth, publishHandler);
 
 export default router;

@@ -94,4 +94,132 @@ export async function upsertProjectEntities(projectId, entities) {
   return count;
 }
 
-export default { parseEntitiesFromAiText, upsertProjectEntities };
+/**
+ * Public/runtime data ops for published apps (Admin SDK).
+ * Caller must already assert project.backendEnabled.
+ */
+export async function projectDataOp(projectId, { action, entity, id, data } = {}) {
+  const entityId = slugify(entity);
+  if (!entityId || entityId === 'entity') {
+    const err = new Error('entity é obrigatório.');
+    err.status = 400;
+    throw err;
+  }
+
+  const entityRef = db.collection('projects').doc(projectId).collection('entities').doc(entityId);
+  const entitySnap = await entityRef.get();
+  if (!entitySnap.exists && action !== 'create' && action !== 'list') {
+    // Auto-create thin schema on first write
+    if (action === 'create' || action === 'update') {
+      await entityRef.set(
+        {
+          id: entityId,
+          name: entityId,
+          columns: [],
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          source: 'runtime',
+        },
+        { merge: true }
+      );
+    }
+  }
+
+  const op = String(action || 'list').toLowerCase();
+
+  if (op === 'list') {
+    const rowsSnap = await entityRef.collection('rows').limit(200).get();
+    return {
+      ok: true,
+      entity: entityId,
+      rows: rowsSnap.docs.map((d) => ({ id: d.id, ...(d.data()?.data || d.data() || {}) })),
+    };
+  }
+
+  if (op === 'get') {
+    if (!id) {
+      const err = new Error('id é obrigatório para get.');
+      err.status = 400;
+      throw err;
+    }
+    const rowSnap = await entityRef.collection('rows').doc(String(id)).get();
+    if (!rowSnap.exists) {
+      const err = new Error('Registo não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    return { ok: true, entity: entityId, id: rowSnap.id, data: rowSnap.data()?.data || {} };
+  }
+
+  if (op === 'create') {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      const err = new Error('data (objeto) é obrigatório para create.');
+      err.status = 400;
+      throw err;
+    }
+    if (!entitySnap.exists) {
+      await entityRef.set(
+        {
+          id: entityId,
+          name: entityId,
+          columns: Object.keys(data).map((name) => ({
+            name,
+            type: typeof data[name] === 'number' ? 'number' : typeof data[name] === 'boolean' ? 'boolean' : 'string',
+          })),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          source: 'runtime',
+        },
+        { merge: true }
+      );
+    }
+    const rowRef = entityRef.collection('rows').doc();
+    await rowRef.set({
+      data,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true, entity: entityId, id: rowRef.id, data };
+  }
+
+  if (op === 'update') {
+    if (!id) {
+      const err = new Error('id é obrigatório para update.');
+      err.status = 400;
+      throw err;
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      const err = new Error('data (objeto) é obrigatório para update.');
+      err.status = 400;
+      throw err;
+    }
+    const rowRef = entityRef.collection('rows').doc(String(id));
+    const rowSnap = await rowRef.get();
+    if (!rowSnap.exists) {
+      const err = new Error('Registo não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    const prev = rowSnap.data()?.data || {};
+    const next = { ...prev, ...data };
+    await rowRef.set(
+      { data: next, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    return { ok: true, entity: entityId, id: String(id), data: next };
+  }
+
+  if (op === 'delete') {
+    if (!id) {
+      const err = new Error('id é obrigatório para delete.');
+      err.status = 400;
+      throw err;
+    }
+    await entityRef.collection('rows').doc(String(id)).delete();
+    return { ok: true, entity: entityId, id: String(id), deleted: true };
+  }
+
+  const err = new Error('action inválida. Use list|get|create|update|delete.');
+  err.status = 400;
+  throw err;
+}
+
+export default { parseEntitiesFromAiText, upsertProjectEntities, projectDataOp };

@@ -83,3 +83,37 @@ export async function bulkDeleteProjectsViaApi(projectIds, idToken) {
   }
   return data;
 }
+
+/**
+ * Ativa Backend Functions no projeto (Free gasta créditos; Pro/Owner grátis).
+ */
+export async function enableProjectBackend({ projectId, idToken }) {
+  const res = await fetch(apiUrl(`/${encodeURIComponent(projectId)}/backend/enable`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || data.error || `Falha ao ativar backend (${res.status})`);
+    err.status = res.status;
+    err.code = data.code;
+    err.creditCost = data.creditCost;
+    throw err;
+  }
+  return data;
+}
+
+/** Status de Backend Functions (owner). */
+export async function getProjectBackendStatus({ projectId, idToken }) {
+  const res = await fetch(apiUrl(`/${encodeURIComponent(projectId)}/backend`), {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Falha ao ler backend (${res.status})`);
+  }
+  return data;
+}

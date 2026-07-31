@@ -7,13 +7,18 @@ import {
   Database,
   Plug,
   ExternalLink,
+  Server,
+  CheckCircle2,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { updateProjectSettings, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
 import { checkSlugAvailability, updateProjectSlug } from '../../lib/deployApi';
+import { enableProjectBackend } from '../../lib/projectsApi';
 import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../../lib/userSettings';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useCredits } from '../../context/CreditsContext';
+import { BACKEND_ENABLE_CREDIT_COST } from '../../lib/plans';
 
 export default function SettingsModal({
   open,
@@ -25,6 +30,7 @@ export default function SettingsModal({
 }) {
   const { preference, setTheme } = useTheme();
   const { user } = useAuth();
+  const { canUsePremium, credits, openPricing } = useCredits();
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [customDomain, setCustomDomain] = useState(project?.customDomain || '');
@@ -33,6 +39,8 @@ export default function SettingsModal({
   const [notifications, setNotifications] = useState(true);
   const [saving, setSaving] = useState(false);
   const [slugHint, setSlugHint] = useState('');
+  const [backendBusy, setBackendBusy] = useState(false);
+  const [backendEnabled, setBackendEnabled] = useState(Boolean(project?.backendEnabled));
 
   useEffect(() => {
     if (!open) return;
@@ -41,10 +49,20 @@ export default function SettingsModal({
     setCustomDomain(project?.customDomain || '');
     setSlug(project?.slug || projectId || '');
     setSlugHint('');
+    setBackendEnabled(Boolean(project?.backendEnabled));
     const s = getUserSettings();
     setThemeLocal(s.theme || preference);
     setNotifications(s.notifications);
-  }, [open, project?.name, project?.description, project?.customDomain, project?.slug, projectId, preference]);
+  }, [
+    open,
+    project?.name,
+    project?.description,
+    project?.customDomain,
+    project?.slug,
+    project?.backendEnabled,
+    projectId,
+    preference,
+  ]);
 
   useEffect(() => {
     setThemeLocal(preference);
@@ -53,6 +71,40 @@ export default function SettingsModal({
   function handleThemePick(next) {
     setThemeLocal(next);
     setTheme(next);
+  }
+
+  async function handleEnableBackend() {
+    if (!projectId || !user?.getIdToken) return;
+    setBackendBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const result = await enableProjectBackend({ projectId, idToken });
+      setBackendEnabled(true);
+      onProjectUpdated?.({ ...project, backendEnabled: true });
+      const charged = result.creditsCharged || 0;
+      onToast?.({
+        message:
+          charged > 0
+            ? `Backend ativado (−${charged} créditos).`
+            : result.alreadyEnabled
+              ? 'Backend já estava ativo.'
+              : 'Backend Functions ativadas.',
+        type: 'success',
+      });
+    } catch (err) {
+      console.error('[SettingsModal] backend', err);
+      if (err?.code === 'INSUFFICIENT_CREDITS') {
+        onToast?.({
+          message: err.message || 'Créditos insuficientes.',
+          type: 'error',
+        });
+        openPricing?.();
+        return;
+      }
+      onToast?.({ message: err?.message || 'Não foi possível ativar o Backend.', type: 'error' });
+    } finally {
+      setBackendBusy(false);
+    }
   }
 
   async function handleSave(e) {
@@ -119,6 +171,7 @@ export default function SettingsModal({
         customDomain: trimmedDomain,
         slug: nextSlug || project?.slug || null,
         publishedUrl: nextPublishedUrl || project?.publishedUrl || null,
+        backendEnabled,
       });
       onToast?.({ message: 'Configurações guardadas.', type: 'success' });
       onClose?.();
@@ -140,6 +193,7 @@ export default function SettingsModal({
   const publishedUrl =
     project?.publishedUrl ||
     (projectId ? getPublishUrl(projectId, project?.publishedEnv || 'production', publicKey) : null);
+  const creditCost = canUsePremium ? 0 : BACKEND_ENABLE_CREDIT_COST;
 
   return (
     <ModalShell open={open} onClose={onClose} title="Configurações do projeto" wide>
@@ -240,6 +294,51 @@ export default function SettingsModal({
               </a>
             </div>
           )}
+        </section>
+
+        <section className="space-y-2 pt-1 border-t border-zinc-800/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
+            Backend Functions
+          </p>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2.5">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-md bg-emerald-600/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                <Server size={14} className="text-emerald-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-zinc-200">Funções de Backend</p>
+                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  Permite ao site publicado gravar na base de dados via API GoCreate (estilo Base44).
+                  Contas novas com créditos podem ativar. Free gasta {BACKEND_ENABLE_CREDIT_COST}{' '}
+                  créditos; Pro/Owner é grátis.
+                </p>
+              </div>
+            </div>
+            {backendEnabled ? (
+              <div className="inline-flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                <CheckCircle2 size={14} />
+                Backend ativo
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={!projectId || backendBusy}
+                onClick={handleEnableBackend}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 rounded-lg transition-all"
+              >
+                {backendBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Server size={14} />
+                )}
+                Ativar funções de Backend
+                {creditCost > 0 ? ` (−${creditCost} créditos)` : ' (incluído)'}
+              </button>
+            )}
+            {!backendEnabled && !canUsePremium && typeof credits === 'number' ? (
+              <p className="text-[10px] text-zinc-600">Tens {credits} créditos disponíveis.</p>
+            ) : null}
+          </div>
         </section>
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">

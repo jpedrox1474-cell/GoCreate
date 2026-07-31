@@ -108,8 +108,8 @@ service cloud.firestore {
     }
 
     // Publicações partilháveis — leitura aberta (só snapshot de ficheiros, sem chat).
-    // Preview: qualquer owner do projeto.
-    // Production: só Pro / Owner (role/plan no user doc Admin); writes Admin via /api/deploy também.
+    // Free e Pro podem publicar preview/produção (badge Free via showBadge).
+    // Production writes preferenciais via Admin /api/deploy; cliente também permitido ao owner.
     match /publicProjects/{pubId} {
       allow read: if true;
 
@@ -123,19 +123,13 @@ service cloud.firestore {
           || request.resource.data.plan in ['free', 'pro', 'enterprise_master'])
         && (!('showBadge' in request.resource.data)
           || request.resource.data.showBadge is bool)
-        && (
-          request.resource.data.env == 'preview'
-          || isPremiumUser()
-        );
+        && (!('backendEnabled' in request.resource.data)
+          || request.resource.data.backendEnabled is bool);
 
       allow update: if isSignedIn()
         && resource.data.ownerId == request.auth.uid
         && request.resource.data.ownerId == resource.data.ownerId
-        && request.resource.data.env in ['preview', 'production']
-        && (
-          request.resource.data.env == 'preview'
-          || isPremiumUser()
-        );
+        && request.resource.data.env in ['preview', 'production'];
 
       allow delete: if isSignedIn()
         && (

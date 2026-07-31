@@ -90,6 +90,7 @@ export default function PublicPreview() {
         isGenerating={false}
         publicMode
         projectId={runtimeProjectId}
+        backendEnabled={Boolean(publication.backendEnabled)}
       />
 
       {showBadge && (
