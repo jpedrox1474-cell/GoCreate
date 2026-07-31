@@ -357,6 +357,24 @@ export default function SocialChannelsSection({
             WhatsApp, Facebook, Instagram, YouTube e TikTok — ligue contas profissionais ao marketplace.
             {!canUsePremium ? ' Incluído nos planos Pro e Enterprise.' : null}
           </p>
+          {canUsePremium && metaAppId ? (
+            <p className="text-[11px] text-zinc-600 mt-2 max-w-xl leading-relaxed">
+              Meta (IG/FB): no{' '}
+              <a
+                href="https://developers.facebook.com/apps/"
+                target="_blank"
+                rel="noreferrer"
+                className="text-zinc-400 underline-offset-2 hover:underline"
+              >
+                Meta Developer
+              </a>
+              , App Domains e Allowed Domains for the JavaScript SDK devem incluir{' '}
+              <span className="font-mono text-zinc-500">gocreate.web.app</span> e{' '}
+              <span className="font-mono text-zinc-500">localhost</span>. Redirects:{' '}
+              <span className="font-mono text-zinc-500">https://gocreate.web.app/</span> e{' '}
+              <span className="font-mono text-zinc-500">/integrations</span>.
+            </p>
+          ) : null}
         </div>
         {!canUsePremium ? (
           <button

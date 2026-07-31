@@ -14,14 +14,14 @@ function shouldShowGoCreateBadge(publication) {
   return plan !== 'pro' && plan !== 'enterprise_master';
 }
 
-/** Live projects.backendEnabled — overrides stale publicProjects snapshot. */
-async function fetchLiveBackendEnabled(projectId) {
+/** Live projects.backendEnabled + authAccess — overrides stale publicProjects snapshot. */
+async function fetchLiveRuntime(projectId) {
   if (!projectId) return null;
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/runtime`);
     if (!res.ok) return null;
     const json = await res.json().catch(() => ({}));
-    if (typeof json.backendEnabled === 'boolean') return json.backendEnabled;
+    return json;
   } catch {
     /* ignore — fall back to snapshot */
   }
@@ -36,14 +36,14 @@ export default function PublicPreview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [publication, setPublication] = useState(null);
-  const [liveBackendEnabled, setLiveBackendEnabled] = useState(null);
+  const [liveRuntime, setLiveRuntime] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setPublication(null);
-    setLiveBackendEnabled(null);
+    setLiveRuntime(null);
 
     (async () => {
       try {
@@ -54,8 +54,8 @@ export default function PublicPreview() {
         } else {
           setPublication(data);
           const pid = data.projectId || pathKey;
-          const live = await fetchLiveBackendEnabled(pid);
-          if (!cancelled && live !== null) setLiveBackendEnabled(live);
+          const live = await fetchLiveRuntime(pid);
+          if (!cancelled && live) setLiveRuntime(live);
         }
       } catch (err) {
         console.error('[PublicPreview]', err);
@@ -73,9 +73,23 @@ export default function PublicPreview() {
   const showBadge = shouldShowGoCreateBadge(publication);
   const runtimeProjectId = publication?.projectId || pathKey;
   const backendEnabled =
-    typeof liveBackendEnabled === 'boolean'
-      ? liveBackendEnabled
+    typeof liveRuntime?.backendEnabled === 'boolean'
+      ? liveRuntime.backendEnabled
       : Boolean(publication?.backendEnabled);
+
+  const authAccess = {
+    mode:
+      (liveRuntime?.mode || publication?.authAccess?.mode) === 'invited'
+        ? 'invited'
+        : 'owner_only',
+    invitedEmails: Array.isArray(liveRuntime?.invitedEmails)
+      ? liveRuntime.invitedEmails
+      : Array.isArray(publication?.authAccess?.invitedEmails)
+        ? publication.authAccess.invitedEmails
+        : [],
+    ownerId: liveRuntime?.ownerId || publication?.ownerId || null,
+    ownerEmail: liveRuntime?.ownerEmail || publication?.ownerEmail || null,
+  };
 
   if (loading) {
     return (
@@ -113,6 +127,7 @@ export default function PublicPreview() {
         publicMode
         projectId={runtimeProjectId}
         backendEnabled={backendEnabled}
+        authAccess={authAccess}
       />
 
       {showBadge && (

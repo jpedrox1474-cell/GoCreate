@@ -1576,6 +1576,14 @@ export default function Editor() {
           onRequestUi={handleRequestUi}
           projectId={firestoreId}
           backendEnabled={Boolean(projectMeta?.backendEnabled)}
+          authAccess={{
+            mode: projectMeta?.authAccess?.mode === 'invited' ? 'invited' : 'owner_only',
+            invitedEmails: Array.isArray(projectMeta?.authAccess?.invitedEmails)
+              ? projectMeta.authAccess.invitedEmails
+              : [],
+            ownerId: projectMeta?.ownerId || user?.uid || null,
+            ownerEmail: projectMeta?.ownerEmail || user?.email || null,
+          }}
         />
       </main>
 

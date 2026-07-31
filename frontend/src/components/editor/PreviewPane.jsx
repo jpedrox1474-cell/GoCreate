@@ -236,6 +236,7 @@ export default function PreviewPane({
   publicMode = false,
   projectId = null,
   backendEnabled = false,
+  authAccess = null,
   entitiesOnly = false,
   generationIncomplete = false,
   onRequestUi = null,
@@ -280,8 +281,20 @@ export default function PreviewPane({
       appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
     };
     const cfg = JSON.stringify(firebaseConfig);
-    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};`;
-  }, [projectId, apiBase, backendEnabled]);
+    const access = JSON.stringify(
+      authAccess && typeof authAccess === 'object'
+        ? {
+            mode: authAccess.mode === 'invited' ? 'invited' : 'owner_only',
+            invitedEmails: Array.isArray(authAccess.invitedEmails)
+              ? authAccess.invitedEmails
+              : [],
+            ownerId: authAccess.ownerId || null,
+            ownerEmail: authAccess.ownerEmail || null,
+          }
+        : null
+    );
+    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};window.__GOCREATE_AUTH_ACCESS__=${access};`;
+  }, [projectId, apiBase, backendEnabled, authAccess]);
 
   const shellClass = publicMode
     ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'

@@ -292,8 +292,11 @@ export default function Integrations() {
           setToast({
             message:
               err?.details?.hint ||
+              err?.details?.note ||
               err.message ||
-              `${item.name} OAuth ainda não configurado no servidor.`,
+              (item.id === 'paypal'
+                ? 'PayPal OAuth: define PAYPAL_CLIENT_ID e PAYPAL_CLIENT_SECRET no servidor e faz redeploy.'
+                : `${item.name} OAuth ainda não configurado no servidor.`),
             type: 'error',
           });
         } else {

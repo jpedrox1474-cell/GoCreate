@@ -272,6 +272,7 @@ router.get('/:projectId/runtime', async (req, res) => {
       ok: true,
       projectId,
       backendEnabled: Boolean(project.backendEnabled),
+      ...publicAuthAccessPayload(project),
     });
   } catch (err) {
     console.error('[projects/runtime]', err);

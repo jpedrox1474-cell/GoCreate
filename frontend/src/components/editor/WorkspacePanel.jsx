@@ -20,6 +20,7 @@ export default function WorkspacePanel({
   onRequestUi = null,
   projectId = null,
   backendEnabled = false,
+  authAccess = null,
 }) {
   return (
     <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 h-full overflow-hidden">
@@ -108,6 +109,7 @@ export default function WorkspacePanel({
               onRequestUi={onRequestUi}
               projectId={projectId}
               backendEnabled={backendEnabled}
+              authAccess={authAccess}
             />
           </div>
         ) : activeTab === 'entities' ? (

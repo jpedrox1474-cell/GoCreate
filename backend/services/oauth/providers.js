@@ -3,7 +3,7 @@
  * postMessage type: gocreate-oauth.
  */
 import { saveOAuthState } from './state.js';
-import { createOAuthState } from './pkce.js';
+import { createOAuthState, createCodeVerifier, createCodeChallenge } from './pkce.js';
 
 const PLATFORMS = ['youtube', 'tiktok', 'stripe', 'paypal'];
 /** Social channels that require premium plan. */
@@ -166,14 +166,20 @@ export async function buildAuthorizeUrl(platform, uid) {
     authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   } else if (platform === 'tiktok') {
     const { clientId } = getOAuthConfig('tiktok');
+    const codeVerifier = createCodeVerifier();
+    const codeChallenge = createCodeChallenge(codeVerifier);
     const params = new URLSearchParams({
       client_key: clientId,
       redirect_uri: redir,
       response_type: 'code',
       scope: 'user.info.basic,video.upload,video.publish',
       state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
     });
     authUrl = `https://www.tiktok.com/v2/auth/authorize/?${params}`;
+    await saveOAuthState({ state, uid, platform, codeVerifier, redirectUri: redir });
+    return { authUrl, state, redirectUri: redir };
   } else if (platform === 'stripe') {
     const { clientId } = getOAuthConfig('stripe');
     const params = new URLSearchParams({

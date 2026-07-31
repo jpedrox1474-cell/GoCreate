@@ -172,8 +172,8 @@
     var local = localAccessAllowed(user);
     if (local === true) return user;
     if (local === false) throw denyAccessError();
-    // No API and no cache: fail closed for published apps (project id present)
-    throw denyAccessError();
+    // No definitive answer (API down + no cache): allow in preview, gate on next successful check
+    return user;
   }
 
   async function signOutQuiet() {

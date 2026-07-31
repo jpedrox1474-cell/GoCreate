@@ -68,7 +68,7 @@ export const INTEGRATIONS_CATALOG = [
     id: 'paypal',
     name: 'PayPal',
     category: 'payments',
-    description: 'Checkout PayPal — Conectar abre login OAuth oficial (sem colar Client Secret).',
+    description: 'Checkout PayPal — Conectar abre login OAuth oficial (sem colar Client Secret). Requer PAYPAL_CLIENT_ID + SECRET no servidor.',
     icon: 'CircleDollarSign',
     connectType: 'oauth',
     docsUrl: 'https://developer.paypal.com/docs/log-in-with-paypal/',

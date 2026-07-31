@@ -74,30 +74,32 @@ async function assertProjectAuthAccess(projectId, user) {
   if (!projectId || !user) return;
   const apiBase = typeof window !== 'undefined' ? window.location.origin : '';
   if (!apiBase) return;
-  const res = await fetch(
-    `${apiBase}/api/projects/${encodeURIComponent(projectId)}/auth-check`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: user.email || null, uid: user.uid || null }),
-    }
-  );
-  let data = {};
   try {
-    data = await res.json();
-  } catch {
-    data = {};
+    const res = await fetch(
+      `${apiBase}/api/projects/${encodeURIComponent(projectId)}/auth-check`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email || null, uid: user.uid || null }),
+      }
+    );
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = {};
+    }
+    if (res.ok && data.allowed) return;
+    if (res.status === 403 || data.code === 'AUTH_ACCESS_DENIED' || data.allowed === false) {
+      const err = new Error(data.message || data.error || AUTH_DENIED);
+      err.code = 'AUTH_ACCESS_DENIED';
+      throw err;
+    }
+    // 5xx / unexpected — defer to iframe local cache
+  } catch (err) {
+    if (err?.code === 'AUTH_ACCESS_DENIED') throw err;
+    /* network — defer */
   }
-  if (res.ok && data.allowed) return;
-  if (res.status === 403 || data.code === 'AUTH_ACCESS_DENIED' || data.allowed === false) {
-    const err = new Error(data.message || data.error || AUTH_DENIED);
-    err.code = 'AUTH_ACCESS_DENIED';
-    throw err;
-  }
-  // API unavailable — fail closed when projectId is known
-  const err = new Error(AUTH_DENIED);
-  err.code = 'AUTH_ACCESS_DENIED';
-  throw err;
 }
 
 async function handleSignInWithGoogle(projectId) {
