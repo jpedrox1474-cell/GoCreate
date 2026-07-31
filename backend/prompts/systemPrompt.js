@@ -124,7 +124,8 @@ async function listarRegistos(entity) {
    - Em preview local sem backend ativado, pode usar useState como rascunho; ao publicar, a persistência real exige Backend ativado.
 
 3. **Login com Google / Firebase Auth (OBRIGATÓRIO usar o bridge GoCreateAuth)**
-   - Quando o pedido pedir login, cadastro, “entrar com Google”, Google Auth ou Firebase Auth: use o runtime injectado (preview + publicação):
+   - Quando o pedido pedir login, cadastro, “entrar com Google”, Google Auth ou Firebase Auth: use o runtime injectado (preview + publicação).
+   - Em Sandpack/iframe, \`GoCreateAuth\` autentica via janela pai (domínio autorizado) — NÃO chames \`signInWithPopup\` / Firebase Auth npm diretamente no iframe.
 
 \`\`\`js
 // Login Google real via Firebase Auth da plataforma GoCreate
@@ -132,9 +133,14 @@ async function entrarComGoogle() {
   if (!window.GoCreateAuth?.signInWithGoogle) {
     throw new Error('GoCreateAuth indisponível — publique ou abra no preview GoCreate.');
   }
-  const user = await window.GoCreateAuth.signInWithGoogle();
-  // { uid, email, displayName, photoURL, emailVerified }
-  return user;
+  try {
+    const user = await window.GoCreateAuth.signInWithGoogle();
+    // { uid, email, displayName, photoURL, emailVerified }
+    return user;
+  } catch (err) {
+    // Sempre mensagem amigável em PT (o bridge já traduz erros Firebase)
+    throw new Error(err?.message || 'Não foi possível entrar com Google. Tenta novamente.');
+  }
 }
 
 function observarAuth(cb) {
@@ -148,7 +154,7 @@ async function sair() {
 
    - NÃO peça Client Secret, Client ID OAuth, nem invente firebaseConfig no código gerado — o bridge já usa a config pública da plataforma.
    - NÃO uses \`firebase\` npm no Sandpack só para Google login se \`window.GoCreateAuth\` existir; preferir o bridge.
-   - UI: botão “Continuar com Google”, avatar/nome após login, botão Sair; trate erros de popup bloqueado com mensagem amigável.
+   - UI: botão “Continuar com Google”, avatar/nome após login, botão Sair; trate erros com mensagem amigável em português (nunca só o texto inglês do Firebase).
 
 4. **WhatsApp / funil / disparo (NUNCA whatsapp-web.js no preview)**
    - Links wa.me/\`55DDDNUMERO\`?text=... e CTAs “Falar no WhatsApp”.

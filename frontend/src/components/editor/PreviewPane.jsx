@@ -11,6 +11,7 @@ import {
   toSandpackFiles,
   resolveSandpackDependencies,
 } from '../../lib/artifactParser';
+import { installPreviewAuthBridge } from '../../lib/previewAuthBridge';
 import SandpackErrorBoundary from './SandpackErrorBoundary';
 
 function CompilingOverlay({ externalLoading }) {
@@ -228,6 +229,9 @@ export default function PreviewPane({
   onRequestUi = null,
   onContinue = null,
 }) {
+  // Sandpack iframe OAuth → parent Google popup on authorized domain
+  useEffect(() => installPreviewAuthBridge(), []);
+
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const hasFiles = Boolean(sandpackFiles && Object.keys(sandpackFiles).length);
 

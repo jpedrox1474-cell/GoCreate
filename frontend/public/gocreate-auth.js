@@ -2,6 +2,9 @@
  * GoCreate Auth runtime — Sandpack preview + published /p/* pages.
  * Generated apps call window.GoCreateAuth.signInWithGoogle() for real Firebase Google Auth.
  *
+ * When running inside an iframe (Sandpack on *.codesandbox.io), OAuth must run on the
+ * parent origin (gocreate.web.app) via postMessage — Firebase rejects unauthorized domains.
+ *
  * Expects (optional):
  *   window.__GOCREATE_FIREBASE_CONFIG__ — public Firebase web config
  *   window.__GOCREATE_PROJECT_ID__      — project id (for future scoped auth)
@@ -10,7 +13,12 @@
   if (global.GoCreateAuth) return;
 
   var FIREBASE_VERSION = '10.14.1';
+  var MSG_TYPE = 'gocreate-auth';
   var readyPromise = null;
+  var bridgeReqSeq = 0;
+  var pendingBridge = Object.create(null);
+  var bridgeUser = null;
+  var bridgeAuthListeners = [];
 
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
@@ -51,6 +59,42 @@
     };
   }
 
+  function isInIframe() {
+    try {
+      return global.self !== global.top;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function friendlyAuthError(err) {
+    var code = (err && (err.code || err.errorCode)) || '';
+    var map = {
+      'auth/unauthorized-domain':
+        'Este domínio de preview não está autorizado para login Google. Recarrega a página — o GoCreate autentica pela janela principal.',
+      'auth/popup-closed-by-user': 'Login cancelado.',
+      'auth/popup-blocked': 'O browser bloqueou o popup de login. Permite popups para este site e tenta de novo.',
+      'auth/cancelled-popup-request': 'Login cancelado (outro popup já estava aberto).',
+      'auth/network-request-failed': 'Falha de rede ao autenticar. Verifica a ligação e tenta de novo.',
+      'auth/internal-error': 'Erro interno no login Google. Tenta novamente em alguns segundos.',
+      NO_FIREBASE_CONFIG:
+        'Firebase config em falta. Publica o app no GoCreate ou define window.__GOCREATE_FIREBASE_CONFIG__.',
+      BRIDGE_TIMEOUT: 'O login Google demorou demasiado. Tenta novamente.',
+      BRIDGE_UNAVAILABLE:
+        'Login Google indisponível neste preview. Abre o app no GoCreate (preview ou URL publicado).',
+      BRIDGE_ERROR: 'Não foi possível autenticar com Google. Tenta novamente.',
+    };
+    var message = map[code] || (err && err.message) || 'Erro ao autenticar com Google.';
+    // Never surface raw English Firebase domain errors alone
+    if (/unauthorized.?domain|not authorized for OAuth/i.test(String(message)) && code !== 'auth/unauthorized-domain') {
+      message = map['auth/unauthorized-domain'];
+      code = 'auth/unauthorized-domain';
+    }
+    var out = new Error(message);
+    out.code = code || 'BRIDGE_ERROR';
+    return out;
+  }
+
   function ensureFirebase() {
     if (readyPromise) return readyPromise;
     readyPromise = (async function () {
@@ -79,24 +123,150 @@
     return readyPromise;
   }
 
+  function onParentMessage(event) {
+    var data = event && event.data;
+    if (!data || data.type !== MSG_TYPE) return;
+    if (data.action !== 'signInWithGoogleResult' && data.action !== 'signOutResult') return;
+    var pending = pendingBridge[data.requestId];
+    if (!pending) return;
+    delete pendingBridge[data.requestId];
+    clearTimeout(pending.timer);
+    if (data.error) {
+      pending.reject(friendlyAuthError(data.error));
+      return;
+    }
+    pending.resolve(data);
+  }
+
+  if (typeof global.addEventListener === 'function') {
+    global.addEventListener('message', onParentMessage);
+  }
+
+  function requestParentAuth(action, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      if (!isInIframe() || !global.parent || global.parent === global.self) {
+        var unavailable = new Error(
+          'Login Google indisponível neste preview. Abre o app no GoCreate (preview ou URL publicado).'
+        );
+        unavailable.code = 'BRIDGE_UNAVAILABLE';
+        reject(unavailable);
+        return;
+      }
+      var requestId = 'gc-auth-' + Date.now() + '-' + ++bridgeReqSeq;
+      var timer = setTimeout(function () {
+        delete pendingBridge[requestId];
+        var t = new Error('O login Google demorou demasiado. Tenta novamente.');
+        t.code = 'BRIDGE_TIMEOUT';
+        reject(t);
+      }, timeoutMs || 120000);
+      pendingBridge[requestId] = { resolve: resolve, reject: reject, timer: timer };
+      try {
+        global.parent.postMessage(
+          {
+            type: MSG_TYPE,
+            action: action,
+            requestId: requestId,
+          },
+          '*'
+        );
+      } catch (err) {
+        clearTimeout(timer);
+        delete pendingBridge[requestId];
+        reject(friendlyAuthError(err));
+      }
+    });
+  }
+
+  async function signInLocal() {
+    var auth = await ensureFirebase();
+    var provider = new global.firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    try {
+      var result = await auth.signInWithPopup(provider);
+      return serializeUser(result.user);
+    } catch (err) {
+      throw friendlyAuthError(err);
+    }
+  }
+
+  function notifyBridgeListeners(user) {
+    bridgeUser = user || null;
+    for (var i = 0; i < bridgeAuthListeners.length; i++) {
+      try {
+        bridgeAuthListeners[i](bridgeUser);
+      } catch (e) {
+        /* ignore listener errors */
+      }
+    }
+  }
+
+  async function applyCredentialFromParent(payload) {
+    var user = payload && payload.user ? payload.user : null;
+    if (!payload || !payload.idToken) {
+      notifyBridgeListeners(user);
+      return user;
+    }
+    try {
+      var auth = await ensureFirebase();
+      var credential = global.firebase.auth.GoogleAuthProvider.credential(payload.idToken);
+      var result = await auth.signInWithCredential(credential);
+      user = serializeUser(result.user) || user;
+      notifyBridgeListeners(user);
+      return user;
+    } catch (err) {
+      // Credential apply may still fail on some sandboxes — keep parent user in memory
+      console.warn('[GoCreateAuth] signInWithCredential falhou; a usar user do parent.', err);
+      notifyBridgeListeners(user);
+      return user;
+    }
+  }
+
+  async function signInViaParentBridge() {
+    var payload = await requestParentAuth('signInWithGoogle', 120000);
+    return applyCredentialFromParent(payload);
+  }
+
   global.GoCreateAuth = {
     signInWithGoogle: function () {
-      return ensureFirebase().then(function (auth) {
-        var provider = new global.firebase.auth.GoogleAuthProvider();
-        provider.setCustomParameters({ prompt: 'select_account' });
-        return auth.signInWithPopup(provider).then(function (result) {
-          return serializeUser(result.user);
+      if (isInIframe()) {
+        return signInViaParentBridge().catch(function (err) {
+          throw friendlyAuthError(err);
         });
-      });
+      }
+      return signInLocal();
     },
     signOut: function () {
-      return ensureFirebase().then(function (auth) {
-        return auth.signOut();
-      });
+      if (isInIframe()) {
+        return requestParentAuth('signOut', 30000)
+          .catch(function () {
+            /* parent may ignore signOut — still clear local */
+          })
+          .then(function () {
+            notifyBridgeListeners(null);
+            return ensureFirebase()
+              .then(function (auth) {
+                return auth.signOut();
+              })
+              .catch(function () {});
+          })
+          .catch(function (err) {
+            throw friendlyAuthError(err);
+          });
+      }
+      return ensureFirebase()
+        .then(function (auth) {
+          return auth.signOut();
+        })
+        .catch(function (err) {
+          throw friendlyAuthError(err);
+        });
     },
     getCurrentUser: function () {
+      if (isInIframe() && bridgeUser) {
+        return Promise.resolve(bridgeUser);
+      }
       return ensureFirebase().then(function (auth) {
-        return serializeUser(auth.currentUser);
+        return serializeUser(auth.currentUser) || bridgeUser;
       });
     },
     onAuthStateChanged: function (callback) {
@@ -105,17 +275,35 @@
       }
       var unsub = null;
       var cancelled = false;
-      ensureFirebase().then(function (auth) {
-        if (cancelled) return;
-        unsub = auth.onAuthStateChanged(function (user) {
-          callback(serializeUser(user));
+      bridgeAuthListeners.push(callback);
+      // Immediate bridge snapshot for iframe apps
+      try {
+        callback(bridgeUser);
+      } catch (e) {
+        /* ignore */
+      }
+      ensureFirebase()
+        .then(function (auth) {
+          if (cancelled) return;
+          unsub = auth.onAuthStateChanged(function (user) {
+            var serialized = serializeUser(user) || bridgeUser;
+            if (serialized) bridgeUser = serialized;
+            callback(serialized);
+          });
+        })
+        .catch(function () {
+          /* config missing — bridge-only mode still works */
         });
-      });
       return function () {
         cancelled = true;
+        bridgeAuthListeners = bridgeAuthListeners.filter(function (cb) {
+          return cb !== callback;
+        });
         if (typeof unsub === 'function') unsub();
       };
     },
-    version: '1.0.0',
+    /** @deprecated internal */
+    _isInIframe: isInIframe,
+    version: '1.1.0',
   };
 })(typeof window !== 'undefined' ? window : globalThis);
