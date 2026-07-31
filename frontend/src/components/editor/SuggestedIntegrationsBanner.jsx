@@ -56,7 +56,7 @@ export default function SuggestedIntegrationsBanner({
   async function handleConnect(id) {
     setError(null);
     if (PLATFORM_AUTH_IDS.has(id)) {
-      onConnected?.(id);
+      // Deep-link → Integrações dispara popup Google (1-click)
       window.location.assign(`${to}#google_oauth`);
       return;
     }

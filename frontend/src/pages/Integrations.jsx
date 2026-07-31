@@ -115,7 +115,7 @@ function statusClass(status) {
 }
 
 export default function Integrations() {
-  const { user } = useAuth();
+  const { user, connectGoogleAccount } = useAuth();
   const { canUsePremium, openPremiumPaywall } = useCredits();
   const [statusMap, setStatusMap] = useState({});
   const [platformFlags, setPlatformFlags] = useState({});
@@ -126,6 +126,7 @@ export default function Integrations() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [modalIntegration, setModalIntegration] = useState(null);
+  const googleHashTried = React.useRef(false);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -149,17 +150,37 @@ export default function Integrations() {
 
   useEffect(() => {
     const hash = (window.location.hash || '').replace(/^#/, '').toLowerCase();
-    if (hash === 'google' || hash === 'google_oauth' || hash === 'firebase_auth') {
-      setToast({
-        message:
-          'Login Google está ativo nos apps gerados via window.GoCreateAuth.signInWithGoogle() — sem Client Secret.',
-        type: 'success',
-      });
-      requestAnimationFrame(() => {
-        document.getElementById('integrations-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    }
-  }, []);
+    if (hash !== 'google' && hash !== 'google_oauth' && hash !== 'firebase_auth') return;
+    requestAnimationFrame(() => {
+      document.getElementById('integrations-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    if (!user || !connectGoogleAccount || googleHashTried.current) return;
+    googleHashTried.current = true;
+    let cancelled = false;
+    (async () => {
+      setBusyId('google_oauth');
+      try {
+        const result = await connectGoogleAccount();
+        if (cancelled) return;
+        setToast({
+          message: result?.alreadyConnected
+            ? 'Login Google já activo nos apps gerados (GoCreateAuth).'
+            : 'Google ligado — apps gerados usam GoCreateAuth.signInWithGoogle().',
+          type: 'success',
+        });
+        await refresh();
+      } catch (err) {
+        if (!cancelled) {
+          setToast({ message: err?.message || 'Falha ao ligar Google.', type: 'error' });
+        }
+      } finally {
+        if (!cancelled) setBusyId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, connectGoogleAccount, refresh]);
 
   const cards = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -202,13 +223,32 @@ export default function Integrations() {
     if (item.connectType === 'coming_soon') return;
 
     if (item.connectType === 'platform') {
+      if (item.id === 'google_oauth' || item.id === 'firebase_auth') {
+        setBusyId(item.id);
+        try {
+          const result = await connectGoogleAccount();
+          setToast({
+            message: result?.alreadyConnected
+              ? 'Login Google já activo — apps gerados usam window.GoCreateAuth.signInWithGoogle().'
+              : 'Google ligado. Nos apps gerados: window.GoCreateAuth.signInWithGoogle().',
+            type: 'success',
+          });
+          await refresh();
+        } catch (err) {
+          setToast({
+            message: err?.message || 'Falha ao abrir login Google.',
+            type: 'error',
+          });
+        } finally {
+          setBusyId(null);
+        }
+        return;
+      }
       setToast({
         message:
           item.id === 'mercadopago' || item.id === 'pix'
             ? `${item.name} usa o token da plataforma GoCreate — já ligado quando o servidor tem MERCADOPAGO_ACCESS_TOKEN.`
-            : item.id === 'google_oauth' || item.id === 'firebase_auth'
-              ? 'Login Google nos apps gerados: usa window.GoCreateAuth.signInWithGoogle() (Firebase da plataforma). Sem Client Secret.'
-              : `${item.name} já faz parte da plataforma GoCreate.`,
+            : `${item.name} já faz parte da plataforma GoCreate.`,
         type: 'info',
       });
       return;
@@ -474,9 +514,15 @@ export default function Integrations() {
                     ? 'Em breve'
                     : isConnected
                       ? item.connectType === 'platform'
-                        ? 'Activo'
+                        ? item.id === 'google_oauth' || item.id === 'firebase_auth'
+                          ? 'Activo'
+                          : 'Activo'
                         : 'Gerir'
-                      : 'Ligar'}
+                      : item.id === 'google_oauth' || item.id === 'firebase_auth'
+                        ? 'Entrar com Google'
+                        : item.connectType === 'oauth'
+                          ? 'Conectar'
+                          : 'Ligar'}
                 </button>
               </article>
             );

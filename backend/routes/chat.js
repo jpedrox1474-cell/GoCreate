@@ -85,6 +85,26 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
       console.warn('[api/chat] integrations addon:', intErr?.message);
     }
 
+    // Estado Backend Functions deste projeto — força GoCreateData quando ativo
+    try {
+      const projectSnap = await db.collection('projects').doc(projectId).get();
+      if (projectSnap.exists) {
+        const be = Boolean(projectSnap.data()?.backendEnabled);
+        systemPrompt += `
+
+## Estado deste projeto GoCreate
+- backendEnabled: ${be ? 'true' : 'false'}
+${
+  be
+    ? `- Backend JÁ está ativo. Qualquer lista/CRUD/formulário DEVE usar window.GoCreateData (create/list/update/remove). NÃO uses useState/localStorage como base de dados.`
+    : `- Backend ainda desligado. Para persistência real, o utilizador deve ativar Funções de Backend. Podes gerar código com GoCreateData (mostra CTA se BACKEND_REQUIRED); useState só como rascunho UI se a API falhar com BACKEND_REQUIRED.`
+}
+`;
+      }
+    } catch (beErr) {
+      console.warn('[api/chat] backendEnabled hint:', beErr?.message);
+    }
+
     const result = await streamGeminiChat({
       systemPrompt,
       messages,

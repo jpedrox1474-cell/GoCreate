@@ -178,7 +178,7 @@ export const INTEGRATIONS_CATALOG = [
     name: 'Login Google',
     category: 'auth',
     description:
-      'Sign-in com Google nos projetos gerados (Firebase Auth da plataforma). Conectar confirma o bridge GoCreateAuth — sem Client Secret.',
+      '1-click: abre o login Google oficial (Firebase). Nos apps gerados usa window.GoCreateAuth.signInWithGoogle() — sem Client Secret.',
     icon: 'Chrome',
     connectType: 'platform',
     competitors: ['Lovable', 'Bolt', 'Nova'],

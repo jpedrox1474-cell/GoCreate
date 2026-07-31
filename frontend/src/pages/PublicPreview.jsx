@@ -14,6 +14,20 @@ function shouldShowGoCreateBadge(publication) {
   return plan !== 'pro' && plan !== 'enterprise_master';
 }
 
+/** Live projects.backendEnabled — overrides stale publicProjects snapshot. */
+async function fetchLiveBackendEnabled(projectId) {
+  if (!projectId) return null;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/runtime`);
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => ({}));
+    if (typeof json.backendEnabled === 'boolean') return json.backendEnabled;
+  } catch {
+    /* ignore — fall back to snapshot */
+  }
+  return null;
+}
+
 export default function PublicPreview() {
   const { projectId: pathKey } = useParams();
   const isPreviewEnv = Boolean(useMatch('/p/:projectId/preview'));
@@ -22,12 +36,14 @@ export default function PublicPreview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [publication, setPublication] = useState(null);
+  const [liveBackendEnabled, setLiveBackendEnabled] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setPublication(null);
+    setLiveBackendEnabled(null);
 
     (async () => {
       try {
@@ -37,6 +53,9 @@ export default function PublicPreview() {
           setError('Esta publicação não existe ou ainda não tem ficheiros.');
         } else {
           setPublication(data);
+          const pid = data.projectId || pathKey;
+          const live = await fetchLiveBackendEnabled(pid);
+          if (!cancelled && live !== null) setLiveBackendEnabled(live);
         }
       } catch (err) {
         console.error('[PublicPreview]', err);
@@ -53,12 +72,15 @@ export default function PublicPreview() {
 
   const showBadge = shouldShowGoCreateBadge(publication);
   const runtimeProjectId = publication?.projectId || pathKey;
+  const backendEnabled =
+    typeof liveBackendEnabled === 'boolean'
+      ? liveBackendEnabled
+      : Boolean(publication?.backendEnabled);
 
   if (loading) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-zinc-950 text-zinc-100 gap-3">
-        <Loader2 size={28} className="text-blue-500 animate-spin" />
-        <p className="text-sm text-zinc-400">A carregar…</p>
+      <div className="h-screen w-full flex items-center justify-center bg-white dark:bg-zinc-950">
+        <Loader2 size={28} className="text-zinc-400 animate-spin" aria-label="A carregar" />
       </div>
     );
   }
@@ -90,7 +112,7 @@ export default function PublicPreview() {
         isGenerating={false}
         publicMode
         projectId={runtimeProjectId}
-        backendEnabled={Boolean(publication.backendEnabled)}
+        backendEnabled={backendEnabled}
       />
 
       {showBadge && (

@@ -33,7 +33,7 @@ export function buildIntegrationsAddonFromObject(userIntegrations = {}) {
 ## Integrações do utilizador
 Nenhuma integração social/pagamento BYO ligada ainda.
 - Mercado Pago / Pix: SEMPRE \`window.GoCreatePayments.createPix\` (nunca hardcode tokens MP; nunca alert() para erros; NÃO force upgrade Pro no checkout do app — plataforma/sandbox OK).
-- Persistência: use \`window.GoCreateData\` / \`POST /api/projects/:id/data\`; se BACKEND_REQUIRED, CTA para ativar Backend no GoCreate (não Pro paywall).
+- Persistência: SEMPRE \`window.GoCreateData\` / \`POST /api/projects/:id/data\` para CRUD (não useState como DB). Se BACKEND_REQUIRED, CTA para ativar Backend no GoCreate (não Pro paywall).
 - Login Google / Firebase Auth: SEMPRE use \`window.GoCreateAuth.signInWithGoogle()\` (plataforma) — NÃO peça Client Secret.
 - WhatsApp: use wa.me + CTA para ligar em Integrações → Canais — nunca whatsapp-web.js no preview.
 - Instagram / Facebook / YouTube / TikTok: se o pedido precisar deles, gere UI + CTA “Ligue em Integrações”; NÃO invente tokens.`;
@@ -170,7 +170,7 @@ ${
 ## Checklist ao gerar artefactos
 1. Se o app fala de WhatsApp/IG/FB/YT/TikTok/Pix/Google login e a secção acima tem a integração → USE os IDs/tokens/bridges listados automaticamente.
 2. Não diga “cole sua API key” / Client Secret para integrações já ligadas ou de plataforma.
-3. Runtime Sandpack: React + Tailwind; pagamentos via GoCreatePayments; login Google via GoCreateAuth; WhatsApp sem libs Node.`);
+3. Runtime Sandpack: React + Tailwind; pagamentos via GoCreatePayments; login Google via GoCreateAuth; persistência via GoCreateData; WhatsApp sem libs Node.`);
 
   return lines.join('\n');
 }

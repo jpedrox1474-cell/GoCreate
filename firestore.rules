@@ -124,7 +124,12 @@ service cloud.firestore {
         && (!('showBadge' in request.resource.data)
           || request.resource.data.showBadge is bool)
         && (!('backendEnabled' in request.resource.data)
-          || request.resource.data.backendEnabled is bool);
+          || request.resource.data.backendEnabled is bool)
+        && (!('authAccess' in request.resource.data)
+          || request.resource.data.authAccess is map)
+        && (!('ownerEmail' in request.resource.data)
+          || request.resource.data.ownerEmail is string
+          || request.resource.data.ownerEmail == null);
 
       allow update: if isSignedIn()
         && resource.data.ownerId == request.auth.uid

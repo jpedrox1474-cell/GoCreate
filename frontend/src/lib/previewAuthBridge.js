@@ -3,11 +3,15 @@
  * Sandpack runs on *.codesandbox.io — Firebase OAuth only works on authorized
  * parent origins (gocreate.web.app). The iframe posts here; we run signInWithPopup
  * and return user + idToken via postMessage.
+ *
+ * After sign-in, enforces project.authAccess via /api/projects/:id/auth-check.
  */
 import { signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
 
 export const GOCREATE_AUTH_MSG = 'gocreate-auth';
+
+const AUTH_DENIED = 'Sem permissão para aceder a este projeto';
 
 const ERROR_PT = {
   'auth/popup-closed-by-user': 'Login cancelado.',
@@ -17,6 +21,7 @@ const ERROR_PT = {
   'auth/unauthorized-domain':
     'Domínio não autorizado para login Google. Contacta o suporte GoCreate.',
   'auth/network-request-failed': 'Falha de rede ao autenticar. Verifica a ligação e tenta de novo.',
+  AUTH_ACCESS_DENIED: AUTH_DENIED,
 };
 
 function serializeUser(user) {
@@ -33,11 +38,15 @@ function serializeUser(user) {
 
 function toBridgeError(err) {
   const code = err?.code || 'BRIDGE_ERROR';
+  if (code === 'AUTH_ACCESS_DENIED' || err?.message === AUTH_DENIED) {
+    return { code: 'AUTH_ACCESS_DENIED', message: AUTH_DENIED };
+  }
   const message =
     ERROR_PT[code] ||
     (/unauthorized.?domain|not authorized for OAuth/i.test(String(err?.message || ''))
       ? ERROR_PT['auth/unauthorized-domain']
       : null) ||
+    (err?.message === AUTH_DENIED ? AUTH_DENIED : null) ||
     'Não foi possível autenticar com Google. Tenta novamente.';
   return { code, message };
 }
@@ -61,13 +70,54 @@ function isTrustedPreviewOrigin(origin) {
   }
 }
 
-async function handleSignInWithGoogle() {
+async function assertProjectAuthAccess(projectId, user) {
+  if (!projectId || !user) return;
+  const apiBase = typeof window !== 'undefined' ? window.location.origin : '';
+  if (!apiBase) return;
+  const res = await fetch(
+    `${apiBase}/api/projects/${encodeURIComponent(projectId)}/auth-check`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: user.email || null, uid: user.uid || null }),
+    }
+  );
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+  if (res.ok && data.allowed) return;
+  if (res.status === 403 || data.code === 'AUTH_ACCESS_DENIED' || data.allowed === false) {
+    const err = new Error(data.message || data.error || AUTH_DENIED);
+    err.code = 'AUTH_ACCESS_DENIED';
+    throw err;
+  }
+  // API unavailable — fail closed when projectId is known
+  const err = new Error(AUTH_DENIED);
+  err.code = 'AUTH_ACCESS_DENIED';
+  throw err;
+}
+
+async function handleSignInWithGoogle(projectId) {
   const provider = googleProvider || new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
   const result = await signInWithPopup(auth, provider);
+  const user = serializeUser(result.user);
+  try {
+    await assertProjectAuthAccess(projectId, user);
+  } catch (err) {
+    try {
+      await signOut(auth);
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
   const idToken = await result.user.getIdToken();
   return {
-    user: serializeUser(result.user),
+    user,
     idToken,
   };
 }
@@ -114,7 +164,7 @@ export function installPreviewAuthBridge() {
 
     try {
       if (data.action === 'signInWithGoogle') {
-        const result = await handleSignInWithGoogle();
+        const result = await handleSignInWithGoogle(data.projectId || null);
         reply(result);
       } else {
         await handleSignOut();

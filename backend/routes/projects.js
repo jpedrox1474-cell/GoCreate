@@ -12,8 +12,33 @@ import {
   BACKEND_REQUIRED_MESSAGE,
 } from '../lib/owner.js';
 import { projectDataOp } from '../services/entities.js';
+import {
+  AUTH_ACCESS_DENIED_MESSAGE,
+  isEmailAllowedForProjectAuth,
+  normalizeAuthAccess,
+  normalizeEmail,
+  publicAuthAccessPayload,
+} from '../services/authAccess.js';
 
 const router = Router();
+
+async function syncAuthAccessToPublicSnapshots(projectId, { authAccess, ownerEmail }) {
+  const updates = [projectId, `${projectId}_preview`];
+  const payload = {
+    authAccess: normalizeAuthAccess(authAccess),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (ownerEmail != null) {
+    payload.ownerEmail = normalizeEmail(ownerEmail) || null;
+  }
+  for (const pubId of updates) {
+    const ref = db.collection('publicProjects').doc(pubId);
+    const snap = await ref.get();
+    if (snap.exists) {
+      await ref.set(payload, { merge: true });
+    }
+  }
+}
 
 async function deleteQueryInChunks(query, chunkSize = 400) {
   // eslint-disable-next-line no-constant-condition
@@ -142,6 +167,119 @@ router.post('/bulk-delete', requireAuth, async (req, res) => {
 });
 
 /**
+ * GET /api/projects/:projectId/auth-access — public allowlist for published Google login.
+ */
+router.get('/:projectId/auth-access', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId é obrigatório.' });
+    }
+    const { data: project } = await loadProjectOrThrow(projectId);
+    res.json({ ok: true, ...publicAuthAccessPayload(project) });
+  } catch (err) {
+    console.error('[projects/auth-access]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao ler permissões.' });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/auth-check — { email, uid } → { allowed }.
+ * Used by GoCreateAuth after Google sign-in on published apps.
+ */
+router.post('/:projectId/auth-check', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId é obrigatório.' });
+    }
+    const { data: project } = await loadProjectOrThrow(projectId);
+    const allowed = isEmailAllowedForProjectAuth(
+      { email: req.body?.email, uid: req.body?.uid },
+      project
+    );
+    if (!allowed) {
+      return res.status(403).json({
+        ok: false,
+        allowed: false,
+        error: AUTH_ACCESS_DENIED_MESSAGE,
+        message: AUTH_ACCESS_DENIED_MESSAGE,
+        code: 'AUTH_ACCESS_DENIED',
+      });
+    }
+    res.json({ ok: true, allowed: true });
+  } catch (err) {
+    console.error('[projects/auth-check]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha ao verificar permissão.',
+      code: err.code,
+    });
+  }
+});
+
+/**
+ * PUT /api/projects/:projectId/auth-access — owner updates allowlist.
+ * Body: { mode, invitedEmails[] }
+ */
+router.put('/:projectId/auth-access', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const snap = await assertOwner(projectId, req.user.uid);
+    const data = snap.data() || {};
+    const authAccess = normalizeAuthAccess({
+      mode: req.body?.mode,
+      invitedEmails: req.body?.invitedEmails,
+    });
+    const ownerEmail =
+      normalizeEmail(req.body?.ownerEmail) ||
+      normalizeEmail(data.ownerEmail) ||
+      normalizeEmail(req.user.email) ||
+      null;
+
+    await snap.ref.set(
+      {
+        authAccess,
+        ownerEmail,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    await syncAuthAccessToPublicSnapshots(projectId, { authAccess, ownerEmail });
+
+    res.json({
+      ok: true,
+      authAccess,
+      ownerEmail,
+    });
+  } catch (err) {
+    console.error('[projects/auth-access/put]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao guardar permissões.' });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/runtime — public hint for published / preview apps.
+ * Returns live projects.backendEnabled (not the possibly-stale publicProjects snapshot).
+ */
+router.get('/:projectId/runtime', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId é obrigatório.' });
+    }
+    const { data: project } = await loadProjectOrThrow(projectId);
+    res.json({
+      ok: true,
+      projectId,
+      backendEnabled: Boolean(project.backendEnabled),
+    });
+  } catch (err) {
+    console.error('[projects/runtime]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao ler runtime.' });
+  }
+});
+
+/**
  * GET /api/projects/:projectId/backend — status (owner).
  */
 router.get('/:projectId/backend', requireAuth, async (req, res) => {
@@ -179,6 +317,12 @@ router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
     const data = snap.data() || {};
 
     if (data.backendEnabled) {
+      // Re-sync snapshot even if already on (stale publicProjects before enable shipped).
+      try {
+        await syncBackendFlagToPublicSnapshots(projectId, true);
+      } catch (syncErr) {
+        console.warn('[projects/backend/enable] snapshot sync:', syncErr?.message);
+      }
       return res.json({
         ok: true,
         backendEnabled: true,
@@ -243,8 +387,9 @@ router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
 });
 
 /**
- * POST /api/projects/:projectId/data — runtime CRUD (published apps).
- * Público (sem auth). Exige projects.backendEnabled.
+ * POST /api/projects/:projectId/data — runtime CRUD (preview + published apps).
+ * Público (sem auth Firebase): end-users of published apps must be able to save.
+ * Gate: projects.backendEnabled must be true. Writes via Admin SDK → entities/rows.
  * Body: { action, entity, id?, data? }
  */
 router.post('/:projectId/data', async (req, res) => {

@@ -36,6 +36,7 @@ const FILES = [
   'services/github.js',
   'services/integrations.js',
   'services/entities.js',
+  'services/authAccess.js',
   'services/evolution.js',
   'services/meta.js',
   'services/suggestIntegrations.js',

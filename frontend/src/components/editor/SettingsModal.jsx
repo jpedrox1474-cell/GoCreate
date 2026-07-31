@@ -9,6 +9,9 @@ import {
   ExternalLink,
   Server,
   CheckCircle2,
+  Shield,
+  X,
+  Plus,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { updateProjectSettings, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
@@ -19,6 +22,12 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditsContext';
 import { BACKEND_ENABLE_CREDIT_COST } from '../../lib/plans';
+
+function normalizeInviteEmail(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
 
 export default function SettingsModal({
   open,
@@ -41,6 +50,13 @@ export default function SettingsModal({
   const [slugHint, setSlugHint] = useState('');
   const [backendBusy, setBackendBusy] = useState(false);
   const [backendEnabled, setBackendEnabled] = useState(Boolean(project?.backendEnabled));
+  const [authMode, setAuthMode] = useState(
+    project?.authAccess?.mode === 'invited' ? 'invited' : 'owner_only'
+  );
+  const [invitedEmails, setInvitedEmails] = useState(
+    () => project?.authAccess?.invitedEmails || []
+  );
+  const [inviteDraft, setInviteDraft] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -50,6 +66,13 @@ export default function SettingsModal({
     setSlug(project?.slug || projectId || '');
     setSlugHint('');
     setBackendEnabled(Boolean(project?.backendEnabled));
+    setAuthMode(project?.authAccess?.mode === 'invited' ? 'invited' : 'owner_only');
+    setInvitedEmails(
+      Array.isArray(project?.authAccess?.invitedEmails)
+        ? project.authAccess.invitedEmails
+        : []
+    );
+    setInviteDraft('');
     const s = getUserSettings();
     setThemeLocal(s.theme || preference);
     setNotifications(s.notifications);
@@ -60,6 +83,8 @@ export default function SettingsModal({
     project?.customDomain,
     project?.slug,
     project?.backendEnabled,
+    project?.authAccess?.mode,
+    project?.authAccess?.invitedEmails,
     projectId,
     preference,
   ]);
@@ -71,6 +96,21 @@ export default function SettingsModal({
   function handleThemePick(next) {
     setThemeLocal(next);
     setTheme(next);
+  }
+
+  function addInviteEmail() {
+    const email = normalizeInviteEmail(inviteDraft);
+    if (!email || !email.includes('@')) {
+      onToast?.({ message: 'Indica um e-mail válido.', type: 'error' });
+      return;
+    }
+    setInvitedEmails((prev) => (prev.includes(email) ? prev : [...prev, email].slice(0, 50)));
+    setInviteDraft('');
+    if (authMode !== 'invited') setAuthMode('invited');
+  }
+
+  function removeInviteEmail(email) {
+    setInvitedEmails((prev) => prev.filter((e) => e !== email));
   }
 
   async function handleEnableBackend() {
@@ -146,15 +186,30 @@ export default function SettingsModal({
         setSlug(nextSlug);
       }
 
+      const nextAuthAccess = {
+        mode: authMode === 'invited' ? 'invited' : 'owner_only',
+        invitedEmails: authMode === 'invited' ? invitedEmails : [],
+      };
+      const ownerEmail =
+        normalizeInviteEmail(project?.ownerEmail || user?.email) || null;
+
       if (projectId && trimmedName) {
         const nameChanged = trimmedName !== (project?.name || '');
         const descChanged = trimmedDesc !== (project?.description || '');
         const domainChanged = trimmedDomain !== (project?.customDomain || '');
-        if (nameChanged || descChanged || domainChanged) {
+        const prevAccess = project?.authAccess || { mode: 'owner_only', invitedEmails: [] };
+        const authChanged =
+          prevAccess.mode !== nextAuthAccess.mode ||
+          JSON.stringify(prevAccess.invitedEmails || []) !==
+            JSON.stringify(nextAuthAccess.invitedEmails) ||
+          !project?.ownerEmail;
+        if (nameChanged || descChanged || domainChanged || authChanged) {
           await updateProjectSettings(projectId, {
             name: trimmedName,
             description: trimmedDesc,
             customDomain: trimmedDomain,
+            authAccess: nextAuthAccess,
+            ownerEmail,
           });
         }
       }
@@ -172,6 +227,8 @@ export default function SettingsModal({
         slug: nextSlug || project?.slug || null,
         publishedUrl: nextPublishedUrl || project?.publishedUrl || null,
         backendEnabled,
+        authAccess: nextAuthAccess,
+        ownerEmail,
       });
       onToast?.({ message: 'Configurações guardadas.', type: 'success' });
       onClose?.();
@@ -194,6 +251,7 @@ export default function SettingsModal({
     project?.publishedUrl ||
     (projectId ? getPublishUrl(projectId, project?.publishedEnv || 'production', publicKey) : null);
   const creditCost = canUsePremium ? 0 : BACKEND_ENABLE_CREDIT_COST;
+  const ownerLabel = project?.ownerEmail || user?.email || 'o teu e-mail';
 
   return (
     <ModalShell open={open} onClose={onClose} title="Configurações do projeto" wide>
@@ -298,6 +356,109 @@ export default function SettingsModal({
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
+            Quem pode entrar com Google
+          </p>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-md bg-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                <Shield size={14} className="text-violet-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-zinc-200">Login no app publicado</p>
+                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  Por defeito só o dono ({ownerLabel}) pode usar Google no site publicado.
+                  Podes convidar e-mails específicos.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={!projectId}
+                onClick={() => setAuthMode('owner_only')}
+                className={`text-left px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 ${
+                  authMode === 'owner_only'
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                }`}
+              >
+                <p className="text-xs font-semibold">Só o dono</p>
+                <p className="text-[10px] opacity-80 mt-0.5">Apenas a tua conta Google</p>
+              </button>
+              <button
+                type="button"
+                disabled={!projectId}
+                onClick={() => setAuthMode('invited')}
+                className={`text-left px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 ${
+                  authMode === 'invited'
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                }`}
+              >
+                <p className="text-xs font-semibold">Dono + convidados</p>
+                <p className="text-[10px] opacity-80 mt-0.5">Lista de e-mails autorizados</p>
+              </button>
+            </div>
+
+            {authMode === 'invited' ? (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={inviteDraft}
+                    onChange={(e) => setInviteDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addInviteEmail();
+                      }
+                    }}
+                    disabled={!projectId}
+                    placeholder="email@exemplo.com"
+                    className="flex-1 bg-zinc-950 border border-zinc-800 focus:border-blue-600 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    disabled={!projectId}
+                    onClick={addInviteEmail}
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 disabled:opacity-50"
+                  >
+                    <Plus size={14} />
+                    Convidar
+                  </button>
+                </div>
+                {invitedEmails.length ? (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {invitedEmails.map((email) => (
+                      <li
+                        key={email}
+                        className="inline-flex items-center gap-1 pl-2 pr-1 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300"
+                      >
+                        {email}
+                        <button
+                          type="button"
+                          onClick={() => removeInviteEmail(email)}
+                          className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200"
+                          aria-label={`Remover ${email}`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[10px] text-zinc-600">
+                    Ainda sem convidados — só o dono consegue entrar.
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="space-y-2 pt-1 border-t border-zinc-800/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
             Backend Functions
           </p>
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2.5">
@@ -361,10 +522,17 @@ export default function SettingsModal({
           <Link
             to={integrationsHref}
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 px-1 py-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+            className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-zinc-800 bg-zinc-950/60 hover:border-zinc-700 hover:bg-zinc-900/80 transition-all group"
           >
-            <Plug size={11} />
-            Integrações (pagamentos)
+            <div className="w-8 h-8 rounded-md bg-amber-600/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+              <Plug size={14} className="text-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-zinc-200 group-hover:text-white">
+                Integrações
+              </p>
+              <p className="text-[11px] text-zinc-500">Pagamentos, Google, redes sociais</p>
+            </div>
           </Link>
         </section>
 

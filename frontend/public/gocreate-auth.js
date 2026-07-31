@@ -5,15 +5,20 @@
  * When running inside an iframe (Sandpack on *.codesandbox.io), OAuth must run on the
  * parent origin (gocreate.web.app) via postMessage — Firebase rejects unauthorized domains.
  *
+ * After Google sign-in, access is gated by project.authAccess (owner_only | invited).
+ *
  * Expects (optional):
  *   window.__GOCREATE_FIREBASE_CONFIG__ — public Firebase web config
- *   window.__GOCREATE_PROJECT_ID__      — project id (for future scoped auth)
+ *   window.__GOCREATE_PROJECT_ID__      — project id (scoped auth)
+ *   window.__GOCREATE_API_BASE__        — API origin for auth-check
+ *   window.__GOCREATE_AUTH_ACCESS__     — optional cached { mode, invitedEmails, ownerEmail, ownerId }
  */
 (function (global) {
   if (global.GoCreateAuth) return;
 
   var FIREBASE_VERSION = '10.14.1';
   var MSG_TYPE = 'gocreate-auth';
+  var AUTH_DENIED = 'Sem permissão para aceder a este projeto';
   var readyPromise = null;
   var bridgeReqSeq = 0;
   var pendingBridge = Object.create(null);
@@ -67,8 +72,24 @@
     }
   }
 
+  function normalizeEmail(email) {
+    return String(email || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  function denyAccessError() {
+    var err = new Error(AUTH_DENIED);
+    err.code = 'AUTH_ACCESS_DENIED';
+    return err;
+  }
+
   function friendlyAuthError(err) {
     var code = (err && (err.code || err.errorCode)) || '';
+    if (code === 'AUTH_ACCESS_DENIED') {
+      var denied = denyAccessError();
+      return denied;
+    }
     var map = {
       'auth/unauthorized-domain':
         'Este domínio de preview não está autorizado para login Google. Recarrega a página — o GoCreate autentica pela janela principal.',
@@ -83,8 +104,12 @@
       BRIDGE_UNAVAILABLE:
         'Login Google indisponível neste preview. Abre o app no GoCreate (preview ou URL publicado).',
       BRIDGE_ERROR: 'Não foi possível autenticar com Google. Tenta novamente.',
+      AUTH_ACCESS_DENIED: AUTH_DENIED,
     };
     var message = map[code] || (err && err.message) || 'Erro ao autenticar com Google.';
+    if (message === AUTH_DENIED || /Sem permissão para aceder/i.test(String(message))) {
+      return denyAccessError();
+    }
     // Never surface raw English Firebase domain errors alone
     if (/unauthorized.?domain|not authorized for OAuth/i.test(String(message)) && code !== 'auth/unauthorized-domain') {
       message = map['auth/unauthorized-domain'];
@@ -93,6 +118,74 @@
     var out = new Error(message);
     out.code = code || 'BRIDGE_ERROR';
     return out;
+  }
+
+  function localAccessAllowed(user) {
+    var access = global.__GOCREATE_AUTH_ACCESS__;
+    if (!access || typeof access !== 'object') return null; // unknown — defer to API
+    var email = normalizeEmail(user && user.email);
+    var uid = String((user && user.uid) || '').trim();
+    var ownerId = String(access.ownerId || '').trim();
+    var ownerEmail = normalizeEmail(access.ownerEmail);
+    if (uid && ownerId && uid === ownerId) return true;
+    if (email && ownerEmail && email === ownerEmail) return true;
+    var mode = access.mode === 'invited' ? 'invited' : 'owner_only';
+    if (mode === 'invited') {
+      var list = Array.isArray(access.invitedEmails) ? access.invitedEmails : [];
+      for (var i = 0; i < list.length; i++) {
+        if (email && normalizeEmail(list[i]) === email) return true;
+      }
+    }
+    return false;
+  }
+
+  async function assertProjectAuthAccess(user) {
+    if (!user) throw denyAccessError();
+    var projectId = global.__GOCREATE_PROJECT_ID__;
+    if (!projectId) return user;
+
+    var apiBase = String(global.__GOCREATE_API_BASE__ || '').replace(/\/$/, '');
+    if (apiBase) {
+      try {
+        var res = await fetch(apiBase + '/api/projects/' + encodeURIComponent(projectId) + '/auth-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: user.email || null, uid: user.uid || null }),
+        });
+        var data = {};
+        try {
+          data = await res.json();
+        } catch (e) {
+          data = {};
+        }
+        if (res.ok && data.allowed) return user;
+        if (res.status === 403 || data.code === 'AUTH_ACCESS_DENIED' || data.allowed === false) {
+          throw denyAccessError();
+        }
+        // Non-403 API failure → fall through to local cache
+      } catch (err) {
+        if (err && err.code === 'AUTH_ACCESS_DENIED') throw err;
+        /* network — try local */
+      }
+    }
+
+    var local = localAccessAllowed(user);
+    if (local === true) return user;
+    if (local === false) throw denyAccessError();
+    // No API and no cache: fail closed for published apps (project id present)
+    throw denyAccessError();
+  }
+
+  async function signOutQuiet() {
+    try {
+      if (isInIframe()) {
+        notifyBridgeListeners(null);
+      }
+      var auth = await ensureFirebase();
+      await auth.signOut();
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   function ensureFirebase() {
@@ -166,6 +259,7 @@
             type: MSG_TYPE,
             action: action,
             requestId: requestId,
+            projectId: global.__GOCREATE_PROJECT_ID__ || null,
           },
           '*'
         );
@@ -183,7 +277,14 @@
     provider.setCustomParameters({ prompt: 'select_account' });
     try {
       var result = await auth.signInWithPopup(provider);
-      return serializeUser(result.user);
+      var user = serializeUser(result.user);
+      try {
+        await assertProjectAuthAccess(user);
+      } catch (accessErr) {
+        await signOutQuiet();
+        throw accessErr;
+      }
+      return user;
     } catch (err) {
       throw friendlyAuthError(err);
     }
@@ -223,7 +324,19 @@
 
   async function signInViaParentBridge() {
     var payload = await requestParentAuth('signInWithGoogle', 120000);
-    return applyCredentialFromParent(payload);
+    var user = await applyCredentialFromParent(payload);
+    try {
+      await assertProjectAuthAccess(user);
+    } catch (accessErr) {
+      await signOutQuiet();
+      try {
+        await requestParentAuth('signOut', 10000);
+      } catch (e) {
+        /* ignore */
+      }
+      throw accessErr;
+    }
+    return user;
   }
 
   global.GoCreateAuth = {
@@ -304,6 +417,6 @@
     },
     /** @deprecated internal */
     _isInIframe: isInIframe,
-    version: '1.1.0',
+    version: '1.2.0',
   };
 })(typeof window !== 'undefined' ? window : globalThis);

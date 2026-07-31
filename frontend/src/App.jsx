@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -16,6 +16,14 @@ import Automations from './pages/Automations';
 import Entities from './pages/Entities';
 import PublicPreview from './pages/PublicPreview';
 
+function NeutralSpinner() {
+  return (
+    <div className="flex items-center justify-center h-screen w-full bg-white dark:bg-zinc-950">
+      <Loader2 size={28} className="text-zinc-400 animate-spin" aria-label="A carregar" />
+    </div>
+  );
+}
+
 function PublicOnly({ children }) {
   const { loading } = useAuth();
   if (loading) {
@@ -30,6 +38,13 @@ function PublicOnly({ children }) {
 
 export default function App() {
   const { loading } = useAuth();
+  const location = useLocation();
+  const isPublicPreview = location.pathname.startsWith('/p/');
+
+  // Published apps must never show GoCreate silk/video branding while auth bootstraps
+  if (loading && isPublicPreview) {
+    return <NeutralSpinner />;
+  }
 
   if (loading) {
     return (

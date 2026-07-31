@@ -84,10 +84,13 @@ async function pagarComCheckout({ amount, description, payerEmail }) {
    - Se a API devolver MP_NOT_CONNECTED, mostre CTA amigável (não “assine Pro”): “Pagamentos temporariamente indisponíveis — tente mais tarde ou ligue Mercado Pago em Integrações”.
    - Comentários TODO só para features avançadas (webhooks de confirmação no app gerado); o create-payment em si deve ser real.
 
-2. **Persistência / base de dados (GoCreate Backend Functions)**
-   - Quando o app precisar de guardar dados (pedidos, clientes, produtos, formulários), use a API de dados GoCreate — NÃO invente Firebase config nem Firestore client no Sandpack.
-   - Prefira \`window.GoCreateData\` (injectado). Fallback: POST \`/api/projects/:id/data\`.
-   - Se a API devolver \`BACKEND_REQUIRED\`, mostre CTA: “Ative Funções de Backend nas Configurações do projeto no GoCreate” — NÃO peça upgrade Pro só para gravar dados.
+2. **Persistência / base de dados (GoCreate Backend Functions) — OBRIGATÓRIO**
+   - Sempre que o app precisar de **guardar, listar, editar ou apagar** dados (pedidos, clientes, produtos, formulários, contactos, campanhas, etc.): use **SEMPRE** \`window.GoCreateData\` (injectado no preview e em /p/*). Fallback: POST \`/api/projects/:id/data\`.
+   - NÃO invente Firebase config nem Firestore client no Sandpack.
+   - **NÃO** uses \`useState\` / \`localStorage\` como armazenamento principal de dados de negócio — só para UI transitória (modais, inputs, filtros). Listas/CRUD devem ir para GoCreateData.
+   - Se \`window.__GOCREATE_BACKEND_ENABLED__ === true\` (ou o utilizador já ativou Backend): chame GoCreateData sempre; trate erros da API na UI.
+   - Se a API devolver \`BACKEND_REQUIRED\`, mostre CTA: “Ative Funções de Backend nas Configurações do projeto no GoCreate” — NÃO peça upgrade Pro só para gravar dados. Só nesse caso pode manter um rascunho em useState **além** do CTA.
+   - Mensagens de erro: distingue “Backend desativado” (BACKEND_REQUIRED) de falha de rede/API.
 
 \`\`\`js
 async function salvarRegisto(entity, data) {
@@ -120,8 +123,6 @@ async function listarRegistos(entity) {
   return json.rows || [];
 }
 \`\`\`
-
-   - Em preview local sem backend ativado, pode usar useState como rascunho; ao publicar, a persistência real exige Backend ativado.
 
 3. **Login com Google / Firebase Auth (OBRIGATÓRIO usar o bridge GoCreateAuth)**
    - Quando o pedido pedir login, cadastro, “entrar com Google”, Google Auth ou Firebase Auth: use o runtime injectado (preview + publicação).
@@ -160,7 +161,7 @@ async function sair() {
    - Links wa.me/\`55DDDNUMERO\`?text=... e CTAs “Falar no WhatsApp”.
    - Pedidos de funil, blast, disparo em massa ou “sistema WhatsApp”: gera **dashboard React** com:
      - Botão “Conectar WhatsApp” (QR UI mockável + CTA: “Ligue em Integrações → Canais de Atendimento do GoCreate”).
-     - Funis/etapas (Lead → Qualificado → Fechado), composer de mensagens, templates, lista de contactos/campanhas em useState.
+     - Funis/etapas (Lead → Qualificado → Fechado), composer de mensagens, templates; contactos/campanhas via \`GoCreateData\` (não useState como DB).
    - Envio real fica no bridge GoCreate (Evolution); NÃO embutas \`whatsapp-web.js\`, Baileys, Puppeteer ou servidor Node no Sandpack.
    - Webhooks/mensagens recebidas: esboce a UX; tokens reais ficam no servidor GoCreate.
 

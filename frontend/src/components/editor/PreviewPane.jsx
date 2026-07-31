@@ -14,7 +14,7 @@ import {
 import { installPreviewAuthBridge } from '../../lib/previewAuthBridge';
 import SandpackErrorBoundary from './SandpackErrorBoundary';
 
-function CompilingOverlay({ externalLoading }) {
+function CompilingOverlay({ externalLoading, publicMode }) {
   const state = useLoadingOverlayState(undefined, Boolean(externalLoading));
   const [holdAfterGen, setHoldAfterGen] = useState(false);
 
@@ -34,6 +34,18 @@ function CompilingOverlay({ externalLoading }) {
   const visible = sandpackBusy || Boolean(externalLoading) || holdAfterGen;
 
   if (!visible) return null;
+
+  if (publicMode) {
+    return (
+      <div
+        className="absolute inset-0 z-40 bg-zinc-950 flex items-center justify-center pointer-events-none"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <Loader2 size={28} className="text-zinc-400 animate-spin" aria-label="A carregar" />
+      </div>
+    );
+  }
 
   const label =
     state === 'TIMEOUT'
@@ -140,7 +152,7 @@ function PreviewInner({ isGenerating, onAskFix, publicMode, generationIncomplete
         />
       </SandpackLayout>
       <IncompleteBanner visible={Boolean(generationIncomplete)} onContinue={onContinue} />
-      <CompilingOverlay externalLoading={Boolean(isGenerating)} />
+      <CompilingOverlay externalLoading={Boolean(isGenerating)} publicMode={publicMode} />
       <RuntimeErrorOverlay onAskFix={onAskFix} hidden={Boolean(isGenerating)} />
     </div>
   );
@@ -243,11 +255,12 @@ export default function PreviewPane({
   const sandpackKey = useMemo(() => {
     if (!sandpackFiles) return 'empty';
     const depsKey = Object.keys(dependencies).sort().join(',');
-    return `${depsKey}::${projectId || ''}::${Object.entries(sandpackFiles)
+    const beKey = backendEnabled ? 'be1' : 'be0';
+    return `${depsKey}::${projectId || ''}::${beKey}::${Object.entries(sandpackFiles)
       .map(([path, entry]) => `${path}:${(entry?.code || '').length}:${(entry?.code || '').slice(0, 48)}`)
       .sort()
       .join('|')}`;
-  }, [sandpackFiles, dependencies, projectId]);
+  }, [sandpackFiles, dependencies, projectId, backendEnabled]);
 
   const apiBase =
     typeof window !== 'undefined'

@@ -132,9 +132,28 @@ async function publishHandler(req, res) {
       }
     }
 
+    const ownerEmail =
+      String(project.ownerEmail || req.user.email || '')
+        .trim()
+        .toLowerCase() || null;
+    const authAccess =
+      project.authAccess?.mode === 'invited'
+        ? {
+            mode: 'invited',
+            invitedEmails: Array.isArray(project.authAccess.invitedEmails)
+              ? project.authAccess.invitedEmails
+                  .map((e) => String(e || '').trim().toLowerCase())
+                  .filter((e) => e.includes('@'))
+                  .slice(0, 50)
+              : [],
+          }
+        : { mode: 'owner_only', invitedEmails: [] };
+
     const payload = {
       projectId,
       ownerId: req.user.uid,
+      ownerEmail,
+      authAccess,
       name: name || project.name || 'Projeto',
       env,
       files,
@@ -146,6 +165,11 @@ async function publishHandler(req, res) {
       backendEnabled: Boolean(project.backendEnabled),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
+
+    // Backfill ownerEmail on project doc when missing
+    if (!project.ownerEmail && ownerEmail) {
+      await projectRef.set({ ownerEmail }, { merge: true });
+    }
 
     await db.collection('publicProjects').doc(pubId).set(payload, { merge: true });
 

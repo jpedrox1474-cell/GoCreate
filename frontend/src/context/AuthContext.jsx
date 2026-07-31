@@ -6,6 +6,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
+  linkWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -124,6 +125,49 @@ export function AuthProvider({ children }) {
     }
   }
 
+  /** 1-click Google for Integrações — link if signed in, else sign-in popup. */
+  async function connectGoogleAccount() {
+    setAuthError(null);
+    try {
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
+      const current = auth.currentUser;
+      const alreadyGoogle = Boolean(
+        current?.providerData?.some((p) => p.providerId === 'google.com')
+      );
+      if (alreadyGoogle) {
+        return { linked: true, alreadyConnected: true, user: current };
+      }
+      if (current) {
+        try {
+          const result = await linkWithPopup(current, googleProvider);
+          await ensureUserDoc(result.user);
+          setUser(result.user);
+          return { linked: true, alreadyConnected: false, user: result.user };
+        } catch (err) {
+          if (
+            err?.code === 'auth/credential-already-in-use' ||
+            err?.code === 'auth/email-already-in-use' ||
+            err?.code === 'auth/provider-already-linked'
+          ) {
+            // Conta Google já existe — confirma com sign-in (mesma sessão se for a mesma).
+            const result = await signInWithPopup(auth, googleProvider);
+            await ensureUserDoc(result.user);
+            setUser(result.user);
+            return { linked: true, alreadyConnected: false, user: result.user };
+          }
+          throw err;
+        }
+      }
+      const result = await signInWithPopup(auth, googleProvider);
+      await ensureUserDoc(result.user);
+      setUser(result.user);
+      return { linked: true, alreadyConnected: false, user: result.user };
+    } catch (err) {
+      setAuthError(translateError(err.code));
+      throw err;
+    }
+  }
+
   async function loginWithGithub() {
     setAuthError(null);
     try {
@@ -189,6 +233,7 @@ export function AuthProvider({ children }) {
     loading,
     authError,
     loginWithGoogle,
+    connectGoogleAccount,
     loginWithGithub,
     loginWithEmail,
     registerWithEmail,

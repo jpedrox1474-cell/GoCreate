@@ -23,37 +23,90 @@
     return global.__GOCREATE_PROJECT_ID__ || null;
   }
 
-  async function request(body) {
-    const pid = projectId();
-    if (!pid) {
-      const err = new Error(
-        'Project ID em falta. Publica o projeto ou define window.__GOCREATE_PROJECT_ID__.'
+  function showToast(message, type) {
+    try {
+      var el = document.createElement('div');
+      el.setAttribute('role', 'status');
+      el.textContent = message;
+      el.style.cssText =
+        'position:fixed;z-index:2147483647;left:50%;bottom:24px;transform:translateX(-50%);' +
+        'max-width:min(420px,92vw);padding:10px 14px;border-radius:10px;font:13px/1.4 system-ui,sans-serif;' +
+        'box-shadow:0 8px 24px rgba(0,0,0,.35);color:#fff;' +
+        (type === 'error'
+          ? 'background:#b91c1c;'
+          : type === 'info'
+            ? 'background:#1e3a5f;'
+            : 'background:#15803d;');
+      document.body.appendChild(el);
+      setTimeout(function () {
+        try {
+          el.remove();
+        } catch (_) {
+          /* ignore */
+        }
+      }, 2800);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function friendlyError(res, data) {
+    var code = data && data.code;
+    if (code === 'BACKEND_REQUIRED' || res.status === 403) {
+      return (
+        (data && (data.message || data.error)) ||
+        'Funções de Backend desativadas. Ative em Configurações do projeto no GoCreate.'
       );
-      err.code = 'NO_PROJECT_ID';
-      throw err;
+    }
+    if (res.status === 404) {
+      return (data && (data.message || data.error)) || 'Projeto ou registo não encontrado.';
+    }
+    if (res.status >= 500) {
+      return (data && (data.message || data.error)) || 'Erro no servidor ao guardar dados. Tente novamente.';
+    }
+    return (
+      (data && (data.message || data.error)) ||
+      'Falha ao comunicar com a API de dados do GoCreate.'
+    );
+  }
+
+  async function request(body, opts) {
+    opts = opts || {};
+    var pid = projectId();
+    if (!pid) {
+      var noId = new Error(
+        'Project ID em falta. Abra o preview no editor GoCreate ou publique o projeto.'
+      );
+      noId.code = 'NO_PROJECT_ID';
+      if (opts.toast !== false) showToast(noId.message, 'error');
+      throw noId;
     }
 
-    const res = await fetch(apiBase() + '/api/projects/' + encodeURIComponent(pid) + '/data', {
+    var res = await fetch(apiBase() + '/api/projects/' + encodeURIComponent(pid) + '/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
 
-    let data = null;
+    var data = null;
     try {
       data = await res.json();
-    } catch {
+    } catch (_) {
       // ignore
     }
 
     if (!res.ok) {
-      const err = new Error(
-        (data && (data.message || data.error)) ||
-          'Falha na API de dados. Ative Funções de Backend no GoCreate.'
-      );
+      var err = new Error(friendlyError(res, data));
       err.status = res.status;
       err.code = data && data.code;
+      if (opts.toast !== false) {
+        showToast(err.message, err.code === 'BACKEND_REQUIRED' ? 'info' : 'error');
+      }
       throw err;
+    }
+
+    if (opts.successToast) {
+      showToast(opts.successToast, 'success');
     }
     return data;
   }
@@ -63,21 +116,30 @@
       return global.__GOCREATE_BACKEND_ENABLED__ === true;
     },
     list: function (entity) {
-      return request({ action: 'list', entity: entity }).then(function (r) {
+      return request({ action: 'list', entity: entity }, { toast: false }).then(function (r) {
         return (r && r.rows) || [];
       });
     },
     get: function (entity, id) {
-      return request({ action: 'get', entity: entity, id: id });
+      return request({ action: 'get', entity: entity, id: id }, { toast: false });
     },
     create: function (entity, data) {
-      return request({ action: 'create', entity: entity, data: data });
+      return request(
+        { action: 'create', entity: entity, data: data },
+        { successToast: 'Dados guardados.' }
+      );
     },
     update: function (entity, id, data) {
-      return request({ action: 'update', entity: entity, id: id, data: data });
+      return request(
+        { action: 'update', entity: entity, id: id, data: data },
+        { successToast: 'Alterações guardadas.' }
+      );
     },
     remove: function (entity, id) {
-      return request({ action: 'delete', entity: entity, id: id });
+      return request(
+        { action: 'delete', entity: entity, id: id },
+        { successToast: 'Registo removido.' }
+      );
     },
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -68,6 +68,17 @@ export function mapProjectDoc(d) {
   const color = data.color || 'from-blue-600 to-indigo-600';
   // Always use the branded initials/gradient thumb for cards (ignore Unsplash / old screenshots).
   const thumbnail = buildProjectThumbnailDataUrl(name, color);
+  const authAccess =
+    data.authAccess?.mode === 'invited'
+      ? {
+          mode: 'invited',
+          invitedEmails: Array.isArray(data.authAccess.invitedEmails)
+            ? data.authAccess.invitedEmails
+                .map((e) => String(e || '').trim().toLowerCase())
+                .filter((e) => e.includes('@'))
+            : [],
+        }
+      : { mode: 'owner_only', invitedEmails: [] };
   return {
     id: d.id,
     name,
@@ -84,6 +95,8 @@ export function mapProjectDoc(d) {
     isDefault: Boolean(data.isDefault),
     backendEnabled: Boolean(data.backendEnabled),
     ownerId: data.ownerId,
+    ownerEmail: data.ownerEmail || null,
+    authAccess,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt || data.createdAt,
     updatedAtLabel: formatRelativeTime(data.updatedAt || data.createdAt),
@@ -107,11 +120,17 @@ export async function getOrCreateDefaultProject(uid) {
   return createProject(uid, { name: 'meu-novo-projeto', isDefault: true });
 }
 
-export async function createProject(uid, { name = 'Novo Projeto', description = '', isDefault = false } = {}) {
+export async function createProject(uid, { name = 'Novo Projeto', description = '', isDefault = false, ownerEmail = null } = {}) {
   const projectsRef = collection(db, 'projects');
   const newProjectRef = doc(projectsRef);
+  const email =
+    String(ownerEmail || getAuth().currentUser?.email || '')
+      .trim()
+      .toLowerCase() || null;
   await setDoc(newProjectRef, {
     ownerId: uid,
+    ownerEmail: email,
+    authAccess: { mode: 'owner_only', invitedEmails: [] },
     name,
     description: description || 'Projeto criado com GoCreate',
     status: 'draft',
@@ -159,7 +178,7 @@ export async function renameProject(projectId, name) {
 
 export async function updateProjectSettings(
   projectId,
-  { name, description, customDomain } = {}
+  { name, description, customDomain, authAccess, ownerEmail } = {}
 ) {
   if (!projectId) throw new Error('Projeto inválido.');
   const patch = { updatedAt: serverTimestamp() };
@@ -174,7 +193,41 @@ export async function updateProjectSettings(
   if (customDomain != null) {
     patch.customDomain = String(customDomain).trim().toLowerCase();
   }
+  if (ownerEmail != null) {
+    patch.ownerEmail = String(ownerEmail).trim().toLowerCase() || null;
+  }
+  if (authAccess != null) {
+    const mode = authAccess.mode === 'invited' ? 'invited' : 'owner_only';
+    const invitedEmails = Array.isArray(authAccess.invitedEmails)
+      ? [
+          ...new Set(
+            authAccess.invitedEmails
+              .map((e) => String(e || '').trim().toLowerCase())
+              .filter((e) => e.includes('@'))
+          ),
+        ].slice(0, 50)
+      : [];
+    patch.authAccess = { mode, invitedEmails };
+  }
   await updateDoc(doc(db, 'projects', projectId), patch);
+
+  // Keep published snapshots in sync so invite list applies without redeploy
+  if (authAccess != null || ownerEmail != null) {
+    const syncPatch = { updatedAt: serverTimestamp() };
+    if (patch.authAccess) syncPatch.authAccess = patch.authAccess;
+    if ('ownerEmail' in patch) syncPatch.ownerEmail = patch.ownerEmail;
+    for (const pubId of [projectId, `${projectId}_preview`]) {
+      try {
+        const pubRef = doc(db, 'publicProjects', pubId);
+        const pubSnap = await getDoc(pubRef);
+        if (pubSnap.exists()) {
+          await updateDoc(pubRef, syncPatch);
+        }
+      } catch (err) {
+        console.warn('[projects] sync authAccess to public:', err);
+      }
+    }
+  }
 }
 
 async function clientCascadeDelete(projectId) {
@@ -387,11 +440,22 @@ export async function publishProject(
 
   let resolvedSlug = slug;
   let backendEnabled = false;
+  let ownerEmail = null;
+  let authAccess = { mode: 'owner_only', invitedEmails: [] };
   try {
     const snap = await getDoc(doc(db, 'projects', projectId));
     const pdata = snap.data() || {};
     if (!resolvedSlug) resolvedSlug = pdata.slug || null;
     backendEnabled = Boolean(pdata.backendEnabled);
+    ownerEmail = pdata.ownerEmail || null;
+    if (pdata.authAccess?.mode === 'invited') {
+      authAccess = {
+        mode: 'invited',
+        invitedEmails: Array.isArray(pdata.authAccess.invitedEmails)
+          ? pdata.authAccess.invitedEmails
+          : [],
+      };
+    }
   } catch {
     if (!resolvedSlug) resolvedSlug = null;
   }
@@ -406,6 +470,8 @@ export async function publishProject(
   const payload = {
     projectId,
     ownerId,
+    ownerEmail,
+    authAccess,
     name: name || 'Projeto',
     env: 'preview',
     files,
