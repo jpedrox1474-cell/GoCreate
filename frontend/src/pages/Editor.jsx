@@ -144,7 +144,7 @@ export default function Editor() {
   const [projectMeta, setProjectMeta] = useState(null);
   const [historyProjects, setHistoryProjects] = useState([]);
   const [creditsExhausted, setCreditsExhausted] = useState(false);
-  const [attachment, setAttachment] = useState(null); // { url, name, resourceType }
+  const [attachment, setAttachment] = useState(null); // { url, name, resourceType, mimeType }
   const [uploading, setUploading] = useState(false);
   const [chatMicListening, setChatMicListening] = useState(false);
   const [historySelectMode, setHistorySelectMode] = useState(false);
@@ -528,6 +528,8 @@ export default function Editor() {
           projectId: firestoreId,
           messages: historyForApi,
           attachmentUrl: currentAttachment?.url || null,
+          attachmentResourceType: currentAttachment?.resourceType || null,
+          attachmentMimeType: currentAttachment?.mimeType || null,
           idToken,
           signal: controller.signal,
           onSuggestedIntegrations: (ids) => {
@@ -742,11 +744,27 @@ export default function Editor() {
         url: result.url,
         name: result.originalName || file.name,
         resourceType: result.resourceType || 'raw',
+        mimeType: result.mimeType || file.type || null,
       });
-      setToast({ message: 'Anexo pronto para enviar.', type: 'success' });
+      setToast({
+        message:
+          result.resourceType === 'video'
+            ? 'Clip pronto — a IA vai analisar o vídeo.'
+            : result.resourceType === 'image'
+              ? 'Imagem pronta — a IA vai analisar o conteúdo.'
+              : 'Anexo pronto para enviar.',
+        type: 'success',
+      });
     } catch (err) {
       console.error('[Editor] upload:', err);
-      setToast({ message: err?.message || 'Falha no upload.', type: 'error' });
+      const raw = String(err?.message || '');
+      let message = raw || 'Falha no upload.';
+      if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) {
+        message = 'Falha de rede no upload. Verifica a ligação e tenta novamente.';
+      } else if (/Unexpected end of form|MULTIPART/i.test(raw)) {
+        message = 'Upload incompleto. Recarrega a página e tenta anexar de novo.';
+      }
+      setToast({ message, type: 'error' });
     } finally {
       setUploading(false);
     }
@@ -1298,10 +1316,18 @@ export default function Editor() {
                       rel="noreferrer"
                       className="block mb-2 rounded-lg overflow-hidden border border-white/20 bg-black/20"
                     >
-                      {/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(msg.attachmentUrl) ? (
+                      {/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(msg.attachmentUrl) ||
+                      /\/image\/upload\//i.test(msg.attachmentUrl) ? (
                         <img
                           src={msg.attachmentUrl}
                           alt="Anexo"
+                          className="max-h-36 w-full object-cover"
+                        />
+                      ) : /\.(mp4|webm|mov)(\?|$)/i.test(msg.attachmentUrl) ||
+                        /\/video\/upload\//i.test(msg.attachmentUrl) ? (
+                        <video
+                          src={msg.attachmentUrl}
+                          controls
                           className="max-h-36 w-full object-cover"
                         />
                       ) : (
@@ -1435,6 +1461,13 @@ export default function Editor() {
                       <img
                         src={attachment.url}
                         alt=""
+                        className="w-6 h-6 rounded object-cover shrink-0"
+                      />
+                    ) : attachment?.resourceType === 'video' ? (
+                      <video
+                        src={attachment.url}
+                        muted
+                        playsInline
                         className="w-6 h-6 rounded object-cover shrink-0"
                       />
                     ) : (

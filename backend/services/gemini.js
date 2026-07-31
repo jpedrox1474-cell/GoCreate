@@ -1,9 +1,11 @@
 /**
  * Cliente Gemini (REST) — padrão Promifer / BarberPro.
  * Chave só no backend. Fallback entre modelos free-tier.
+ * Anexos Cloudinary: multimodal (inlineData / Files API) + URL no texto.
  */
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_FILES_BASE = 'https://generativelanguage.googleapis.com';
 
 /** Prefer modelos free-tier (Promifer: gemini-flash-latest). 1.5 costuma 404 na v1beta. */
 const DEFAULT_MODELS = [
@@ -14,6 +16,9 @@ const DEFAULT_MODELS = [
   'gemini-2.5-flash-lite',
   'gemini-2.5-flash',
 ];
+
+/** Inline base64 até este tamanho; vídeos maiores vão para Files API. */
+const INLINE_MAX_BYTES = 12 * 1024 * 1024;
 
 function normalizeModelId(raw) {
   return String(raw || '')
@@ -60,11 +65,192 @@ function isRetryable(status, errMsg) {
   );
 }
 
+function guessMimeFromUrl(url = '') {
+  const path = String(url).split('?')[0].toLowerCase();
+  if (/\.(png)$/.test(path)) return 'image/png';
+  if (/\.(jpe?g)$/.test(path)) return 'image/jpeg';
+  if (/\.(gif)$/.test(path)) return 'image/gif';
+  if (/\.(webp)$/.test(path)) return 'image/webp';
+  if (/\.(svg)$/.test(path)) return 'image/svg+xml';
+  if (/\.(mp4)$/.test(path)) return 'video/mp4';
+  if (/\.(webm)$/.test(path)) return 'video/webm';
+  if (/\.(mov)$/.test(path)) return 'video/quicktime';
+  if (/\.(pdf)$/.test(path)) return 'application/pdf';
+  // Cloudinary: /image/upload/… /video/upload/…
+  if (/\/image\/upload\//.test(path)) return 'image/jpeg';
+  if (/\/video\/upload\//.test(path)) return 'video/mp4';
+  return '';
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Upload resumable para Gemini Files API (vídeos / ficheiros maiores).
+ */
+async function uploadToGeminiFiles({ buffer, mimeType, apiKey, displayName = 'gocreate-attachment' }) {
+  const startRes = await fetch(
+    `${GEMINI_FILES_BASE}/upload/v1beta/files?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(buffer.length),
+        'X-Goog-Upload-Header-Content-Type': mimeType,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file: { display_name: displayName } }),
+    }
+  );
+
+  if (!startRes.ok) {
+    const errBody = await startRes.text().catch(() => '');
+    throw new Error(`Gemini Files start falhou: HTTP ${startRes.status} ${errBody}`);
+  }
+
+  const uploadUrl = startRes.headers.get('x-goog-upload-url');
+  if (!uploadUrl) {
+    throw new Error('Gemini Files: upload URL em falta.');
+  }
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length': String(buffer.length),
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+      'Content-Type': mimeType,
+    },
+    body: buffer,
+  });
+
+  const uploaded = await uploadRes.json().catch(() => ({}));
+  if (!uploadRes.ok) {
+    throw new Error(
+      uploaded?.error?.message || `Gemini Files upload falhou: HTTP ${uploadRes.status}`
+    );
+  }
+
+  let file = uploaded?.file || uploaded;
+  const name = file?.name;
+  if (!name) {
+    throw new Error('Gemini Files: resposta sem file.name.');
+  }
+
+  // Espera ACTIVE (vídeos demoram a processar)
+  for (let i = 0; i < 60; i++) {
+    const state = String(file?.state || '').toUpperCase();
+    if (state === 'ACTIVE') break;
+    if (state === 'FAILED') {
+      throw new Error('Gemini Files: processamento do vídeo falhou.');
+    }
+    await sleep(1000);
+    const poll = await fetch(
+      `${GEMINI_FILES_BASE}/v1beta/${name}?key=${encodeURIComponent(apiKey)}`
+    );
+    const polled = await poll.json().catch(() => ({}));
+    file = polled?.file || polled;
+  }
+
+  if (String(file?.state || '').toUpperCase() !== 'ACTIVE') {
+    throw new Error('Gemini Files: timeout a processar o anexo.');
+  }
+
+  return {
+    uri: file.uri,
+    mimeType: file.mimeType || mimeType,
+  };
+}
+
+/**
+ * Descarrega o anexo Cloudinary e monta parts multimodais para o Gemini.
+ * Freemium: qualquer user autenticado com créditos pode anexar/ler mídia.
+ */
+export async function buildAttachmentParts({
+  attachmentUrl,
+  attachmentResourceType,
+  attachmentMimeType,
+  apiKey,
+}) {
+  if (!attachmentUrl) return [];
+
+  try {
+    const res = await fetch(attachmentUrl, { redirect: 'follow' });
+    if (!res.ok) {
+      console.warn(`[gemini] fetch anexo HTTP ${res.status}: ${attachmentUrl}`);
+      return [];
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length) return [];
+
+    let mime =
+      String(attachmentMimeType || '').split(';')[0].trim() ||
+      String(res.headers.get('content-type') || '')
+        .split(';')[0]
+        .trim() ||
+      guessMimeFromUrl(attachmentUrl);
+
+    const rt = String(attachmentResourceType || '').toLowerCase();
+    if (!mime) {
+      if (rt === 'image') mime = 'image/jpeg';
+      else if (rt === 'video') mime = 'video/mp4';
+      else mime = 'application/octet-stream';
+    }
+
+    const isVideo = mime.startsWith('video/') || rt === 'video';
+    const isImage = mime.startsWith('image/') || rt === 'image';
+
+    // Vídeos grandes → Files API; imagens e clips pequenos → inlineData
+    if (isVideo && buf.length > INLINE_MAX_BYTES) {
+      const file = await uploadToGeminiFiles({
+        buffer: buf,
+        mimeType: mime,
+        apiKey,
+        displayName: 'gocreate-clip',
+      });
+      return [{ fileData: { mimeType: file.mimeType, fileUri: file.uri } }];
+    }
+
+    if (isImage || isVideo || mime === 'application/pdf' || buf.length <= INLINE_MAX_BYTES) {
+      return [
+        {
+          inlineData: {
+            mimeType: mime,
+            data: buf.toString('base64'),
+          },
+        },
+      ];
+    }
+
+    // Docs grandes → Files API
+    const file = await uploadToGeminiFiles({
+      buffer: buf,
+      mimeType: mime,
+      apiKey,
+      displayName: 'gocreate-doc',
+    });
+    return [{ fileData: { mimeType: file.mimeType, fileUri: file.uri } }];
+  } catch (err) {
+    console.warn('[gemini] buildAttachmentParts:', err?.message || err);
+    // Continua só com a URL no texto — geração não falha por causa do anexo
+    return [];
+  }
+}
+
 /**
  * Monta o body generateContent / streamGenerateContent no formato Gemini.
  * messages: [{ role: 'user'|'ai'|'assistant'|'model', text }]
  */
-export function buildGeminiBody({ systemPrompt, messages, attachmentUrl, maxOutputTokens = 65536 }) {
+export function buildGeminiBody({
+  systemPrompt,
+  messages,
+  attachmentUrl,
+  attachmentParts = [],
+  maxOutputTokens = 65536,
+}) {
   const contents = [];
   const list = Array.isArray(messages) ? messages : [];
 
@@ -74,11 +260,18 @@ export function buildGeminiBody({ systemPrompt, messages, attachmentUrl, maxOutp
     let text = String(m?.text || '').trim();
     if (!text) continue;
     if (isLast && attachmentUrl) {
-      text = `${text}\n\n[Arquivo anexado pelo usuário, disponível nesta URL pública: ${attachmentUrl}]`;
+      const hasVision = Array.isArray(attachmentParts) && attachmentParts.length > 0;
+      text = hasVision
+        ? `${text}\n\n[Anexo do utilizador — analisa o conteúdo visual/vídeo nas parts multimodais. URL pública para usar no código: ${attachmentUrl}]`
+        : `${text}\n\n[Arquivo anexado pelo usuário, disponível nesta URL pública: ${attachmentUrl}]`;
     }
     const role =
       m.role === 'ai' || m.role === 'assistant' || m.role === 'model' ? 'model' : 'user';
-    contents.push({ role, parts: [{ text }] });
+    const parts = [{ text }];
+    if (isLast && Array.isArray(attachmentParts) && attachmentParts.length) {
+      parts.push(...attachmentParts);
+    }
+    contents.push({ role, parts });
   }
 
   // Gemini exige que o histórico comece com user
@@ -98,6 +291,28 @@ export function buildGeminiBody({ systemPrompt, messages, attachmentUrl, maxOutp
   };
 }
 
+async function prepareBody({
+  systemPrompt,
+  messages,
+  attachmentUrl,
+  attachmentResourceType,
+  attachmentMimeType,
+  apiKey,
+}) {
+  const attachmentParts = await buildAttachmentParts({
+    attachmentUrl,
+    attachmentResourceType,
+    attachmentMimeType,
+    apiKey,
+  });
+  return buildGeminiBody({
+    systemPrompt,
+    messages,
+    attachmentUrl,
+    attachmentParts,
+  });
+}
+
 /**
  * Streaming SSE nativo do Gemini (alt=sse). Callback onChunk(textDelta).
  * Tenta cada modelo candidato até um funcionar.
@@ -106,6 +321,8 @@ export async function streamGeminiChat({
   systemPrompt,
   messages,
   attachmentUrl,
+  attachmentResourceType,
+  attachmentMimeType,
   onChunk,
   timeoutMs = 120000,
 }) {
@@ -118,7 +335,14 @@ export async function streamGeminiChat({
     throw err;
   }
 
-  const body = buildGeminiBody({ systemPrompt, messages, attachmentUrl });
+  const body = await prepareBody({
+    systemPrompt,
+    messages,
+    attachmentUrl,
+    attachmentResourceType,
+    attachmentMimeType,
+    apiKey,
+  });
   if (!body.contents.length) {
     const err = new Error('Nenhuma mensagem válida para enviar ao Gemini.');
     err.status = 400;
@@ -168,7 +392,6 @@ export async function streamGeminiChat({
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // Eventos SSE: linhas "data: {...}"
         const parts = buffer.split('\n');
         buffer = parts.pop() || '';
 
@@ -180,8 +403,6 @@ export async function streamGeminiChat({
           try {
             const json = JSON.parse(payload);
             const delta = extractText(json);
-            // extractText junta parts; no stream cada evento traz o delta incremental
-            // Na API streamGenerateContent, cada chunk traz parts com o pedaço novo.
             const chunkParts = json?.candidates?.[0]?.content?.parts;
             let piece = '';
             if (Array.isArray(chunkParts)) {
@@ -218,8 +439,14 @@ export async function streamGeminiChat({
     }
   }
 
-  // Fallback não-streaming (mesmo padrão Promifer)
-  return generateGeminiChat({ systemPrompt, messages, attachmentUrl, onChunk });
+  return generateGeminiChat({
+    systemPrompt,
+    messages,
+    attachmentUrl,
+    attachmentResourceType,
+    attachmentMimeType,
+    onChunk,
+  });
 }
 
 /**
@@ -229,6 +456,8 @@ export async function generateGeminiChat({
   systemPrompt,
   messages,
   attachmentUrl,
+  attachmentResourceType,
+  attachmentMimeType,
   onChunk,
   timeoutMs = 90000,
 }) {
@@ -241,7 +470,14 @@ export async function generateGeminiChat({
     throw err;
   }
 
-  const body = buildGeminiBody({ systemPrompt, messages, attachmentUrl });
+  const body = await prepareBody({
+    systemPrompt,
+    messages,
+    attachmentUrl,
+    attachmentResourceType,
+    attachmentMimeType,
+    apiKey,
+  });
   if (!body.contents.length) {
     const err = new Error('Nenhuma mensagem válida para enviar ao Gemini.');
     err.status = 400;
@@ -300,6 +536,7 @@ export default {
   modelCandidates,
   getGeminiApiKey,
   buildGeminiBody,
+  buildAttachmentParts,
   streamGeminiChat,
   generateGeminiChat,
 };

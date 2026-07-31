@@ -74,7 +74,7 @@ export function todayKeyUTC3(date = new Date()) {
 }
 
 export const PREMIUM_REQUIRED_MESSAGE =
-  'Recurso Premium. GitHub e canais sociais (WhatsApp, Instagram, Facebook, YouTube, TikTok) estão disponíveis nos planos pagos. Publicar e ativar Backend Functions estão disponíveis no Free (com créditos / badge GoCreate).';
+  'Recurso Premium. GitHub e canais sociais (WhatsApp, Instagram, Facebook, YouTube, TikTok) estão nos planos pagos. Upload/leitura de mídia, publicar e Backend Functions estão no Free (créditos / badge GoCreate).';
 
 export const BACKEND_REQUIRED_MESSAGE =
   'Funções de Backend não ativadas. Ative em Configurações do projeto para guardar dados na base de dados.';

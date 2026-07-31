@@ -27,7 +27,8 @@ const router = Router();
 
 // requireAuth → creditCheck (403 se credits <= 0) → Gemini → debit 1 crédito
 router.post('/', requireAuth, creditCheck, async (req, res) => {
-  const { projectId, messages, attachmentUrl } = req.body;
+  const { projectId, messages, attachmentUrl, attachmentResourceType, attachmentMimeType } =
+    req.body;
 
   if (!projectId || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'projectId e messages (array não vazio) são obrigatórios.' });
@@ -109,6 +110,10 @@ ${
       systemPrompt,
       messages,
       attachmentUrl,
+      attachmentResourceType: attachmentResourceType || null,
+      attachmentMimeType: attachmentMimeType || null,
+      // Vídeos: download Cloudinary + Files API pode demorar
+      timeoutMs: attachmentUrl ? 170000 : 120000,
       onChunk: (chunk) => {
         fullResponse += chunk;
         res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);

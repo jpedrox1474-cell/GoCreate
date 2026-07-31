@@ -25,6 +25,7 @@
     {
       "source": "functions",
       "codebase": "gocreate",
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run sync"],
       "ignore": [
         "node_modules",
         ".git",

@@ -36,6 +36,8 @@ export class InsufficientCreditsError extends Error {
  *   projectId: string,
  *   messages: Array<{ role: string, text: string }>,
  *   attachmentUrl?: string|null,
+ *   attachmentResourceType?: string|null,
+ *   attachmentMimeType?: string|null,
  *   idToken: string,
  *   onChunk?: (text: string) => void,
  *   onHeartbeat?: (message: string) => void,
@@ -48,6 +50,8 @@ export async function streamChat({
   projectId,
   messages,
   attachmentUrl = null,
+  attachmentResourceType = null,
+  attachmentMimeType = null,
   idToken,
   onChunk,
   onHeartbeat,
@@ -68,7 +72,13 @@ export async function streamChat({
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ projectId, messages, attachmentUrl }),
+    body: JSON.stringify({
+      projectId,
+      messages,
+      attachmentUrl,
+      attachmentResourceType,
+      attachmentMimeType,
+    }),
     signal,
   });
 
