@@ -4,9 +4,9 @@
  * com foco BR (Mercado Pago, Pix, ViaCEP, WhatsApp).
  *
  * connectType:
- *   - platform  → já ligado via GoCreate (Firebase Auth, Cloudinary upload)
- *   - oauth     → fluxo OAuth existente (GitHub)
- *   - api_key   → modal com Access Token / API Key (guardado server-side)
+ *   - platform  → já ligado via GoCreate (Firebase Auth, Cloudinary upload, Mercado Pago)
+ *   - oauth     → fluxo OAuth (GitHub, Stripe Connect, PayPal, YouTube, TikTok)
+ *   - api_key   → modal com Access Token / API Key (guardado server-side) — só BYO opcionais
  *   - coming_soon → cartão + CTA desabilitado (só canais sociais filtrados do grid)
  */
 
@@ -57,58 +57,21 @@ export const INTEGRATIONS_CATALOG = [
     id: 'stripe',
     name: 'Stripe',
     category: 'payments',
-    description: 'Checkout Session e PaymentIntents para cartão internacional.',
+    description:
+      'Checkout e PaymentIntents — Conectar abre Stripe Connect OAuth (sem colar Secret Key).',
     icon: 'CreditCard',
-    connectType: 'api_key',
-    fields: [
-      {
-        key: 'secretKey',
-        label: 'Secret Key',
-        placeholder: 'sk_live_… ou sk_test_…',
-        secret: true,
-        required: true,
-      },
-      {
-        key: 'publishableKey',
-        label: 'Publishable Key (opcional)',
-        placeholder: 'pk_live_…',
-        secret: false,
-        required: false,
-      },
-    ],
-    docsUrl: 'https://stripe.com/docs',
+    connectType: 'oauth',
+    docsUrl: 'https://stripe.com/docs/connect/oauth',
     competitors: ['Lovable', 'Bolt', 'v0', 'Nova'],
   },
   {
     id: 'paypal',
     name: 'PayPal',
     category: 'payments',
-    description: 'Checkout PayPal — Client ID/Secret BYO; create-order stub no backend.',
+    description: 'Checkout PayPal — Conectar abre login OAuth oficial (sem colar Client Secret).',
     icon: 'CircleDollarSign',
-    connectType: 'api_key',
-    fields: [
-      {
-        key: 'clientId',
-        label: 'Client ID',
-        placeholder: 'AXxxx…',
-        secret: false,
-        required: true,
-      },
-      {
-        key: 'clientSecret',
-        label: 'Client Secret',
-        placeholder: 'ELxxx…',
-        secret: true,
-        required: true,
-      },
-      {
-        key: 'mode',
-        label: 'Mode (live ou sandbox)',
-        placeholder: 'sandbox',
-        required: false,
-      },
-    ],
-    docsUrl: 'https://developer.paypal.com/dashboard/',
+    connectType: 'oauth',
+    docsUrl: 'https://developer.paypal.com/docs/log-in-with-paypal/',
     competitors: ['Bolt', 'v0'],
   },
   {

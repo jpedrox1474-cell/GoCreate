@@ -39,9 +39,10 @@ export class InsufficientCreditsError extends Error {
  *   idToken: string,
  *   onChunk?: (text: string) => void,
  *   onHeartbeat?: (message: string) => void,
+ *   onSuggestedIntegrations?: (ids: string[]) => void,
  *   signal?: AbortSignal,
  * }} opts
- * @returns {Promise<{ text: string, model: string|null, incomplete?: boolean, timeoutMessage?: string }>}
+ * @returns {Promise<{ text: string, model: string|null, incomplete?: boolean, timeoutMessage?: string, suggestedIntegrations?: string[] }>}
  */
 export async function streamChat({
   projectId,
@@ -50,6 +51,7 @@ export async function streamChat({
   idToken,
   onChunk,
   onHeartbeat,
+  onSuggestedIntegrations,
   signal,
 }) {
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -95,6 +97,7 @@ export async function streamChat({
   let buffer = '';
   let full = '';
   let model = null;
+  let suggestedIntegrations = [];
   let lastActivityAt = Date.now();
   const startedAt = Date.now();
   let heartbeatSent = false;
@@ -177,6 +180,12 @@ export async function streamChat({
           lastActivityAt = Date.now();
           heartbeatSent = false;
           if (typeof onChunk === 'function') onChunk(evt.text);
+        } else if (evt.type === 'suggestedIntegrations' && Array.isArray(evt.ids)) {
+          suggestedIntegrations = evt.ids;
+          lastActivityAt = Date.now();
+          if (typeof onSuggestedIntegrations === 'function') {
+            onSuggestedIntegrations(evt.ids);
+          }
         } else if (evt.type === 'done') {
           model = evt.model || null;
         } else if (evt.type === 'error') {
@@ -196,6 +205,7 @@ export async function streamChat({
         model,
         incomplete: true,
         timeoutMessage: timeoutReason,
+        suggestedIntegrations,
       };
     }
     throw new Error(
@@ -204,7 +214,7 @@ export async function streamChat({
     );
   }
 
-  return { text: full, model, incomplete: false };
+  return { text: full, model, incomplete: false, suggestedIntegrations };
 }
 
 export default streamChat;

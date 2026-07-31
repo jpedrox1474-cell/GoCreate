@@ -64,6 +64,7 @@ import {
   oauthConfigHints,
   oauthConfigured,
   popupResultHtml,
+  PREMIUM_OAUTH_PLATFORMS,
 } from '../services/oauth/providers.js';
 import { consumeOAuthState } from '../services/oauth/state.js';
 
@@ -83,6 +84,20 @@ router.get('/status', requireAuth, async (req, res) => {
 router.post('/connect/:providerId', requireAuth, async (req, res) => {
   try {
     const providerId = String(req.params.providerId || '').trim();
+    if (providerId === 'stripe' || providerId === 'paypal') {
+      return res.status(400).json({
+        error: `Usa OAuth: GET /api/integrations/${providerId}/oauth/start (botão Conectar).`,
+        code: 'USE_OAUTH_CONNECT',
+        message: `Não cole Client Secret / API keys. Clique em Conectar para abrir o login oficial.`,
+      });
+    }
+    if (providerId === 'mercadopago' || providerId === 'pix') {
+      return res.status(400).json({
+        error: 'Mercado Pago usa o token da plataforma GoCreate — sem colar Access Token.',
+        code: 'PLATFORM_PROVIDER',
+        message: 'Mercado Pago já está ligado pela plataforma quando MERCADOPAGO_ACCESS_TOKEN existe.',
+      });
+    }
     if (!CONNECTABLE_PROVIDERS.has(providerId)) {
       return res.status(400).json({
         error: 'Provider não suportado para ligação por API key.',
@@ -127,7 +142,7 @@ router.post('/disconnect/:providerId', requireAuth, async (req, res) => {
         code: 'USE_META_DISCONNECT',
       });
     }
-    if (providerId === 'youtube' || providerId === 'tiktok') {
+    if (providerId === 'youtube' || providerId === 'tiktok' || providerId === 'stripe' || providerId === 'paypal') {
       return res.status(400).json({
         error: `Usa POST /api/integrations/${providerId}/oauth/disconnect.`,
         code: 'USE_OAUTH_DISCONNECT',
@@ -461,14 +476,20 @@ router.get('/meta/config', requireAuth, (_req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// YouTube / TikTok — OAuth popup (premium)
+// YouTube / TikTok / Stripe Connect / PayPal — OAuth popup
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.get('/:platform/oauth/start', requireAuth, requirePremium, async (req, res) => {
+router.get('/:platform/oauth/start', requireAuth, async (req, res, next) => {
   const { platform } = req.params;
   if (!isOAuthPlatform(platform)) {
     return res.status(400).json({ error: 'Plataforma inválida.' });
   }
+  if (PREMIUM_OAUTH_PLATFORMS.has(platform)) {
+    return requirePremium(req, res, next);
+  }
+  return next();
+}, async (req, res) => {
+  const { platform } = req.params;
   try {
     const { authUrl, state, redirectUri } = await buildAuthorizeUrl(platform, req.user.uid);
     return res.json({
@@ -542,6 +563,8 @@ router.get('/:platform/oauth/callback', async (req, res) => {
       savedConn.displayName ||
       fields.tiktokUsername ||
       fields.youtubeChannelTitle ||
+      fields.stripeUserId ||
+      fields.email ||
       null;
 
     return res.send(popupResultHtml({ ok: true, platform, displayName }));
@@ -557,11 +580,17 @@ router.get('/:platform/oauth/callback', async (req, res) => {
   }
 });
 
-router.post('/:platform/oauth/disconnect', requireAuth, requirePremium, async (req, res) => {
+router.post('/:platform/oauth/disconnect', requireAuth, async (req, res, next) => {
   const { platform } = req.params;
   if (!isOAuthPlatform(platform)) {
     return res.status(400).json({ error: 'Plataforma inválida.' });
   }
+  if (PREMIUM_OAUTH_PLATFORMS.has(platform)) {
+    return requirePremium(req, res, next);
+  }
+  return next();
+}, async (req, res) => {
+  const { platform } = req.params;
   try {
     const result = await clearSocialOAuthConnection(req.user.uid, platform);
     res.json(result);

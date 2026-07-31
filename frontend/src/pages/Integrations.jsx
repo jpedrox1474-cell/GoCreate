@@ -50,10 +50,17 @@ import {
   testIntegration,
 } from '../lib/integrationsApi';
 import { connectGitHubPopup, disconnectGitHub } from '../lib/githubApi';
+import {
+  startPlatformOAuth,
+  disconnectPlatformOAuth,
+  openOAuthPopup,
+  waitForOAuthMessage,
+} from '../lib/socialChannelsApi';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import { PREMIUM_REQUIRED_MESSAGE } from '../lib/plans';
 
+const OAUTH_PROVIDERS = new Set(['github', 'stripe', 'paypal']);
 const ICONS = {
   Wallet,
   CreditCard,
@@ -182,7 +189,10 @@ export default function Integrations() {
 
     if (item.connectType === 'platform') {
       setToast({
-        message: `${item.name} já faz parte da plataforma GoCreate.`,
+        message:
+          item.id === 'mercadopago' || item.id === 'pix'
+            ? `${item.name} usa o token da plataforma GoCreate — já ligado quando o servidor tem MERCADOPAGO_ACCESS_TOKEN.`
+            : `${item.name} já faz parte da plataforma GoCreate.`,
         type: 'info',
       });
       return;
@@ -205,6 +215,33 @@ export default function Integrations() {
           setToast({ message: err.message || PREMIUM_REQUIRED_MESSAGE, type: 'error' });
         } else {
           setToast({ message: err.message || 'Falha ao ligar GitHub.', type: 'error' });
+        }
+      } finally {
+        setBusyId(null);
+      }
+      return;
+    }
+
+    if (item.connectType === 'oauth' && (item.id === 'stripe' || item.id === 'paypal')) {
+      setBusyId(item.id);
+      try {
+        const token = await user.getIdToken();
+        const { authUrl } = await startPlatformOAuth({ idToken: token, platform: item.id });
+        const popup = openOAuthPopup(authUrl);
+        await waitForOAuthMessage(item.id, popup);
+        setToast({ message: `${item.name} ligado via OAuth.`, type: 'success' });
+        await refresh();
+      } catch (err) {
+        if (err?.code === 'OAUTH_NOT_CONFIGURED' || err?.status === 501) {
+          setToast({
+            message:
+              err?.details?.hint ||
+              err.message ||
+              `${item.name} OAuth ainda não configurado no servidor.`,
+            type: 'error',
+          });
+        } else {
+          setToast({ message: err.message || `Falha ao ligar ${item.name}.`, type: 'error' });
         }
       } finally {
         setBusyId(null);
@@ -242,6 +279,8 @@ export default function Integrations() {
       const token = await user.getIdToken();
       if (modalIntegration.id === 'github') {
         await disconnectGitHub({ idToken: token });
+      } else if (OAUTH_PROVIDERS.has(modalIntegration.id) && modalIntegration.id !== 'github') {
+        await disconnectPlatformOAuth({ idToken: token, platform: modalIntegration.id });
       } else {
         await disconnectIntegration({ idToken: token, providerId: modalIntegration.id });
       }
@@ -272,8 +311,9 @@ export default function Integrations() {
             Integrações
           </h1>
           <p className="text-sm text-zinc-500 max-w-xl">
-            Canais sociais e Pix usam credenciais da plataforma GoCreate. WhatsApp gera QR no VPS;
-            Instagram/Facebook abrem login Meta. Supabase e similares continuam opcionais (BYO).
+            Canais sociais e Pix usam credenciais da plataforma GoCreate. Stripe/PayPal abrem
+            OAuth oficial (sem colar Secret). WhatsApp gera QR; Instagram/Facebook abrem login
+            Meta. Supabase e similares continuam opcionais (BYO).
           </p>
         </div>
         <div className="text-right shrink-0">

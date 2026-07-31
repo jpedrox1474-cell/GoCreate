@@ -34,6 +34,7 @@ import ExportModal from '../components/editor/ExportModal';
 import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
 import IntegrationsBanner from '../components/editor/IntegrationsBanner';
+import SuggestedIntegrationsBanner from '../components/editor/SuggestedIntegrationsBanner';
 import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, deleteProjects, duplicateProject } from '../lib/projects';
 import { scheduleAutomationCheck, rememberLastProjectId } from '../lib/automations';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
@@ -156,6 +157,7 @@ export default function Editor() {
   const [awaitingHistory, setAwaitingHistory] = useState(false);
   const [generationIncomplete, setGenerationIncomplete] = useState(false);
   const [generatedEntities, setGeneratedEntities] = useState([]);
+  const [suggestedIntegrations, setSuggestedIntegrations] = useState([]);
   const continueAutoTriedRef = useRef(false);
   const lastRawRef = useRef('');
   const sendMessageTextRef = useRef(null);
@@ -528,6 +530,11 @@ export default function Editor() {
           attachmentUrl: currentAttachment?.url || null,
           idToken,
           signal: controller.signal,
+          onSuggestedIntegrations: (ids) => {
+            if (Array.isArray(ids) && ids.length) {
+              setSuggestedIntegrations(ids);
+            }
+          },
           onHeartbeat: (msg) => {
             setStreamHeartbeat(msg);
             setStreamingText((prev) => prev || msg);
@@ -1209,6 +1216,18 @@ export default function Editor() {
           </div>
 
           <IntegrationsBanner projectId={firestoreId} />
+          <SuggestedIntegrationsBanner
+            ids={suggestedIntegrations}
+            projectId={firestoreId}
+            onDismiss={() => setSuggestedIntegrations([])}
+            onConnected={(id) => {
+              setSuggestedIntegrations((prev) => prev.filter((x) => x !== id));
+              setToast({
+                message: `${id} ligado — a IA usará a integração no próximo prompt.`,
+                type: 'success',
+              });
+            }}
+          />
 
           {(resumeNotice || agentRunning) && (
             <div className="px-4 pt-3 space-y-2 shrink-0">

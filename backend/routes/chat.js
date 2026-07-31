@@ -16,8 +16,12 @@ import { creditCheck, debitCredit } from '../middleware/credits.js';
 import { db } from '../config/firebaseAdmin.js';
 import { buildDynamicSystemPrompt } from '../prompts/buildDynamicSystemPrompt.js';
 import { streamGeminiChat, getGeminiApiKey } from '../services/gemini.js';
-import { loadUserIntegrationsForPrompt } from '../services/integrations.js';
+import { loadUserIntegrationsForPrompt, getIntegrationsStatus } from '../services/integrations.js';
 import { parseEntitiesFromAiText, upsertProjectEntities } from '../services/entities.js';
+import {
+  detectSuggestedIntegrations,
+  filterUnconnectedSuggestions,
+} from '../services/suggestIntegrations.js';
 
 const router = Router();
 
@@ -45,6 +49,26 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
   let fullResponse = '';
 
   try {
+    const lastUserText = String(messages[messages.length - 1]?.text || '');
+    let suggestedIntegrations = detectSuggestedIntegrations(lastUserText);
+    try {
+      const status = await getIntegrationsStatus(req.user.uid);
+      suggestedIntegrations = filterUnconnectedSuggestions(
+        suggestedIntegrations,
+        status?.providers || {}
+      );
+    } catch {
+      /* keep raw suggestions */
+    }
+    if (suggestedIntegrations.length) {
+      res.write(
+        `data: ${JSON.stringify({
+          type: 'suggestedIntegrations',
+          ids: suggestedIntegrations,
+        })}\n\n`
+      );
+    }
+
     let systemPrompt = buildDynamicSystemPrompt({});
     try {
       // Só integrações do uid autenticado — nunca de outro user.

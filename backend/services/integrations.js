@@ -17,12 +17,16 @@ import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js'
 import { oauthConfigured } from './oauth/providers.js';
 import { isMetaConfigured } from './meta.js';
 
+function isPayPalPlatformConfigured() {
+  return Boolean(
+    String(process.env.PAYPAL_CLIENT_ID || '').trim() &&
+      String(process.env.PAYPAL_CLIENT_SECRET || '').trim()
+  );
+}
 /** Providers que aceitam connect via API key no backend (BYO — Free ok).
- * Mercado Pago NÃO está aqui: usa MERCADOPAGO_ACCESS_TOKEN da plataforma.
+ * Mercado Pago / Stripe / PayPal NÃO estão aqui: OAuth ou token da plataforma.
  */
 export const CONNECTABLE_PROVIDERS = new Set([
-  'stripe',
-  'paypal',
   'pagseguro',
   'clerk',
   'auth0',
@@ -46,8 +50,6 @@ export const CONNECTABLE_PROVIDERS = new Set([
 
 /** Campos obrigatórios por provider (além da limpeza genérica). */
 const REQUIRED_FIELDS = {
-  stripe: ['secretKey'],
-  paypal: ['clientId', 'clientSecret'],
   pagseguro: ['token'],
   clerk: ['publishableKey', 'secretKey'],
   auth0: ['domain', 'clientId', 'clientSecret'],
@@ -344,6 +346,55 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
     };
   }
 
+  // Stripe — OAuth Connect (conta ligada) ou billing da plataforma
+  const stripeUser = integrationsMeta.stripe;
+  const stripeUserConnected = Boolean(stripeUser?.connected);
+  const stripePlatformBilling = isStripeConfigured();
+  const stripeOAuthReady = oauthConfigured('stripe');
+  providers.stripe = {
+    id: 'stripe',
+    status: stripeUserConnected ? 'connected' : 'available',
+    source: stripeUserConnected ? 'oauth' : 'none',
+    meta: stripeUserConnected
+      ? {
+          ...stripTimestamps(stripeUser),
+          label: stripeUser?.stripeUserId
+            ? `Stripe Connect (${stripeUser.stripeUserId})`
+            : stripeUser?.label || 'Stripe Connect',
+        }
+      : {
+          oauthConfigured: stripeOAuthReady,
+          platformBilling: stripePlatformBilling,
+          label: stripeOAuthReady
+            ? 'Conectar com Stripe'
+            : stripePlatformBilling
+              ? 'OAuth não configurado (billing plataforma OK)'
+              : undefined,
+        },
+  };
+
+  // PayPal — OAuth Login (sem colar Client Secret)
+  const paypalUser = integrationsMeta.paypal;
+  const paypalUserConnected = Boolean(paypalUser?.connected);
+  const paypalOAuthReady = oauthConfigured('paypal');
+  providers.paypal = {
+    id: 'paypal',
+    status: paypalUserConnected ? 'connected' : 'available',
+    source: paypalUserConnected ? 'oauth' : 'none',
+    meta: paypalUserConnected
+      ? {
+          ...stripTimestamps(paypalUser),
+          label:
+            paypalUser?.label ||
+            (paypalUser?.email ? `PayPal (${paypalUser.email})` : 'PayPal OAuth'),
+        }
+      : {
+          oauthConfigured: paypalOAuthReady,
+          platformConfigured: isPayPalPlatformConfigured(),
+          label: paypalOAuthReady ? 'Conectar com PayPal' : undefined,
+        },
+  };
+
   providers.github = {
     id: 'github',
     status: github?.connected ? 'connected' : 'available',
@@ -413,6 +464,8 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
       metaApp: isMetaConfigured(),
       youtubeOAuth: oauthConfigured('youtube'),
       tiktokOAuth: oauthConfigured('tiktok'),
+      stripeOAuth: oauthConfigured('stripe'),
+      paypalOAuth: oauthConfigured('paypal'),
     },
   };
 }
@@ -521,10 +574,11 @@ export async function clearMetaSocialConnection(uid) {
 }
 
 /**
- * Persiste tokens OAuth YouTube/TikTok (secrets) + meta pública.
+ * Persiste tokens OAuth YouTube/TikTok/Stripe/PayPal (secrets) + meta pública.
  */
 export async function saveSocialOAuthConnection(uid, platform, fields) {
-  if (platform !== 'youtube' && platform !== 'tiktok') {
+  const allowed = new Set(['youtube', 'tiktok', 'stripe', 'paypal']);
+  if (!allowed.has(platform)) {
     const err = new Error('Plataforma OAuth inválida.');
     err.status = 400;
     throw err;
@@ -560,35 +614,108 @@ export async function saveSocialOAuthConnection(uid, platform, fields) {
     };
   }
 
-  await secretsRef(uid, 'tiktok').set(
-    {
+  if (platform === 'tiktok') {
+    await secretsRef(uid, 'tiktok').set(
+      {
+        providerId: 'tiktok',
+        tiktokAccessToken: fields.tiktokAccessToken || null,
+        tiktokRefreshToken: fields.tiktokRefreshToken || null,
+        tiktokOpenId: fields.tiktokOpenId || null,
+        tiktokTokenExpiresAt: fields.tiktokTokenExpiresAt || null,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    const meta = {
+      connected: true,
+      username: fields.tiktokUsername || null,
+      openId: fields.tiktokOpenId || null,
+      connectedAt: now,
+      updatedAt: now,
+    };
+    await userRef(uid).set({ integrations: { tiktok: meta } }, { merge: true });
+    return {
+      success: true,
       providerId: 'tiktok',
-      tiktokAccessToken: fields.tiktokAccessToken || null,
-      tiktokRefreshToken: fields.tiktokRefreshToken || null,
-      tiktokOpenId: fields.tiktokOpenId || null,
-      tiktokTokenExpiresAt: fields.tiktokTokenExpiresAt || null,
+      displayName: fields.tiktokUsername || null,
+      meta: stripTimestamps(meta),
+    };
+  }
+
+  if (platform === 'stripe') {
+    await secretsRef(uid, 'stripe').set(
+      {
+        providerId: 'stripe',
+        source: 'oauth',
+        secretKey: fields.secretKey || null,
+        publishableKey: fields.publishableKey || null,
+        stripeUserId: fields.stripeUserId || null,
+        refreshToken: fields.refreshToken || null,
+        livemode: Boolean(fields.livemode),
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    const meta = {
+      connected: true,
+      source: 'oauth',
+      stripeUserId: fields.stripeUserId || null,
+      hasPublishableKey: Boolean(fields.publishableKey),
+      mode: fields.livemode ? 'live' : 'test',
+      label: fields.stripeUserId
+        ? `Stripe Connect (${fields.stripeUserId})`
+        : 'Stripe Connect',
+      connectedAt: now,
+      updatedAt: now,
+    };
+    await userRef(uid).set({ integrations: { stripe: meta } }, { merge: true });
+    return {
+      success: true,
+      providerId: 'stripe',
+      displayName: fields.stripeUserId || 'Stripe',
+      meta: stripTimestamps(meta),
+    };
+  }
+
+  // paypal
+  await secretsRef(uid, 'paypal').set(
+    {
+      providerId: 'paypal',
+      source: 'oauth',
+      accessToken: fields.accessToken || null,
+      refreshToken: fields.refreshToken || null,
+      clientId: fields.clientId || null,
+      // create-order usa clientId+clientSecret plataforma se BYO secret ausente
+      clientSecret: String(process.env.PAYPAL_CLIENT_SECRET || '').trim() || null,
+      mode: fields.mode || 'sandbox',
+      email: fields.email || null,
+      payerId: fields.payerId || null,
       updatedAt: now,
     },
     { merge: true }
   );
   const meta = {
     connected: true,
-    username: fields.tiktokUsername || null,
-    openId: fields.tiktokOpenId || null,
+    source: 'oauth',
+    email: fields.email || null,
+    payerId: fields.payerId || null,
+    mode: fields.mode || 'sandbox',
+    label: fields.email ? `PayPal (${fields.email})` : 'PayPal OAuth',
     connectedAt: now,
     updatedAt: now,
   };
-  await userRef(uid).set({ integrations: { tiktok: meta } }, { merge: true });
+  await userRef(uid).set({ integrations: { paypal: meta } }, { merge: true });
   return {
     success: true,
-    providerId: 'tiktok',
-    displayName: fields.tiktokUsername || null,
+    providerId: 'paypal',
+    displayName: fields.email || fields.payerId || 'PayPal',
     meta: stripTimestamps(meta),
   };
 }
 
 export async function clearSocialOAuthConnection(uid, platform) {
-  if (platform !== 'youtube' && platform !== 'tiktok') {
+  const allowed = new Set(['youtube', 'tiktok', 'stripe', 'paypal']);
+  if (!allowed.has(platform)) {
     const err = new Error('Plataforma OAuth inválida.');
     err.status = 400;
     throw err;

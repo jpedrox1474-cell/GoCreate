@@ -1,11 +1,13 @@
 /**
- * OAuth popup platforms — YouTube (Google) + TikTok.
- * Portado do Hub Social (Manuvet TV); postMessage type: gocreate-oauth.
+ * OAuth popup platforms — YouTube, TikTok, Stripe Connect, PayPal.
+ * postMessage type: gocreate-oauth.
  */
 import { saveOAuthState } from './state.js';
 import { createOAuthState } from './pkce.js';
 
-const PLATFORMS = ['youtube', 'tiktok'];
+const PLATFORMS = ['youtube', 'tiktok', 'stripe', 'paypal'];
+/** Social channels that require premium plan. */
+export const PREMIUM_OAUTH_PLATFORMS = new Set(['youtube', 'tiktok']);
 
 function pick(...keys) {
   for (const k of keys) {
@@ -22,14 +24,39 @@ export function getPublicApiUrl() {
 export function getOAuthConfig(platform) {
   if (platform === 'youtube') {
     return {
-      clientId: pick('YOUTUBE_CLIENT_ID', 'GOOGLE_CLIENT_ID'),
-      clientSecret: pick('YOUTUBE_CLIENT_SECRET', 'GOOGLE_CLIENT_SECRET'),
+      clientId: pick('YOUTUBE_CLIENT_ID', 'GOOGLE_CLIENT_ID', 'GOOGLE_BUSINESS_CLIENT_ID'),
+      clientSecret: pick(
+        'YOUTUBE_CLIENT_SECRET',
+        'GOOGLE_CLIENT_SECRET',
+        'GOOGLE_BUSINESS_CLIENT_SECRET'
+      ),
     };
   }
   if (platform === 'tiktok') {
     return {
       clientId: pick('TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_ID'),
       clientSecret: pick('TIKTOK_CLIENT_SECRET'),
+    };
+  }
+  if (platform === 'stripe') {
+    return {
+      clientId: pick(
+        'STRIPE_CONNECT_CLIENT_ID',
+        'TENANT_STRIPE_CONNECT_CLIENT_ID',
+        'STRIPE_CLIENT_ID'
+      ),
+      clientSecret: pick(
+        'STRIPE_SECRET_KEY',
+        'TENANT_STRIPE_CONNECT_SECRET',
+        'STRIPE_CONNECT_CLIENT_SECRET'
+      ),
+    };
+  }
+  if (platform === 'paypal') {
+    return {
+      clientId: pick('PAYPAL_CLIENT_ID', 'PAYPAL_CLIENTID'),
+      clientSecret: pick('PAYPAL_CLIENT_SECRET', 'PAYPAL_SECRET'),
+      mode: pick('PAYPAL_MODE') || 'sandbox',
     };
   }
   return { clientId: '', clientSecret: '' };
@@ -41,6 +68,10 @@ export function isOAuthPlatform(platform) {
 
 export function oauthConfigured(platform) {
   const c = getOAuthConfig(platform);
+  if (platform === 'stripe') {
+    // Connect needs ca_ client id + platform sk_
+    return Boolean(c.clientId?.startsWith('ca_') && c.clientSecret?.startsWith('sk_'));
+  }
   return Boolean(c.clientId && c.clientSecret);
 }
 
@@ -58,6 +89,18 @@ export function oauthConfigHints(platform) {
       console: 'https://developers.tiktok.com/',
       redirect: `${base}/api/integrations/tiktok/oauth/callback`,
       note: 'App Login Kit / Content Posting. Adicione o redirect URI.',
+    },
+    stripe: {
+      vars: ['STRIPE_CONNECT_CLIENT_ID', 'STRIPE_SECRET_KEY'],
+      console: 'https://dashboard.stripe.com/settings/connect',
+      redirect: `${base}/api/integrations/stripe/oauth/callback`,
+      note: 'Stripe Connect → Settings → Integration: Client ID (ca_…) + Secret key da plataforma (sk_…).',
+    },
+    paypal: {
+      vars: ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET'],
+      console: 'https://developer.paypal.com/dashboard/applications',
+      redirect: `${base}/api/integrations/paypal/oauth/callback`,
+      note: 'App REST API → Login with PayPal. Adicione o redirect URI. PAYPAL_MODE=live|sandbox.',
     },
   };
   return hints[platform] || null;
@@ -131,6 +174,30 @@ export async function buildAuthorizeUrl(platform, uid) {
       state,
     });
     authUrl = `https://www.tiktok.com/v2/auth/authorize/?${params}`;
+  } else if (platform === 'stripe') {
+    const { clientId } = getOAuthConfig('stripe');
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      scope: 'read_write',
+      state,
+      redirect_uri: redir,
+    });
+    authUrl = `https://connect.stripe.com/oauth/authorize?${params}`;
+  } else if (platform === 'paypal') {
+    const { clientId, mode } = getOAuthConfig('paypal');
+    const host =
+      String(mode || 'sandbox').toLowerCase() === 'live'
+        ? 'https://www.paypal.com'
+        : 'https://www.sandbox.paypal.com';
+    const params = new URLSearchParams({
+      client_id: clientId,
+      response_type: 'code',
+      scope: 'openid profile email https://uri.paypal.com/services/paypalattributes',
+      redirect_uri: redir,
+      state,
+    });
+    authUrl = `${host}/signin/authorize?${params}`;
   } else {
     throw new Error('Plataforma inválida');
   }
@@ -223,6 +290,81 @@ async function exchangeTiktok(code, redirect, codeVerifier) {
   };
 }
 
+async function exchangeStripe(code, redirect) {
+  const { clientId, clientSecret } = getOAuthConfig('stripe');
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: clientId,
+    client_secret: clientSecret,
+    code: String(code || '').trim(),
+    redirect_uri: redirect,
+  });
+  const tokenRes = await fetch('https://connect.stripe.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const d = await parseJson(tokenRes);
+  if (!tokenRes.ok) {
+    throw new Error(d?.error_description || d?.error || 'Falha no token Stripe Connect.');
+  }
+  return {
+    stripeConnected: true,
+    secretKey: d.access_token || null,
+    publishableKey: d.stripe_publishable_key || null,
+    stripeUserId: d.stripe_user_id || null,
+    refreshToken: d.refresh_token || null,
+    livemode: Boolean(d.livemode),
+  };
+}
+
+async function exchangePaypal(code, redirect) {
+  const { clientId, clientSecret, mode } = getOAuthConfig('paypal');
+  const apiHost =
+    String(mode || 'sandbox').toLowerCase() === 'live'
+      ? 'https://api-m.paypal.com'
+      : 'https://api-m.sandbox.paypal.com';
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  const tokenRes = await fetch(`${apiHost}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: String(code || '').trim(),
+      redirect_uri: redirect,
+    }).toString(),
+  });
+  const d = await parseJson(tokenRes);
+  if (!tokenRes.ok) {
+    throw new Error(d?.error_description || d?.error || 'Falha no token PayPal.');
+  }
+  let email = null;
+  let payerId = null;
+  try {
+    const infoRes = await fetch(`${apiHost}/v1/identity/oauth2/userinfo?schema=paypalv1.1`, {
+      headers: { Authorization: `Bearer ${d.access_token}` },
+    });
+    const info = await parseJson(infoRes);
+    email = info?.emails?.[0]?.value || info?.email || null;
+    payerId = info?.payer_id || info?.user_id || null;
+  } catch {
+    /* optional */
+  }
+  return {
+    paypalConnected: true,
+    accessToken: d.access_token || null,
+    refreshToken: d.refresh_token || null,
+    expiresIn: d.expires_in || null,
+    clientId,
+    mode: String(mode || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox',
+    email,
+    payerId,
+  };
+}
+
 export async function exchangeCode(platform, code, redirect, codeVerifier) {
   if (!oauthConfigured(platform)) {
     const err = new Error('OAUTH_NOT_CONFIGURED');
@@ -231,6 +373,8 @@ export async function exchangeCode(platform, code, redirect, codeVerifier) {
   }
   if (platform === 'youtube') return exchangeYoutube(code, redirect);
   if (platform === 'tiktok') return exchangeTiktok(code, redirect, codeVerifier);
+  if (platform === 'stripe') return exchangeStripe(code, redirect);
+  if (platform === 'paypal') return exchangePaypal(code, redirect);
   throw new Error('Plataforma inválida');
 }
 
@@ -253,6 +397,25 @@ export function clearOAuthFields(platform) {
       youtubeChannelId: null,
       youtubeChannelTitle: null,
       youtubeTokenExpiresAt: null,
+    };
+  }
+  if (platform === 'stripe') {
+    return {
+      stripeConnected: false,
+      secretKey: null,
+      publishableKey: null,
+      stripeUserId: null,
+      refreshToken: null,
+    };
+  }
+  if (platform === 'paypal') {
+    return {
+      paypalConnected: false,
+      accessToken: null,
+      refreshToken: null,
+      clientId: null,
+      email: null,
+      payerId: null,
     };
   }
   return {};
