@@ -2,10 +2,11 @@
  * Mercado Pago — Checkout Preferences (Pro) + Pix Payments (Turbo).
  *
  * Env:
- *   MERCADOPAGO_ACCESS_TOKEN   (obrigatório para criar pagamentos)
- *   MERCADOPAGO_WEBHOOK_SECRET (opcional — valida x-signature)
- *   MERCADOPAGO_NOTIFICATION_URL  ex: https://gocreate.web.app/api/billing/webhook
- *   PUBLIC_APP_URL                ex: https://gocreate.web.app
+ *   MERCADOPAGO_ACCESS_TOKEN        (billing / fallback — preferir TEST- para Pix)
+ *   MERCADOPAGO_TEST_ACCESS_TOKEN   (preferido em GoCreatePayments / public-create-payment)
+ *   MERCADOPAGO_WEBHOOK_SECRET      (opcional — valida x-signature)
+ *   MERCADOPAGO_NOTIFICATION_URL    ex: https://gocreate.web.app/api/billing/webhook
+ *   PUBLIC_APP_URL                  ex: https://gocreate.web.app
  *
  * Futuro Stripe: espelhar createCheckoutSession / constructWebhookEvent
  * em services/stripe.js e ramificar em routes/billing.js por provider.
@@ -39,14 +40,109 @@ export function getAccessToken() {
   return String(process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
 }
 
-export function isMercadoPagoConfigured() {
-  return Boolean(getAccessToken());
+/** Credenciais sandbox clássicas (TEST-…) — necessárias para Payments API / Pix. */
+export function getTestAccessToken() {
+  return String(process.env.MERCADOPAGO_TEST_ACCESS_TOKEN || '').trim();
 }
 
-function getClient() {
-  const accessToken = getAccessToken();
+export function isTestAccessToken(token = getAccessToken()) {
+  return String(token || '').startsWith('TEST-');
+}
+
+export function isLiveAccessToken(token = getAccessToken()) {
+  return String(token || '').startsWith('APP_USR-');
+}
+
+/**
+ * Token para GoCreatePayments / public-create-payment.
+ * Prefere TEST- (Payments API). APP_USR de test-user automático do painel
+ * costuma falhar em /v1/payments com "Unauthorized use of live credentials".
+ */
+export function getAccessTokenForAppPayments({ preferTest = true } = {}) {
+  const test = getTestAccessToken();
+  const main = getAccessToken();
+
+  if (preferTest) {
+    if (isTestAccessToken(test)) {
+      return { accessToken: test, source: 'platform_test', mode: 'test' };
+    }
+    if (isTestAccessToken(main)) {
+      return { accessToken: main, source: 'platform', mode: 'test' };
+    }
+    // TEST token configurado mas com prefixo inesperado
+    if (test) {
+      return {
+        accessToken: test,
+        source: 'platform_test',
+        mode: isLiveAccessToken(test) ? 'live' : 'unknown',
+      };
+    }
+  }
+
+  if (main) {
+    return {
+      accessToken: main,
+      source: 'platform',
+      mode: isTestAccessToken(main)
+        ? 'test'
+        : isLiveAccessToken(main)
+          ? 'live'
+          : 'unknown',
+    };
+  }
+  return null;
+}
+
+export function isMercadoPagoConfigured() {
+  return Boolean(getAccessToken() || getTestAccessToken());
+}
+
+export function isLiveCredentialsUnauthorizedError(err) {
+  const msg = String(err?.message || err?.error || err || '');
+  const causes = err?.cause || err?.apiResponse?.cause || [];
+  const causeText = Array.isArray(causes)
+    ? causes.map((c) => c?.description || c?.code || '').join(' ')
+    : String(causes || '');
+  return /unauthorized use of live credentials/i.test(msg + ' ' + causeText);
+}
+
+export function mapMercadoPagoPaymentError(err) {
+  if (isLiveCredentialsUnauthorizedError(err)) {
+    const mapped = new Error(
+      'Credenciais Mercado Pago incompatíveis com Pix (token APP_USR de test-user). ' +
+        'Configure MERCADOPAGO_TEST_ACCESS_TOKEN com um Access Token TEST- do painel ' +
+        '(Checkout API / Payments) para o preview gerar QR Code.'
+    );
+    mapped.status = 503;
+    mapped.code = 'MP_LIVE_CREDENTIALS_UNAUTHORIZED';
+    mapped.cause = err?.cause;
+    return mapped;
+  }
+  const msg = String(err?.message || err?.error || 'Falha ao criar pagamento Mercado Pago.');
+  if (/payer email forbidden/i.test(msg)) {
+    const mapped = new Error(
+      'E-mail do pagador não permitido pelo Mercado Pago. Use um e-mail válido (ex.: comprador@email.com).'
+    );
+    mapped.status = 400;
+    mapped.code = 'MP_PAYER_EMAIL_FORBIDDEN';
+    return mapped;
+  }
+  const mapped = new Error(msg);
+  mapped.status = err?.status || err?.statusCode || 502;
+  mapped.code = err?.code || 'MP_PAYMENT_FAILED';
+  mapped.cause = err?.cause;
+  return mapped;
+}
+
+function getClient({ preferTest = false } = {}) {
+  const resolved = preferTest
+    ? getAccessTokenForAppPayments({ preferTest: true })
+    : null;
+  const accessToken = resolved?.accessToken || getAccessToken() || getTestAccessToken();
   if (!accessToken) {
-    const err = new Error('MERCADOPAGO_ACCESS_TOKEN não configurado no servidor.');
+    const err = new Error(
+      'MERCADOPAGO_ACCESS_TOKEN / MERCADOPAGO_TEST_ACCESS_TOKEN não configurado no servidor.'
+    );
     err.status = 503;
     err.code = 'MP_NOT_CONFIGURED';
     throw err;
@@ -123,7 +219,8 @@ export async function createCheckoutPreference({
   };
 
   const result = await preference.create({ body });
-  const sandbox = String(process.env.MERCADOPAGO_ACCESS_TOKEN || '').startsWith('TEST-');
+  const token = getAccessToken() || getTestAccessToken();
+  const sandbox = isTestAccessToken(token);
 
   return {
     preferenceId: result.id,
@@ -144,41 +241,49 @@ export async function createPixPayment({
   email,
   notificationUrl,
 }) {
-  const client = getClient();
+  const client = getClient({ preferTest: true });
   const payment = new Payment(client);
   const idempotencyKey = `gocreate-${transactionId}`;
+  const payerEmail =
+    email && !/@testuser\.com$/i.test(email)
+      ? email
+      : `user_${userId}@gocreate.app`;
 
-  const result = await payment.create({
-    body: {
-      transaction_amount: product.amount,
-      description: product.title,
-      payment_method_id: 'pix',
-      payer: {
-        email: email || `user_${userId}@gocreate.app`,
+  try {
+    const result = await payment.create({
+      body: {
+        transaction_amount: product.amount,
+        description: product.title,
+        payment_method_id: 'pix',
+        payer: {
+          email: payerEmail,
+        },
+        external_reference: transactionId,
+        notification_url: notificationUrl,
+        metadata: {
+          transactionId,
+          userId,
+          plan: product.plan || product.id,
+          type: product.type,
+          credits: product.credits,
+          provider: 'mercadopago',
+        },
       },
-      external_reference: transactionId,
-      notification_url: notificationUrl,
-      metadata: {
-        transactionId,
-        userId,
-        plan: product.plan || product.id,
-        type: product.type,
-        credits: product.credits,
-        provider: 'mercadopago',
-      },
-    },
-    requestOptions: { idempotencyKey },
-  });
+      requestOptions: { idempotencyKey },
+    });
 
-  const txData = result.point_of_interaction?.transaction_data || {};
+    const txData = result.point_of_interaction?.transaction_data || {};
 
-  return {
-    paymentId: result.id,
-    status: result.status,
-    qrCode: txData.qr_code || null,
-    qrCodeBase64: txData.qr_code_base64 || null,
-    ticketUrl: txData.ticket_url || null,
-  };
+    return {
+      paymentId: result.id,
+      status: result.status,
+      qrCode: txData.qr_code || null,
+      qrCodeBase64: txData.qr_code_base64 || null,
+      ticketUrl: txData.ticket_url || null,
+    };
+  } catch (err) {
+    throw mapMercadoPagoPaymentError(err);
+  }
 }
 
 export async function getPaymentById(paymentId) {

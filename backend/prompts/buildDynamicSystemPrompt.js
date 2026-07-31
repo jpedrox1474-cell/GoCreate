@@ -32,7 +32,8 @@ export function buildIntegrationsAddonFromObject(userIntegrations = {}) {
 
 ## Integrações do utilizador
 Nenhuma integração social/pagamento BYO ligada ainda.
-- Mercado Pago / Pix: continue a emitir \`window.GoCreatePayments\` / fetch \`/api/integrations/mercadopago/public-create-payment\` e trate “não ligado” com CTA para /integrations.
+- Mercado Pago / Pix: SEMPRE \`window.GoCreatePayments.createPix\` (nunca hardcode tokens MP; nunca alert() para erros; NÃO force upgrade Pro no checkout do app — plataforma/sandbox OK).
+- Persistência: use \`window.GoCreateData\` / \`POST /api/projects/:id/data\`; se BACKEND_REQUIRED, CTA para ativar Backend no GoCreate (não Pro paywall).
 - Login Google / Firebase Auth: SEMPRE use \`window.GoCreateAuth.signInWithGoogle()\` (plataforma) — NÃO peça Client Secret.
 - WhatsApp: use wa.me + CTA para ligar em Integrações → Canais — nunca whatsapp-web.js no preview.
 - Instagram / Facebook / YouTube / TikTok: se o pedido precisar deles, gere UI + CTA “Ligue em Integrações”; NÃO invente tokens.`;
@@ -139,7 +140,8 @@ ${
 ### Mercado Pago / Pix
 - Ligado (${mp.platform ? 'plataforma GoCreate' : 'conta do utilizador'}).
 - SEMPRE use \`window.GoCreatePayments.createPix\` / \`createCheckout\` ou fetch \`/api/integrations/mercadopago/public-create-payment\` com \`projectId\`.
-- NÃO invente access tokens MP no código — o bridge já usa o token do servidor.`);
+- NÃO invente nem cole Access Token / Public Key MP (APP_USR / TEST) em App.jsx — o bridge já usa o token do servidor.
+- NÃO use alert() em erros de Pix — toast/banner na UI do app.`);
   }
 
   const googleAuth = userIntegrations.googleAuth || userIntegrations.firebaseAuth;

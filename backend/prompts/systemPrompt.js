@@ -31,21 +31,25 @@ O Live Preview do GoCreate corre **Sandpack** (browser): React + Vite-compatible
 
 ## Skills / padrões BR (use quando o pedido for relevante)
 
-1. **Checkout Pix / cartão (Mercado Pago — OBRIGATÓRIO usar o hook GoCreate)**
+1. **Checkout Pix / cartão (Mercado Pago — usar o hook GoCreate)**
    - UI com QR Code, código copia-e-cola, status “Aguardando pagamento” / “Pago”, e opção de cartão.
    - Valores em BRL com Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).
    - NÃO invente chaves Pix nem mocks estáticos como se fossem pagamento real.
+   - NUNCA hardcode Access Token / Public Key Mercado Pago (APP_USR-…, TEST-…) em App.jsx — só \`window.GoCreatePayments.createPix\` / \`createCheckout\`.
+   - NÃO use alert() para erros de pagamento — mostre toast/banner na UI; o bridge já exibe toast no iframe.
+   - NÃO force upgrade Pro/PIX do plano GoCreate no checkout do app gerado — o runtime usa o Mercado Pago da plataforma (sandbox/demo ou live) sem paywall de plano.
    - Sempre integre o runtime GoCreatePayments (injectado no preview/publicação):
 
 \`\`\`js
-// Pix real via API GoCreate → Mercado Pago do utilizador
+// Pix via API GoCreate → Mercado Pago da plataforma (sandbox OK para demos)
 async function pagarComPix({ amount, description, payerEmail }) {
   if (window.GoCreatePayments?.createPix) {
     return window.GoCreatePayments.createPix({ amount, description, payerEmail });
   }
   // Fallback fetch (mesmo contrato)
   const projectId = window.__GOCREATE_PROJECT_ID__;
-  const res = await fetch('/api/integrations/mercadopago/public-create-payment', {
+  const base = window.__GOCREATE_API_BASE__ || '';
+  const res = await fetch(base + '/api/integrations/mercadopago/public-create-payment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId, amount, description, payerEmail, method: 'pix' }),
@@ -57,13 +61,14 @@ async function pagarComPix({ amount, description, payerEmail }) {
   return res.json(); // { qrCode, qrCodeBase64, paymentId, status, ticketUrl }
 }
 
-// Checkout Pro (cartão + Pix no hosted MP)
+// Checkout hosted MP (cartão + Pix) — "Checkout Pro" = produto Mercado Pago, NÃO plano GoCreate
 async function pagarComCheckout({ amount, description, payerEmail }) {
   if (window.GoCreatePayments?.createCheckout) {
     return window.GoCreatePayments.createCheckout({ amount, description, payerEmail });
   }
   const projectId = window.__GOCREATE_PROJECT_ID__;
-  const res = await fetch('/api/integrations/mercadopago/public-create-payment', {
+  const base = window.__GOCREATE_API_BASE__ || '';
+  const res = await fetch(base + '/api/integrations/mercadopago/public-create-payment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId, amount, description, payerEmail, method: 'preference' }),
@@ -76,10 +81,49 @@ async function pagarComCheckout({ amount, description, payerEmail }) {
 \`\`\`
 
    - Mostre QR com \`data:image/png;base64,\${qrCodeBase64}\` quando disponível; senão um placeholder + botão copiar \`qrCode\`.
-   - Se a API devolver erro MP_NOT_CONNECTED / MP_USER_REQUIRED, mostre CTA amigável: “Conecte o Mercado Pago em Integrações do GoCreate”.
+   - Se a API devolver MP_NOT_CONNECTED, mostre CTA amigável (não “assine Pro”): “Pagamentos temporariamente indisponíveis — tente mais tarde ou ligue Mercado Pago em Integrações”.
    - Comentários TODO só para features avançadas (webhooks de confirmação no app gerado); o create-payment em si deve ser real.
 
-2. **Login com Google / Firebase Auth (OBRIGATÓRIO usar o bridge GoCreateAuth)**
+2. **Persistência / base de dados (GoCreate Backend Functions)**
+   - Quando o app precisar de guardar dados (pedidos, clientes, produtos, formulários), use a API de dados GoCreate — NÃO invente Firebase config nem Firestore client no Sandpack.
+   - Prefira \`window.GoCreateData\` (injectado). Fallback: POST \`/api/projects/:id/data\`.
+   - Se a API devolver \`BACKEND_REQUIRED\`, mostre CTA: “Ative Funções de Backend nas Configurações do projeto no GoCreate” — NÃO peça upgrade Pro só para gravar dados.
+
+\`\`\`js
+async function salvarRegisto(entity, data) {
+  if (window.GoCreateData?.create) {
+    return window.GoCreateData.create(entity, data);
+  }
+  const projectId = window.__GOCREATE_PROJECT_ID__;
+  const base = window.__GOCREATE_API_BASE__ || '';
+  const res = await fetch(base + '/api/projects/' + projectId + '/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'create', entity, data }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(json.message || json.error || 'Falha ao guardar');
+    err.code = json.code;
+    throw err;
+  }
+  return json; // { ok, entity, id, data }
+}
+
+async function listarRegistos(entity) {
+  if (window.GoCreateData?.list) return window.GoCreateData.list(entity);
+  const projectId = window.__GOCREATE_PROJECT_ID__;
+  const base = window.__GOCREATE_API_BASE__ || '';
+  const res = await fetch(base + '/api/projects/' + projectId + '/data?entity=' + encodeURIComponent(entity));
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(json.message || json.error || 'Falha'), { code: json.code });
+  return json.rows || [];
+}
+\`\`\`
+
+   - Em preview local sem backend ativado, pode usar useState como rascunho; ao publicar, a persistência real exige Backend ativado.
+
+3. **Login com Google / Firebase Auth (OBRIGATÓRIO usar o bridge GoCreateAuth)**
    - Quando o pedido pedir login, cadastro, “entrar com Google”, Google Auth ou Firebase Auth: use o runtime injectado (preview + publicação):
 
 \`\`\`js
@@ -106,7 +150,7 @@ async function sair() {
    - NÃO uses \`firebase\` npm no Sandpack só para Google login se \`window.GoCreateAuth\` existir; preferir o bridge.
    - UI: botão “Continuar com Google”, avatar/nome após login, botão Sair; trate erros de popup bloqueado com mensagem amigável.
 
-3. **WhatsApp / funil / disparo (NUNCA whatsapp-web.js no preview)**
+4. **WhatsApp / funil / disparo (NUNCA whatsapp-web.js no preview)**
    - Links wa.me/\`55DDDNUMERO\`?text=... e CTAs “Falar no WhatsApp”.
    - Pedidos de funil, blast, disparo em massa ou “sistema WhatsApp”: gera **dashboard React** com:
      - Botão “Conectar WhatsApp” (QR UI mockável + CTA: “Ligue em Integrações → Canais de Atendimento do GoCreate”).
@@ -114,16 +158,16 @@ async function sair() {
    - Envio real fica no bridge GoCreate (Evolution); NÃO embutas \`whatsapp-web.js\`, Baileys, Puppeteer ou servidor Node no Sandpack.
    - Webhooks/mensagens recebidas: esboce a UX; tokens reais ficam no servidor GoCreate.
 
-4. **ViaCEP**
+5. **ViaCEP**
    - Input de CEP com máscara 00000-000; fetch ao completar 8 dígitos; preencher endereço; tratar CEP inválido.
 
-5. **CPF / CNPJ**
+6. **CPF / CNPJ**
    - Máscaras e validação de dígitos; feedback de erro amigável em PT-BR.
 
-6. **Boleto (UI)**
+7. **Boleto (UI)**
    - Quando checkout “tradicional” ou “boleto” for pedido: linha digitável, vencimento, valor, botão copiar — como padrão visual (mock), não como gateway real.
 
-7. **Outros toques BR**
+8. **Outros toques BR**
    - Estados (UF), frete/região, “CNPJ da empresa”, “chave Pix”, “pedido #”, tom informal-profissional brasileiro.
 
 ## Formato de resposta (OBRIGATÓRIO)

@@ -11,7 +11,14 @@
 import admin, { db } from '../config/firebaseAdmin.js';
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import Stripe from 'stripe';
-import { isMercadoPagoConfigured, getAccessToken as getPlatformMpToken } from './mercadopago.js';
+import {
+  isMercadoPagoConfigured,
+  getAccessTokenForAppPayments,
+  getTestAccessToken,
+  isTestAccessToken,
+  isLiveCredentialsUnauthorizedError,
+  mapMercadoPagoPaymentError,
+} from './mercadopago.js';
 import { isStripeConfigured } from './stripe.js';
 import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js';
 import { oauthConfigured } from './oauth/providers.js';
@@ -890,77 +897,49 @@ export async function loadUserIntegrationsForPrompt(uid) {
 }
 
 /**
- * Preferência: token da plataforma (MERCADOPAGO_ACCESS_TOKEN) para billing +
- * GoCreatePayments / public-create-payment. Credencial BYO do user só se a
+ * Preferência: TEST- da plataforma para GoCreatePayments / public-create-payment
+ * (Payments API / Pix). Fallback: MERCADOPAGO_ACCESS_TOKEN. BYO só se a
  * plataforma não tiver token.
- *
- * Hub gerado: owner liga canais sociais na conta; end-users de apps publicados
- * podem ligar os deles via bridge estilo GoCreatePayments (sem pedir API keys).
  */
-async function resolveMpAccessToken(uid) {
-  if (isMercadoPagoConfigured()) {
-    return { accessToken: getPlatformMpToken(), source: 'platform' };
+async function resolveMpAccessToken(uid, { preferTest = true } = {}) {
+  const platform = getAccessTokenForAppPayments({ preferTest });
+  if (platform?.accessToken) {
+    return platform;
   }
   const creds = await getStoredCredentials(uid, 'mercadopago');
   if (creds?.accessToken) {
-    return { accessToken: creds.accessToken, source: 'user' };
+    return {
+      accessToken: creds.accessToken,
+      source: 'user',
+      mode: isTestAccessToken(creds.accessToken) ? 'test' : 'live',
+    };
   }
   return null;
 }
 
-/**
- * Cria Pix ou Preference com token da plataforma (preferido) ou BYO legado.
- */
-export async function createProjectMercadoPagoPayment({
+function sanitizePayerEmail(payerEmail, uid) {
+  const raw = String(payerEmail || '').trim().toLowerCase();
+  // MP bloqueia alguns padrões *@testuser.com em sandbox
+  if (raw && !/@testuser\.com$/i.test(raw) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+    return raw;
+  }
+  return `buyer_${String(uid || 'guest').slice(0, 24)}@gocreate.app`;
+}
+
+async function createMpPaymentWithToken({
+  accessToken,
+  tokenSource,
+  tokenMode,
   uid,
   projectId,
-  amount,
-  description,
-  payerEmail,
-  method = 'pix',
-  allowPlatformFallback = true,
+  amountNum,
+  title,
+  email,
+  externalRef,
+  publicPathKey,
+  method,
 }) {
-  const resolved = await resolveMpAccessToken(uid);
-  if (!resolved) {
-    const err = new Error(
-      'Mercado Pago da plataforma não configurado (MERCADOPAGO_ACCESS_TOKEN).'
-    );
-    err.status = 503;
-    err.code = 'MP_NOT_CONNECTED';
-    throw err;
-  }
-  if (!allowPlatformFallback && resolved.source === 'platform') {
-    // Mantido por compat; chamadas públicas agora passam allowPlatformFallback=true.
-    const err = new Error(
-      'Mercado Pago requer token de utilizador neste contexto.'
-    );
-    err.status = 503;
-    err.code = 'MP_USER_REQUIRED';
-    throw err;
-  }
-
-  const amountNum = Number(amount);
-  if (!Number.isFinite(amountNum) || amountNum <= 0) {
-    const err = new Error('Valor inválido.');
-    err.status = 400;
-    throw err;
-  }
-
-  const client = new MercadoPagoConfig({ accessToken: resolved.accessToken });
-  const title = String(description || 'Pagamento GoCreate').slice(0, 200);
-  const email = payerEmail || `buyer_${uid}@gocreate.app`;
-  const externalRef = `gc-proj-${projectId}-${Date.now()}`;
-
-  let publicPathKey = projectId;
-  if (projectId) {
-    try {
-      const projSnap = await db.collection('projects').doc(projectId).get();
-      const customSlug = String(projSnap.data()?.slug || '').trim().toLowerCase();
-      if (customSlug) publicPathKey = customSlug;
-    } catch {
-      /* keep projectId */
-    }
-  }
+  const client = new MercadoPagoConfig({ accessToken });
 
   if (method === 'preference') {
     const preference = new Preference(client);
@@ -991,7 +970,7 @@ export async function createProjectMercadoPagoPayment({
         auto_return: 'approved',
       },
     });
-    const sandbox = resolved.accessToken.startsWith('TEST-');
+    const sandbox = isTestAccessToken(accessToken) || tokenMode === 'test';
     return {
       mode: 'preference',
       preferenceId: result.id,
@@ -999,11 +978,11 @@ export async function createProjectMercadoPagoPayment({
         ? result.sandbox_init_point || result.init_point
         : result.init_point || result.sandbox_init_point,
       externalReference: externalRef,
-      tokenSource: resolved.source,
+      tokenSource,
+      tokenMode: sandbox ? 'test' : 'live',
     };
   }
 
-  // Pix direto
   const payment = new Payment(client);
   const result = await payment.create({
     body: {
@@ -1030,8 +1009,107 @@ export async function createProjectMercadoPagoPayment({
     qrCodeBase64: txData.qr_code_base64 || null,
     ticketUrl: txData.ticket_url || null,
     externalReference: externalRef,
-    tokenSource: resolved.source,
+    tokenSource,
+    tokenMode: isTestAccessToken(accessToken) ? 'test' : tokenMode || 'live',
   };
+}
+
+/**
+ * Cria Pix ou Preference com token da plataforma (preferido TEST) ou BYO legado.
+ */
+export async function createProjectMercadoPagoPayment({
+  uid,
+  projectId,
+  amount,
+  description,
+  payerEmail,
+  method = 'pix',
+  allowPlatformFallback = true,
+  preferTest = true,
+}) {
+  const resolved = await resolveMpAccessToken(uid, { preferTest });
+  if (!resolved) {
+    const err = new Error(
+      'Mercado Pago da plataforma não configurado (MERCADOPAGO_ACCESS_TOKEN / MERCADOPAGO_TEST_ACCESS_TOKEN).'
+    );
+    err.status = 503;
+    err.code = 'MP_NOT_CONNECTED';
+    throw err;
+  }
+  if (
+    !allowPlatformFallback &&
+    (resolved.source === 'platform' || resolved.source === 'platform_test')
+  ) {
+    const err = new Error(
+      'Mercado Pago requer token de utilizador neste contexto.'
+    );
+    err.status = 503;
+    err.code = 'MP_USER_REQUIRED';
+    throw err;
+  }
+
+  const amountNum = Number(amount);
+  if (!Number.isFinite(amountNum) || amountNum <= 0) {
+    const err = new Error('Valor inválido.');
+    err.status = 400;
+    throw err;
+  }
+
+  const title = String(description || 'Pagamento GoCreate').slice(0, 200);
+  const email = sanitizePayerEmail(payerEmail, uid);
+  const externalRef = `gc-proj-${projectId}-${Date.now()}`;
+
+  let publicPathKey = projectId;
+  if (projectId) {
+    try {
+      const projSnap = await db.collection('projects').doc(projectId).get();
+      const customSlug = String(projSnap.data()?.slug || '').trim().toLowerCase();
+      if (customSlug) publicPathKey = customSlug;
+    } catch {
+      /* keep projectId */
+    }
+  }
+
+  const payload = {
+    uid,
+    projectId,
+    amountNum,
+    title,
+    email,
+    externalRef,
+    publicPathKey,
+    method: method === 'preference' ? 'preference' : 'pix',
+  };
+
+  try {
+    return await createMpPaymentWithToken({
+      accessToken: resolved.accessToken,
+      tokenSource: resolved.source,
+      tokenMode: resolved.mode,
+      ...payload,
+    });
+  } catch (err) {
+    // Se APP_USR (test-user) falhar, tenta TEST- explícito uma vez
+    const fallbackTest = getTestAccessToken();
+    if (
+      isLiveCredentialsUnauthorizedError(err) &&
+      fallbackTest &&
+      fallbackTest !== resolved.accessToken &&
+      isTestAccessToken(fallbackTest)
+    ) {
+      try {
+        return await createMpPaymentWithToken({
+          accessToken: fallbackTest,
+          tokenSource: 'platform_test_fallback',
+          tokenMode: 'test',
+          ...payload,
+        });
+      } catch (err2) {
+        throw mapMercadoPagoPaymentError(err2);
+      }
+    }
+    throw mapMercadoPagoPaymentError(err);
+  }
 }
 
 export async function createProjectStripePayment({
