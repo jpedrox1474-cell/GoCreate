@@ -80,6 +80,7 @@ export function mapProjectDoc(d) {
     customDomain: data.customDomain || '',
     publishedUrl: data.publishedUrl || null,
     publishedEnv: data.publishedEnv || null,
+    slug: data.slug || null,
     isDefault: Boolean(data.isDefault),
     ownerId: data.ownerId,
     createdAt: data.createdAt,
@@ -175,6 +176,9 @@ export async function updateProjectSettings(
 }
 
 async function clientCascadeDelete(projectId) {
+  const projectSnap = await getDoc(doc(db, 'projects', projectId));
+  const slug = String(projectSnap.data()?.slug || '').trim().toLowerCase();
+
   const messagesSnap = await getDocs(collection(db, 'projects', projectId, 'messages'));
   const automationsSnap = await getDocs(collection(db, 'projects', projectId, 'automations'));
   const runsSnap = await getDocs(collection(db, 'projects', projectId, 'automationRuns'));
@@ -197,6 +201,10 @@ async function clientCascadeDelete(projectId) {
     doc(db, 'publicProjects', `${projectId}_preview`),
     doc(db, 'projects', projectId)
   );
+
+  if (slug && slug !== projectId) {
+    toDelete.push(doc(db, 'projectSlugs', slug));
+  }
 
   const CHUNK = 400;
   for (let i = 0; i < toDelete.length; i += CHUNK) {
@@ -332,23 +340,37 @@ export function publicProjectDocId(projectId, env = 'production') {
   return env === 'preview' ? `${projectId}_preview` : projectId;
 }
 
-/** Real shareable URL on the same Firebase Hosting origin (no fake *.gocreate.app). */
-export function getPublishUrl(projectId, env = 'production') {
+const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Prefer custom slug; fallback to stable Firestore projectId. */
+export function getProjectPublicKey(projectOrSlug, projectId) {
+  if (typeof projectOrSlug === 'string' && projectOrSlug.trim()) {
+    const s = projectOrSlug.trim().toLowerCase();
+    if (SLUG_RE.test(s)) return s;
+  }
+  const custom = String(projectOrSlug?.slug || '').trim().toLowerCase();
+  if (custom && SLUG_RE.test(custom)) return custom;
+  return projectId || '';
+}
+
+/** Real shareable URL on the same Firebase Hosting origin (stable per slug/projectId). */
+export function getPublishUrl(projectId, env = 'production', slug = null) {
   const origin =
     typeof window !== 'undefined' && window.location?.origin
       ? window.location.origin
       : 'https://gocreate.web.app';
-  const path = env === 'preview' ? `/p/${projectId}/preview` : `/p/${projectId}`;
+  const key = getProjectPublicKey(slug, projectId) || projectId;
+  const path = env === 'preview' ? `/p/${key}/preview` : `/p/${key}`;
   return `${origin}${path}`;
 }
 
 /**
  * Persist generated files to a publicly readable snapshot and return the live URL.
- * Redeploy overwrites the same snapshot for that env.
+ * Redeploy overwrites the same snapshot for that env (same projectId / slug).
  */
 export async function publishProject(
   projectId,
-  { files, name, env = 'production', ownerId, plan = 'free', role } = {}
+  { files, name, env = 'production', ownerId, plan = 'free', role, slug = null } = {}
 ) {
   if (!projectId) throw new Error('Projeto inválido.');
   if (!ownerId) throw new Error('Utilizador inválido.');
@@ -361,8 +383,19 @@ export async function publishProject(
     throw new Error('Deploy de produção requer API autenticada (plano Pro/Owner).');
   }
 
+  let resolvedSlug = slug;
+  if (!resolvedSlug) {
+    try {
+      const snap = await getDoc(doc(db, 'projects', projectId));
+      resolvedSlug = snap.data()?.slug || null;
+    } catch {
+      resolvedSlug = null;
+    }
+  }
+
   const pubId = publicProjectDocId(projectId, env);
-  const url = getPublishUrl(projectId, env);
+  const publicKey = getProjectPublicKey(resolvedSlug, projectId);
+  const url = getPublishUrl(projectId, env, publicKey);
   const isProLike =
     plan === 'pro' || plan === 'enterprise_master' || role === 'owner';
   const ownerPlan = isProLike ? (plan === 'enterprise_master' ? 'enterprise_master' : 'pro') : 'free';
@@ -373,6 +406,7 @@ export async function publishProject(
     env: 'preview',
     files,
     url,
+    slug: publicKey,
     plan: ownerPlan === 'enterprise_master' ? 'pro' : ownerPlan,
     showBadge: ownerPlan === 'free',
     updatedAt: serverTimestamp(),
@@ -394,13 +428,39 @@ export async function publishProject(
     console.warn('[projects] atualizar status do projeto falhou:', err);
   }
 
-  return { url, pubId, env: 'preview' };
+  return { url, pubId, env: 'preview', slug: publicKey, projectId };
 }
 
-export async function getPublishedProject(projectId, env = 'production') {
-  if (!projectId) return null;
-  const pubId = publicProjectDocId(projectId, env);
-  const snap = await getDoc(doc(db, 'publicProjects', pubId));
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() };
+/**
+ * Resolve a public path key (slug or projectId) to a published snapshot.
+ */
+export async function getPublishedProject(key, env = 'production') {
+  if (!key) return null;
+
+  const tryDoc = async (docId) => {
+    const snap = await getDoc(doc(db, 'publicProjects', docId));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() };
+  };
+
+  // 1) Direct publicProjects id (projectId or projectId_preview)
+  const directId = publicProjectDocId(key, env);
+  const direct = await tryDoc(directId);
+  if (direct) return direct;
+
+  // 2) Custom slug registry → real projectId
+  try {
+    const slugSnap = await getDoc(doc(db, 'projectSlugs', String(key).toLowerCase()));
+    if (slugSnap.exists()) {
+      const projectId = slugSnap.data()?.projectId;
+      if (projectId) {
+        const bySlug = await tryDoc(publicProjectDocId(projectId, env));
+        if (bySlug) return bySlug;
+      }
+    }
+  } catch (err) {
+    console.warn('[projects] slug resolve:', err);
+  }
+
+  return null;
 }

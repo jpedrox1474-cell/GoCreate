@@ -1590,10 +1590,18 @@ export default function Editor() {
         onClose={() => setDeployOpen(false)}
         projectName={project.name}
         projectId={firestoreId}
+        projectSlug={project.slug || null}
         files={generatedFiles}
         ownerId={user?.uid}
         ownerPlan={ownerPlan}
         onToast={setToast}
+        onSlugUpdated={({ slug, publishedUrl }) => {
+          handleProjectUpdated({
+            ...project,
+            slug,
+            publishedUrl: publishedUrl || project.publishedUrl,
+          });
+        }}
       />
       <SettingsModal
         open={settingsOpen}

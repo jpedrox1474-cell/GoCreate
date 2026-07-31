@@ -147,5 +147,13 @@ service cloud.firestore {
           )
         );
     }
+
+    // Custom public path registry: /p/{slug} → projectId (writes via Admin /api/deploy)
+    match /projectSlugs/{slug} {
+      allow read: if true;
+      allow create, update: if false;
+      allow delete: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+    }
   }
 }

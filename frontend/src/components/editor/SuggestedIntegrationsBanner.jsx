@@ -13,6 +13,9 @@ const LABELS = {
   stripe: 'Stripe',
   paypal: 'PayPal',
   whatsapp: 'WhatsApp',
+  google: 'Login Google',
+  google_oauth: 'Login Google',
+  firebase_auth: 'Firebase Auth',
   instagram: 'Instagram',
   facebook: 'Facebook',
   youtube: 'YouTube',
@@ -21,6 +24,9 @@ const LABELS = {
 
 /** Providers that open OAuth popup from the editor chip. */
 const OAUTH_IDS = new Set(['stripe', 'paypal', 'youtube', 'tiktok']);
+
+/** Platform-powered: toast + deep-link; no Client Secret. */
+const PLATFORM_AUTH_IDS = new Set(['google', 'google_oauth', 'firebase_auth']);
 
 /**
  * Chips não-bloqueantes: "Este projeto precisa de: Stripe, WhatsApp — Conectar"
@@ -49,6 +55,11 @@ export default function SuggestedIntegrationsBanner({
 
   async function handleConnect(id) {
     setError(null);
+    if (PLATFORM_AUTH_IDS.has(id)) {
+      onConnected?.(id);
+      window.location.assign(`${to}#google_oauth`);
+      return;
+    }
     if (!OAUTH_IDS.has(id)) {
       // MP / WhatsApp / Meta → página Integrações (QR / platform / FB.login)
       window.location.assign(`${to}#${id}`);

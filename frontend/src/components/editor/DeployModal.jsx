@@ -1,8 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { Rocket, Loader2, CheckCircle2, ExternalLink, Globe, Copy, Check, Lock } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Rocket,
+  Loader2,
+  CheckCircle2,
+  ExternalLink,
+  Globe,
+  Copy,
+  Check,
+  Lock,
+  Pencil,
+} from 'lucide-react';
 import ModalShell from './ModalShell';
-import { publishProject, getPublishUrl } from '../../lib/projects';
-import { publishViaApi } from '../../lib/deployApi';
+import { publishProject, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
+import { publishViaApi, checkSlugAvailability, updateProjectSlug } from '../../lib/deployApi';
 import { getUserSettings, recordDeployNotificationStub } from '../../lib/userSettings';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditsContext';
@@ -15,10 +25,12 @@ export default function DeployModal({
   onClose,
   projectName,
   projectId,
+  projectSlug = null,
   files,
   ownerId,
   ownerPlan = 'free',
   onToast,
+  onSlugUpdated,
 }) {
   const { user } = useAuth();
   const { canUsePremium, openPremiumPaywall, plan, role } = useCredits();
@@ -28,8 +40,21 @@ export default function DeployModal({
   const [deployUrl, setDeployUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [copied, setCopied] = useState(false);
+  const [slug, setSlug] = useState('');
+  const [editingSlug, setEditingSlug] = useState(false);
+  const [slugDraft, setSlugDraft] = useState('');
+  const [slugBusy, setSlugBusy] = useState(false);
+  const [slugHint, setSlugHint] = useState('');
 
   const effectivePlan = plan || ownerPlan;
+  const publicKey = useMemo(
+    () => getProjectPublicKey(slug || projectSlug, projectId),
+    [slug, projectSlug, projectId]
+  );
+  const fixedUrl = useMemo(
+    () => (projectId ? getPublishUrl(projectId, env, publicKey) : ''),
+    [projectId, env, publicKey]
+  );
 
   useEffect(() => {
     if (!open) {
@@ -38,8 +63,14 @@ export default function DeployModal({
       setDeployUrl('');
       setErrorMsg('');
       setCopied(false);
+      setEditingSlug(false);
+      setSlugHint('');
+    } else {
+      const initial = projectSlug || projectId || '';
+      setSlug(initial);
+      setSlugDraft(initial);
     }
-  }, [open]);
+  }, [open, projectSlug, projectId]);
 
   useEffect(() => {
     if (phase !== 'deploying') return undefined;
@@ -68,7 +99,6 @@ export default function DeployModal({
       return;
     }
 
-    // Production = premium; preview (Sandpack URL) stays free
     if (env === 'production' && !canUsePremium) {
       openPremiumPaywall();
       onClose?.();
@@ -97,12 +127,15 @@ export default function DeployModal({
           ownerId,
           plan: effectivePlan,
           role,
+          slug: publicKey,
         });
       }
       setStepIdx(STEPS.length - 1);
-      setDeployUrl(result.url || getPublishUrl(projectId, env));
+      const nextSlug = result.slug || publicKey;
+      if (result.slug) setSlug(result.slug);
+      setDeployUrl(result.url || getPublishUrl(projectId, env, nextSlug));
       setPhase('done');
-      onToast?.({ message: 'Publicado com sucesso.', type: 'success' });
+      onToast?.({ message: 'Publicado com sucesso — o link mantém-se estável.', type: 'success' });
 
       const wantsNotify = getUserSettings().notifications;
       if (wantsNotify) {
@@ -129,9 +162,10 @@ export default function DeployModal({
   }
 
   async function copyUrl() {
-    if (!deployUrl) return;
+    const url = deployUrl || fixedUrl;
+    if (!url) return;
     try {
-      await navigator.clipboard.writeText(deployUrl);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
       onToast?.({ message: 'URL copiado.', type: 'success' });
       setTimeout(() => setCopied(false), 2000);
@@ -140,11 +174,49 @@ export default function DeployModal({
     }
   }
 
+  async function saveSlug() {
+    if (!user?.getIdToken || !projectId) return;
+    setSlugBusy(true);
+    setSlugHint('');
+    try {
+      const idToken = await user.getIdToken();
+      const check = await checkSlugAvailability({
+        idToken,
+        slug: slugDraft,
+        projectId,
+      });
+      if (!check.available) {
+        setSlugHint(check.error || 'Slug indisponível.');
+        return;
+      }
+      const result = await updateProjectSlug({
+        idToken,
+        projectId,
+        slug: check.slug || slugDraft,
+      });
+      setSlug(result.slug);
+      setSlugDraft(result.slug);
+      setEditingSlug(false);
+      setSlugHint('Link atualizado.');
+      onSlugUpdated?.({ slug: result.slug, publishedUrl: result.url });
+      onToast?.({ message: 'Link público atualizado.', type: 'success' });
+      if (phase === 'done') {
+        setDeployUrl(env === 'preview' ? result.previewUrl : result.url);
+      }
+    } catch (err) {
+      setSlugHint(err?.message || 'Não foi possível alterar o link.');
+      onToast?.({ message: err?.message || 'Falha ao alterar link.', type: 'error' });
+    } finally {
+      setSlugBusy(false);
+    }
+  }
+
   return (
     <ModalShell open={open} onClose={onClose} title="Deploy">
       <div className="space-y-4">
         <p className="text-xs text-zinc-500 leading-relaxed">
-          Preview é gratuito. Deploy de produção (URL live sem badge Free) requer plano Pro ou Owner.
+          O link de produção é fixo para este projeto — cada deploy atualiza o mesmo URL. Preview é
+          gratuito; produção (sem badge Free) requer Pro ou Owner.
         </p>
 
         <div className="space-y-2">
@@ -167,11 +239,78 @@ export default function DeployModal({
               </button>
             ))}
           </div>
-          <p className="text-[10px] text-zinc-600 font-mono break-all">
-            {projectId
-              ? getPublishUrl(projectId, env).replace(/^https?:\/\//, '')
-              : 'gocreate.web.app/p/…'}
-          </p>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/80 px-3 py-2.5 space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1">URL fixo</p>
+                <p className="text-[11px] text-zinc-300 font-mono break-all">
+                  {(deployUrl || fixedUrl || 'gocreate.web.app/p/…').replace(/^https?:\/\//, '')}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={!projectId || phase === 'deploying'}
+                onClick={() => {
+                  setEditingSlug((v) => !v);
+                  setSlugDraft(slug || projectId || '');
+                  setSlugHint('');
+                }}
+                className="shrink-0 inline-flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-40"
+              >
+                <Pencil size={12} />
+                Alterar link
+              </button>
+            </div>
+
+            {editingSlug ? (
+              <div className="space-y-2 pt-1 border-t border-zinc-800/80">
+                <p className="text-[10px] text-zinc-500">
+                  Só a parte <span className="font-mono text-zinc-400">/p/…</span> muda. Letras,
+                  números e hífens (3–48).
+                </p>
+                <div className="flex gap-2">
+                  <div className="flex-1 flex items-center rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
+                    <span className="pl-2.5 text-[11px] text-zinc-600 font-mono shrink-0">/p/</span>
+                    <input
+                      type="text"
+                      value={slugDraft}
+                      onChange={(e) =>
+                        setSlugDraft(
+                          e.target.value
+                            .toLowerCase()
+                            .replace(/[\s_]+/g, '-')
+                            .replace(/[^a-z0-9-]/g, '')
+                        )
+                      }
+                      disabled={slugBusy}
+                      className="w-full bg-transparent px-1.5 py-2 text-xs text-zinc-200 font-mono outline-none"
+                      placeholder="meu-salao"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={slugBusy || !slugDraft.trim()}
+                    onClick={saveSlug}
+                    className="px-3 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 inline-flex items-center gap-1.5"
+                  >
+                    {slugBusy ? <Loader2 size={12} className="animate-spin" /> : null}
+                    Guardar
+                  </button>
+                </div>
+                {slugHint ? (
+                  <p
+                    className={`text-[10px] ${
+                      slugHint.includes('atualizado') ? 'text-emerald-400' : 'text-amber-400'
+                    }`}
+                  >
+                    {slugHint}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
           {env === 'production' && !canUsePremium ? (
             <p className="text-[11px] text-amber-400/90 leading-relaxed">
               Produção é Premium — upgrade para publicar sem limites de plano Free.
@@ -199,7 +338,9 @@ export default function DeployModal({
             <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 transition-all duration-500"
-                style={{ width: `${((Math.min(stepIdx, STEPS.length - 1) + 1) / STEPS.length) * 100}%` }}
+                style={{
+                  width: `${((Math.min(stepIdx, STEPS.length - 1) + 1) / STEPS.length) * 100}%`,
+                }}
               />
             </div>
           </div>
@@ -222,7 +363,7 @@ export default function DeployModal({
           <div className="rounded-lg border border-emerald-800/50 bg-emerald-950/30 p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-emerald-400">
               <CheckCircle2 size={16} />
-              Publicado em {env}
+              Publicado em {env} (mesmo link)
             </div>
             <a
               href={deployUrl}

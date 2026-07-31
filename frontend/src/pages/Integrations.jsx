@@ -147,6 +147,20 @@ export default function Integrations() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const hash = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+    if (hash === 'google' || hash === 'google_oauth' || hash === 'firebase_auth') {
+      setToast({
+        message:
+          'Login Google está ativo nos apps gerados via window.GoCreateAuth.signInWithGoogle() — sem Client Secret.',
+        type: 'success',
+      });
+      requestAnimationFrame(() => {
+        document.getElementById('integrations-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, []);
+
   const cards = useMemo(() => {
     const q = query.trim().toLowerCase();
     const SOCIAL_SECTION_IDS = new Set([
@@ -192,7 +206,9 @@ export default function Integrations() {
         message:
           item.id === 'mercadopago' || item.id === 'pix'
             ? `${item.name} usa o token da plataforma GoCreate — já ligado quando o servidor tem MERCADOPAGO_ACCESS_TOKEN.`
-            : `${item.name} já faz parte da plataforma GoCreate.`,
+            : item.id === 'google_oauth' || item.id === 'firebase_auth'
+              ? 'Login Google nos apps gerados: usa window.GoCreateAuth.signInWithGoogle() (Firebase da plataforma). Sem Client Secret.'
+              : `${item.name} já faz parte da plataforma GoCreate.`,
         type: 'info',
       });
       return;
@@ -379,7 +395,7 @@ export default function Integrations() {
           <Loader2 size={20} className="animate-spin" /> A carregar…
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div id="integrations-grid" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {cards.map((item) => {
             const Icon = ICONS[item.icon] || Plug;
             const busy = busyId === item.id;

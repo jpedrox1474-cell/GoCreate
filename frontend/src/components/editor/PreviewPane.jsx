@@ -252,7 +252,16 @@ export default function PreviewPane({
   const paymentsBootstrap = useMemo(() => {
     const pid = JSON.stringify(projectId || '');
     const base = JSON.stringify(apiBase);
-    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};`;
+    const firebaseConfig = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+      appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+    };
+    const cfg = JSON.stringify(firebaseConfig);
+    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};`;
   }, [projectId, apiBase]);
 
   const shellClass = publicMode
@@ -289,6 +298,7 @@ export default function PreviewPane({
                   'https://cdn.tailwindcss.com',
                   paymentsBootstrap,
                   `${apiBase}/gocreate-payments.js`,
+                  `${apiBase}/gocreate-auth.js`,
                 ],
               }}
               style={{ height: '100%' }}

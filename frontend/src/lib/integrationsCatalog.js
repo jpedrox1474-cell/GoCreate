@@ -105,7 +105,8 @@ export const INTEGRATIONS_CATALOG = [
     id: 'firebase_auth',
     name: 'Firebase Auth',
     category: 'auth',
-    description: 'Login e-mail, Google e GitHub — núcleo do GoCreate.',
+    description:
+      'Login e-mail e Google nos apps gerados via window.GoCreateAuth — núcleo Firebase da plataforma (sem colar secrets).',
     icon: 'Shield',
     connectType: 'platform',
     competitors: ['Lovable', 'Bolt', 'Firebase'],
@@ -174,9 +175,10 @@ export const INTEGRATIONS_CATALOG = [
   },
   {
     id: 'google_oauth',
-    name: 'Google OAuth',
+    name: 'Login Google',
     category: 'auth',
-    description: 'Login com Google (via Firebase Auth no GoCreate).',
+    description:
+      'Sign-in com Google nos projetos gerados (Firebase Auth da plataforma). Conectar confirma o bridge GoCreateAuth — sem Client Secret.',
     icon: 'Chrome',
     connectType: 'platform',
     competitors: ['Lovable', 'Bolt', 'Nova'],

@@ -1,17 +1,84 @@
 // Deploy production — Admin SDK write + premium gate.
 // Preview continua free via cliente (Sandpack / publicProjects *_preview).
+// Public URL is STABLE per project: /p/{slug||projectId}; redeploy overwrites same snapshot.
 
 import { Router } from 'express';
 import admin from '../config/firebaseAdmin.js';
 import { db } from '../config/firebaseAdmin.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requirePremium } from '../middleware/premium.js';
+import {
+  normalizeSlug,
+  resolveProjectPublicKey,
+  buildPublishUrl,
+} from '../services/projectSlug.js';
 
 const router = Router();
 
-function publishUrl(projectId, env) {
-  const origin = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
-  return env === 'preview' ? `${origin}/p/${projectId}/preview` : `${origin}/p/${projectId}`;
+async function assertProjectOwner(projectId, uid) {
+  const projectRef = db.collection('projects').doc(projectId);
+  const projectSnap = await projectRef.get();
+  if (!projectSnap.exists) {
+    const err = new Error('Projeto não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  const project = projectSnap.data() || {};
+  if (project.ownerId !== uid) {
+    const err = new Error('Sem permissão neste projeto.');
+    err.status = 403;
+    throw err;
+  }
+  return { projectRef, project };
+}
+
+/**
+ * Claim slug in projectSlugs; release previous if owned by same project.
+ * @returns {Promise<string>} normalized slug
+ */
+async function claimSlug({ projectId, ownerId, slug, previousSlug }) {
+  const normalized = normalizeSlug(slug);
+  if (!normalized.ok) {
+    const err = new Error(normalized.error);
+    err.status = 400;
+    err.code = 'INVALID_SLUG';
+    throw err;
+  }
+  const next = normalized.slug;
+  const slugRef = db.collection('projectSlugs').doc(next);
+  const existing = await slugRef.get();
+  if (existing.exists) {
+    const data = existing.data() || {};
+    if (data.projectId !== projectId) {
+      const err = new Error('Este link já está em uso. Escolhe outro slug.');
+      err.status = 409;
+      err.code = 'SLUG_TAKEN';
+      throw err;
+    }
+  }
+
+  const batch = db.batch();
+  batch.set(
+    slugRef,
+    {
+      projectId,
+      ownerId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  const prev = String(previousSlug || '').trim().toLowerCase();
+  if (prev && prev !== next && prev !== projectId) {
+    const prevRef = db.collection('projectSlugs').doc(prev);
+    const prevSnap = await prevRef.get();
+    if (prevSnap.exists && prevSnap.data()?.projectId === projectId) {
+      batch.delete(prevRef);
+    }
+  }
+
+  await batch.commit();
+  return next;
 }
 
 async function publishHandler(req, res) {
@@ -29,20 +96,30 @@ async function publishHandler(req, res) {
       return res.status(400).json({ error: 'Nenhum ficheiro para publicar.' });
     }
 
-    const projectRef = db.collection('projects').doc(projectId);
-    const projectSnap = await projectRef.get();
-    if (!projectSnap.exists) {
-      return res.status(404).json({ error: 'Projeto não encontrado.' });
-    }
-    const project = projectSnap.data() || {};
-    if (project.ownerId !== req.user.uid) {
-      return res.status(403).json({ error: 'Sem permissão neste projeto.' });
-    }
+    const { projectRef, project } = await assertProjectOwner(projectId, req.user.uid);
 
     const plan = req.userPlan || 'free';
     const isProLike = plan === 'pro' || plan === 'enterprise_master' || req.userRole === 'owner';
+    // Snapshot doc id stays projectId (stable overwrite on redeploy)
     const pubId = env === 'preview' ? `${projectId}_preview` : projectId;
-    const url = publishUrl(projectId, env);
+    const publicKey = resolveProjectPublicKey(project, projectId);
+    const url = buildPublishUrl(publicKey, env);
+
+    // Ensure registry entry for custom slug (idempotent)
+    if (project.slug && project.slug !== projectId) {
+      try {
+        await claimSlug({
+          projectId,
+          ownerId: req.user.uid,
+          slug: project.slug,
+          previousSlug: project.slug,
+        });
+      } catch (err) {
+        if (err.code === 'SLUG_TAKEN') {
+          return res.status(409).json({ error: err.message, code: err.code });
+        }
+      }
+    }
 
     const payload = {
       projectId,
@@ -51,6 +128,7 @@ async function publishHandler(req, res) {
       env,
       files,
       url,
+      slug: publicKey,
       plan: isProLike ? (plan === 'enterprise_master' ? 'enterprise_master' : 'pro') : 'free',
       showBadge: !isProLike,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -59,7 +137,6 @@ async function publishHandler(req, res) {
     await db.collection('publicProjects').doc(pubId).set(payload, { merge: true });
 
     const thumbName = name || project.name || 'Projeto';
-    // Lightweight branded placeholder until a real screenshot pipeline exists
     const initials = String(thumbName)
       .split(/\s+/)
       .filter(Boolean)
@@ -82,12 +159,152 @@ async function publishHandler(req, res) {
       { merge: true }
     );
 
-    res.json({ ok: true, url, pubId, env });
+    res.json({
+      ok: true,
+      url,
+      pubId,
+      env,
+      slug: publicKey,
+      projectId,
+    });
   } catch (err) {
     console.error('[deploy/publish]', err);
-    res.status(500).json({ error: err.message || 'Falha ao publicar.' });
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao publicar.', code: err.code });
   }
 }
+
+/** GET /api/deploy/slug/check?slug=meu-salao&projectId=optional */
+router.get('/slug/check', requireAuth, async (req, res) => {
+  try {
+    const normalized = normalizeSlug(req.query?.slug);
+    if (!normalized.ok) {
+      return res.json({ available: false, error: normalized.error, slug: null });
+    }
+    const { slug } = normalized;
+    const projectId = typeof req.query?.projectId === 'string' ? req.query.projectId : null;
+    const snap = await db.collection('projectSlugs').doc(slug).get();
+    if (!snap.exists) {
+      return res.json({ available: true, slug });
+    }
+    const ownerProjectId = snap.data()?.projectId;
+    const available = Boolean(projectId && ownerProjectId === projectId);
+    return res.json({
+      available,
+      slug,
+      error: available ? null : 'Este link já está em uso.',
+    });
+  } catch (err) {
+    console.error('[deploy/slug/check]', err);
+    res.status(500).json({ error: err.message || 'Falha ao verificar slug.' });
+  }
+});
+
+/** PUT /api/deploy/slug — { projectId, slug } — customize public path segment only */
+router.put('/slug', requireAuth, async (req, res) => {
+  try {
+    const { projectId, slug } = req.body || {};
+    if (!projectId || typeof projectId !== 'string') {
+      return res.status(400).json({ error: 'projectId é obrigatório.' });
+    }
+    const { projectRef, project } = await assertProjectOwner(projectId, req.user.uid);
+    const next = await claimSlug({
+      projectId,
+      ownerId: req.user.uid,
+      slug,
+      previousSlug: project.slug,
+    });
+
+    const prodUrl = buildPublishUrl(next, 'production');
+    const previewUrl = buildPublishUrl(next, 'preview');
+
+    await projectRef.set(
+      {
+        slug: next,
+        publishedUrl:
+          project.publishedEnv === 'preview'
+            ? previewUrl
+            : project.publishedUrl
+              ? prodUrl
+              : project.publishedUrl || null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    // Keep public snapshots' url/slug in sync when they exist
+    const updates = [
+      { id: projectId, env: 'production', url: prodUrl },
+      { id: `${projectId}_preview`, env: 'preview', url: previewUrl },
+    ];
+    for (const u of updates) {
+      const ref = db.collection('publicProjects').doc(u.id);
+      const snap = await ref.get();
+      if (snap.exists) {
+        await ref.set({ slug: next, url: u.url, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      }
+    }
+
+    res.json({
+      ok: true,
+      slug: next,
+      url: prodUrl,
+      previewUrl,
+      projectId,
+    });
+  } catch (err) {
+    console.error('[deploy/slug]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha ao atualizar slug.',
+      code: err.code,
+    });
+  }
+});
+
+/** GET /api/deploy/resolve/:key — public resolve slug|projectId → publication meta */
+router.get('/resolve/:key', async (req, res) => {
+  try {
+    const key = String(req.params.key || '').trim();
+    if (!key) return res.status(400).json({ error: 'key é obrigatório.' });
+    const env = req.query?.env === 'preview' ? 'preview' : 'production';
+
+    let projectId = key;
+    const direct = await db.collection('publicProjects').doc(env === 'preview' ? `${key}_preview` : key).get();
+    if (direct.exists) {
+      const data = direct.data() || {};
+      return res.json({
+        ok: true,
+        projectId: data.projectId || key,
+        slug: data.slug || key,
+        env: data.env || env,
+        name: data.name || null,
+        url: data.url || buildPublishUrl(data.slug || key, env),
+      });
+    }
+
+    const slugDoc = await db.collection('projectSlugs').doc(key.toLowerCase()).get();
+    if (slugDoc.exists) {
+      projectId = slugDoc.data()?.projectId || key;
+      const pubId = env === 'preview' ? `${projectId}_preview` : projectId;
+      const pub = await db.collection('publicProjects').doc(pubId).get();
+      if (pub.exists) {
+        const data = pub.data() || {};
+        return res.json({
+          ok: true,
+          projectId,
+          slug: data.slug || key,
+          env: data.env || env,
+          name: data.name || null,
+          url: data.url || buildPublishUrl(data.slug || key, env),
+        });
+      }
+    }
+
+    return res.status(404).json({ error: 'Publicação não encontrada.' });
+  } catch (err) {
+    console.error('[deploy/resolve]', err);
+    res.status(500).json({ error: err.message || 'Falha ao resolver.' });
+  }
+});
 
 /** POST /api/deploy/publish — production exige Pro/Owner; preview livre. */
 router.post('/publish', requireAuth, (req, res, next) => {

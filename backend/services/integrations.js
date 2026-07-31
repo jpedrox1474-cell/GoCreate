@@ -874,6 +874,18 @@ export async function loadUserIntegrationsForPrompt(uid) {
     };
   }
 
+  // Platform Firebase Google Auth — always available for generated apps
+  out.googleAuth = {
+    connected: true,
+    source: 'platform',
+    bridge: 'window.GoCreateAuth.signInWithGoogle()',
+  };
+  out.firebaseAuth = {
+    connected: true,
+    source: 'platform',
+    bridge: 'window.GoCreateAuth',
+  };
+
   return out;
 }
 
@@ -939,6 +951,17 @@ export async function createProjectMercadoPagoPayment({
   const email = payerEmail || `buyer_${uid}@gocreate.app`;
   const externalRef = `gc-proj-${projectId}-${Date.now()}`;
 
+  let publicPathKey = projectId;
+  if (projectId) {
+    try {
+      const projSnap = await db.collection('projects').doc(projectId).get();
+      const customSlug = String(projSnap.data()?.slug || '').trim().toLowerCase();
+      if (customSlug) publicPathKey = customSlug;
+    } catch {
+      /* keep projectId */
+    }
+  }
+
   if (method === 'preference') {
     const preference = new Preference(client);
     const appUrl = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
@@ -961,9 +984,9 @@ export async function createProjectMercadoPagoPayment({
           source: 'gocreate_integrations',
         },
         back_urls: {
-          success: `${appUrl}/p/${projectId}?billing=success`,
-          pending: `${appUrl}/p/${projectId}?billing=pending`,
-          failure: `${appUrl}/p/${projectId}?billing=failure`,
+          success: `${appUrl}/p/${publicPathKey}?billing=success`,
+          pending: `${appUrl}/p/${publicPathKey}?billing=pending`,
+          failure: `${appUrl}/p/${publicPathKey}?billing=failure`,
         },
         auto_return: 'approved',
       },
@@ -1041,6 +1064,16 @@ export async function createProjectStripePayment({
 
   if (mode === 'checkout') {
     const appUrl = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+    let publicPathKey = projectId;
+    if (projectId) {
+      try {
+        const projSnap = await db.collection('projects').doc(projectId).get();
+        const customSlug = String(projSnap.data()?.slug || '').trim().toLowerCase();
+        if (customSlug) publicPathKey = customSlug;
+      } catch {
+        /* keep */
+      }
+    }
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       line_items: [
@@ -1053,8 +1086,8 @@ export async function createProjectStripePayment({
           },
         },
       ],
-      success_url: `${appUrl}/p/${projectId}?billing=success`,
-      cancel_url: `${appUrl}/p/${projectId}?billing=cancel`,
+      success_url: `${appUrl}/p/${publicPathKey}?billing=success`,
+      cancel_url: `${appUrl}/p/${publicPathKey}?billing=cancel`,
       metadata: { projectId: String(projectId || ''), ownerId: uid },
     });
     return {
@@ -1400,6 +1433,16 @@ export async function resolvePublishedProjectOwner(projectId) {
   const pub = await db.collection('publicProjects').doc(projectId).get();
   if (pub.exists) {
     return pub.data()?.ownerId || null;
+  }
+  const slugDoc = await db.collection('projectSlugs').doc(String(projectId).toLowerCase()).get();
+  if (slugDoc.exists) {
+    const mappedId = slugDoc.data()?.projectId;
+    if (mappedId) {
+      const bySlug = await db.collection('publicProjects').doc(mappedId).get();
+      if (bySlug.exists) return bySlug.data()?.ownerId || null;
+      const projBySlug = await db.collection('projects').doc(mappedId).get();
+      if (projBySlug.exists) return projBySlug.data()?.ownerId || null;
+    }
   }
   const proj = await db.collection('projects').doc(projectId).get();
   if (proj.exists) {

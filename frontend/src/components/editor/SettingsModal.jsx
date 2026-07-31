@@ -9,7 +9,8 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
-import { updateProjectSettings } from '../../lib/projects';
+import { updateProjectSettings, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
+import { checkSlugAvailability, updateProjectSlug } from '../../lib/deployApi';
 import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../../lib/userSettings';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -27,19 +28,23 @@ export default function SettingsModal({
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [customDomain, setCustomDomain] = useState(project?.customDomain || '');
+  const [slug, setSlug] = useState(project?.slug || projectId || '');
   const [theme, setThemeLocal] = useState(preference);
   const [notifications, setNotifications] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [slugHint, setSlugHint] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setName(project?.name || '');
     setDescription(project?.description || '');
     setCustomDomain(project?.customDomain || '');
+    setSlug(project?.slug || projectId || '');
+    setSlugHint('');
     const s = getUserSettings();
     setThemeLocal(s.theme || preference);
     setNotifications(s.notifications);
-  }, [open, project?.name, project?.description, project?.customDomain, preference]);
+  }, [open, project?.name, project?.description, project?.customDomain, project?.slug, projectId, preference]);
 
   useEffect(() => {
     setThemeLocal(preference);
@@ -53,10 +58,41 @@ export default function SettingsModal({
   async function handleSave(e) {
     e.preventDefault();
     setSaving(true);
+    setSlugHint('');
     try {
       const trimmedName = name.trim();
       const trimmedDesc = description.trim();
       const trimmedDomain = customDomain.trim().toLowerCase();
+      const trimmedSlug = slug
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, '-')
+        .replace(/[^a-z0-9-]/g, '');
+
+      let nextSlug = project?.slug || null;
+      let nextPublishedUrl = project?.publishedUrl || null;
+
+      if (projectId && trimmedSlug && trimmedSlug !== (project?.slug || projectId)) {
+        if (!user?.getIdToken) throw new Error('Sessão inválida para alterar o link.');
+        const idToken = await user.getIdToken();
+        const check = await checkSlugAvailability({
+          idToken,
+          slug: trimmedSlug,
+          projectId,
+        });
+        if (!check.available) {
+          setSlugHint(check.error || 'Slug indisponível.');
+          throw new Error(check.error || 'Slug indisponível.');
+        }
+        const slugResult = await updateProjectSlug({
+          idToken,
+          projectId,
+          slug: check.slug || trimmedSlug,
+        });
+        nextSlug = slugResult.slug;
+        nextPublishedUrl = slugResult.url || nextPublishedUrl;
+        setSlug(nextSlug);
+      }
 
       if (projectId && trimmedName) {
         const nameChanged = trimmedName !== (project?.name || '');
@@ -64,12 +100,6 @@ export default function SettingsModal({
         const domainChanged = trimmedDomain !== (project?.customDomain || '');
         if (nameChanged || descChanged || domainChanged) {
           await updateProjectSettings(projectId, {
-            name: trimmedName,
-            description: trimmedDesc,
-            customDomain: trimmedDomain,
-          });
-          onProjectUpdated?.({
-            ...project,
             name: trimmedName,
             description: trimmedDesc,
             customDomain: trimmedDomain,
@@ -82,6 +112,14 @@ export default function SettingsModal({
         await syncDeployEmailPreference(user.uid, notifications);
       }
       setTheme(theme);
+      onProjectUpdated?.({
+        ...project,
+        name: trimmedName || project?.name,
+        description: trimmedDesc,
+        customDomain: trimmedDomain,
+        slug: nextSlug || project?.slug || null,
+        publishedUrl: nextPublishedUrl || project?.publishedUrl || null,
+      });
       onToast?.({ message: 'Configurações guardadas.', type: 'success' });
       onClose?.();
     } catch (err) {
@@ -98,7 +136,10 @@ export default function SettingsModal({
   const integrationsHref = projectId
     ? `/integrations?projectId=${encodeURIComponent(projectId)}`
     : '/integrations';
-  const publishedUrl = project?.publishedUrl || null;
+  const publicKey = getProjectPublicKey(slug || project?.slug, projectId);
+  const publishedUrl =
+    project?.publishedUrl ||
+    (projectId ? getPublishUrl(projectId, project?.publishedEnv || 'production', publicKey) : null);
 
   return (
     <ModalShell open={open} onClose={onClose} title="Configurações do projeto" wide>
@@ -135,6 +176,32 @@ export default function SettingsModal({
               placeholder="Breve descrição do projeto"
               className="w-full bg-zinc-950 border border-zinc-800 focus:border-blue-600 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none transition-all resize-none disabled:opacity-50 custom-scrollbar"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1.5">Link público (slug)</label>
+            <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden focus-within:border-blue-600">
+              <span className="pl-3 text-[11px] text-zinc-600 font-mono shrink-0">/p/</span>
+              <input
+                type="text"
+                value={slug}
+                onChange={(e) =>
+                  setSlug(
+                    e.target.value
+                      .toLowerCase()
+                      .replace(/[\s_]+/g, '-')
+                      .replace(/[^a-z0-9-]/g, '')
+                  )
+                }
+                disabled={!projectId}
+                placeholder="meu-salao"
+                className="w-full bg-transparent px-1.5 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none font-mono disabled:opacity-50"
+              />
+            </div>
+            <p className="mt-1 text-[10px] text-zinc-600">
+              Estável entre deploys. Só podes alterar esta parte do link (disponibilidade verificada).
+            </p>
+            {slugHint ? <p className="mt-1 text-[10px] text-amber-400">{slugHint}</p> : null}
           </div>
 
           <div>

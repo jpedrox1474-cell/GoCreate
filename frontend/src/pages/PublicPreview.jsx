@@ -15,7 +15,7 @@ function shouldShowGoCreateBadge(publication) {
 }
 
 export default function PublicPreview() {
-  const { projectId } = useParams();
+  const { projectId: pathKey } = useParams();
   const isPreviewEnv = Boolean(useMatch('/p/:projectId/preview'));
   const env = isPreviewEnv ? 'preview' : 'production';
 
@@ -31,7 +31,7 @@ export default function PublicPreview() {
 
     (async () => {
       try {
-        const data = await getPublishedProject(projectId, env);
+        const data = await getPublishedProject(pathKey, env);
         if (cancelled) return;
         if (!data?.files || !Object.keys(data.files).length) {
           setError('Esta publicação não existe ou ainda não tem ficheiros.');
@@ -49,9 +49,10 @@ export default function PublicPreview() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, env]);
+  }, [pathKey, env]);
 
   const showBadge = shouldShowGoCreateBadge(publication);
+  const runtimeProjectId = publication?.projectId || pathKey;
 
   if (loading) {
     return (
@@ -88,7 +89,7 @@ export default function PublicPreview() {
         files={publication.files}
         isGenerating={false}
         publicMode
-        projectId={projectId}
+        projectId={runtimeProjectId}
       />
 
       {showBadge && (

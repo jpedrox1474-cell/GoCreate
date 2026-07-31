@@ -33,6 +33,7 @@ export function buildIntegrationsAddonFromObject(userIntegrations = {}) {
 ## Integrações do utilizador
 Nenhuma integração social/pagamento BYO ligada ainda.
 - Mercado Pago / Pix: continue a emitir \`window.GoCreatePayments\` / fetch \`/api/integrations/mercadopago/public-create-payment\` e trate “não ligado” com CTA para /integrations.
+- Login Google / Firebase Auth: SEMPRE use \`window.GoCreateAuth.signInWithGoogle()\` (plataforma) — NÃO peça Client Secret.
 - WhatsApp: use wa.me + CTA para ligar em Integrações → Canais — nunca whatsapp-web.js no preview.
 - Instagram / Facebook / YouTube / TikTok: se o pedido precisar deles, gere UI + CTA “Ligue em Integrações”; NÃO invente tokens.`;
   }
@@ -141,6 +142,19 @@ ${
 - NÃO invente access tokens MP no código — o bridge já usa o token do servidor.`);
   }
 
+  const googleAuth = userIntegrations.googleAuth || userIntegrations.firebaseAuth;
+  if (googleAuth?.connected) {
+    lines.push(`
+### Login Google / Firebase Auth (plataforma)
+- Ligado via GoCreate (Firebase Google provider) — SEM Client Secret do utilizador.
+- SEMPRE use \`window.GoCreateAuth.signInWithGoogle()\`, \`onAuthStateChanged\`, \`signOut\`, \`getCurrentUser\`.
+- NÃO peça nem invente OAuth Client ID/Secret; NÃO embuta firebaseConfig manualmente.`);
+  } else {
+    lines.push(`
+### Login Google / Firebase Auth
+- Mesmo sem BYO: a plataforma injeta \`window.GoCreateAuth\` — use-o para qualquer “login com Google”.`);
+  }
+
   if (userIntegrations.stripe?.connected) {
     lines.push(`
 ### Stripe
@@ -150,9 +164,9 @@ ${
 
   lines.push(`
 ## Checklist ao gerar artefactos
-1. Se o app fala de WhatsApp/IG/FB/YT/TikTok/Pix e a secção acima tem a integração → USE os IDs/tokens listados automaticamente.
-2. Não diga “cole sua API key” para integrações já ligadas.
-3. Runtime Sandpack: React + Tailwind; pagamentos via GoCreatePayments; WhatsApp sem libs Node.`);
+1. Se o app fala de WhatsApp/IG/FB/YT/TikTok/Pix/Google login e a secção acima tem a integração → USE os IDs/tokens/bridges listados automaticamente.
+2. Não diga “cole sua API key” / Client Secret para integrações já ligadas ou de plataforma.
+3. Runtime Sandpack: React + Tailwind; pagamentos via GoCreatePayments; login Google via GoCreateAuth; WhatsApp sem libs Node.`);
 
   return lines.join('\n');
 }
@@ -197,6 +211,9 @@ export function buildIntegrationsPromptAddonFromIds(connectedIds = []) {
       obj.tiktok = { connected: true };
     } else if (id === 'stripe') {
       obj.stripe = { connected: true };
+    } else if (id === 'google' || id === 'google_oauth' || id === 'firebase_auth') {
+      obj.googleAuth = { connected: true, source: 'platform' };
+      obj.firebaseAuth = { connected: true, source: 'platform' };
     }
   }
   return buildIntegrationsAddonFromObject(obj);

@@ -39,6 +39,7 @@ const FILES = [
   'services/evolution.js',
   'services/meta.js',
   'services/suggestIntegrations.js',
+  'services/projectSlug.js',
   'services/oauth/pkce.js',
   'services/oauth/state.js',
   'services/oauth/providers.js',

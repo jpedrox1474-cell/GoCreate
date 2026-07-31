@@ -168,6 +168,27 @@ export default function SocialChannelsSection({
       .catch(() => {});
   }, [idToken, canUsePremium]);
 
+  // Deep-link from chat chip / Integrations#whatsapp → open QR modal
+  useEffect(() => {
+    const hash = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+    if (hash !== 'whatsapp' && hash !== 'whatsapp_evolution') return;
+    const el = document.getElementById('social-channels');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (canUsePremium) {
+      setWaOpen(true);
+    } else {
+      openPremiumPaywall?.();
+    }
+  }, [canUsePremium, openPremiumPaywall]);
+
+  useEffect(() => {
+    const hash = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+    if (hash === 'google' || hash === 'google_oauth' || hash === 'firebase_auth') {
+      const el = document.getElementById('integrations-grid') || document.getElementById('social-channels');
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
+
   const guardPremium = useCallback(() => {
     if (canUsePremium) return true;
     openPremiumPaywall?.();
@@ -323,7 +344,7 @@ export default function SocialChannelsSection({
   }
 
   return (
-    <section className="mb-10">
+    <section id="social-channels" className="mb-10">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-500/90 mb-1.5 flex items-center gap-1.5">

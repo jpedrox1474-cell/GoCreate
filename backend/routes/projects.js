@@ -21,6 +21,8 @@ async function deleteQueryInChunks(query, chunkSize = 400) {
 
 async function cascadeDeleteProject(projectId) {
   const projectRef = db.collection('projects').doc(projectId);
+  const projectSnap = await projectRef.get();
+  const slug = String(projectSnap.data()?.slug || '').trim().toLowerCase();
 
   await deleteQueryInChunks(projectRef.collection('messages'));
   await deleteQueryInChunks(projectRef.collection('automations'));
@@ -37,6 +39,18 @@ async function cascadeDeleteProject(projectId) {
   for (const pubId of pubIds) {
     try {
       await db.collection('publicProjects').doc(pubId).delete();
+    } catch {
+      /* missing ok */
+    }
+  }
+
+  if (slug && slug !== projectId) {
+    try {
+      const slugRef = db.collection('projectSlugs').doc(slug);
+      const slugSnap = await slugRef.get();
+      if (slugSnap.exists && slugSnap.data()?.projectId === projectId) {
+        await slugRef.delete();
+      }
     } catch {
       /* missing ok */
     }

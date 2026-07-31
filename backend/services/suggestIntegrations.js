@@ -18,7 +18,13 @@ const RULES = [
   },
   {
     id: 'whatsapp',
-    test: /\b(whatsapp|whats\s*app|\bzap\b|atendimento\s+no\s+zap)\b/i,
+    test:
+      /\b(whatsapp|whats\s*app|whattsapp|\bwpp\b|\bzap\b|zapzap|atendimento\s+no\s+zap|disparo(\s+em\s+massa)?|blast|funil\s+(de\s+)?whats|bot\s+(de\s+)?whats|evolution\s*api|api\s+oficial\s+do\s+whats|confirma[cç][aã]o\s+por\s+(whats|zap|mensagem)|notifica[cç][aã]o\s+no\s+(whats|zap|celular)|campanha\s+de\s+mensagem|envio\s+em\s+massa)\b/i,
+  },
+  {
+    id: 'google',
+    test:
+      /\b((login|entrar|sign[\s-]?in|auth(entication)?|autentica[cç][aã]o|cadastro|registo|registro)\s+(com\s+|via\s+|using\s+|with\s+)?google|google\s+(login|sign[\s-]?in|auth|oauth|authentication)|firebase\s+auth|oauth\s+google|entrar\s+com\s+o\s+google|login\s+google)\b/i,
   },
   {
     id: 'instagram',
@@ -44,11 +50,17 @@ export const SUGGESTION_TO_PROVIDER = {
   stripe: 'stripe',
   paypal: 'paypal',
   whatsapp: 'whatsapp_evolution',
+  google: 'google_oauth',
+  google_oauth: 'google_oauth',
+  firebase_auth: 'firebase_auth',
   instagram: 'instagram',
   facebook: 'facebook',
   youtube: 'youtube',
   tiktok: 'tiktok',
 };
+
+/** Platform-powered auth: still surface chip so user knows Google is ready for generated apps. */
+const PLATFORM_AUTH_SUGGESTIONS = new Set(['google', 'google_oauth', 'firebase_auth']);
 
 /**
  * @param {string} text
@@ -80,6 +92,13 @@ export function detectSuggestedIntegrations(text) {
   ) {
     found.push('instagram', 'whatsapp');
   }
+  // Auth genérico com Google implícito no ecossistema GoCreate
+  if (
+    !found.includes('google') &&
+    /\b(login\s+social|social\s+login|entrar\s+com\s+rede\s+social|auth\s+social)\b/i.test(raw)
+  ) {
+    found.push('google');
+  }
   return [...new Set(found)];
 }
 
@@ -90,6 +109,7 @@ export function detectSuggestedIntegrations(text) {
  */
 export function filterUnconnectedSuggestions(suggested, providers = {}) {
   return (suggested || []).filter((id) => {
+    if (PLATFORM_AUTH_SUGGESTIONS.has(id)) return true;
     const providerId = SUGGESTION_TO_PROVIDER[id] || id;
     return providers[providerId]?.status !== 'connected';
   });

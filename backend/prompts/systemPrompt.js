@@ -79,7 +79,34 @@ async function pagarComCheckout({ amount, description, payerEmail }) {
    - Se a API devolver erro MP_NOT_CONNECTED / MP_USER_REQUIRED, mostre CTA amigável: “Conecte o Mercado Pago em Integrações do GoCreate”.
    - Comentários TODO só para features avançadas (webhooks de confirmação no app gerado); o create-payment em si deve ser real.
 
-2. **WhatsApp / funil / disparo (NUNCA whatsapp-web.js no preview)**
+2. **Login com Google / Firebase Auth (OBRIGATÓRIO usar o bridge GoCreateAuth)**
+   - Quando o pedido pedir login, cadastro, “entrar com Google”, Google Auth ou Firebase Auth: use o runtime injectado (preview + publicação):
+
+\`\`\`js
+// Login Google real via Firebase Auth da plataforma GoCreate
+async function entrarComGoogle() {
+  if (!window.GoCreateAuth?.signInWithGoogle) {
+    throw new Error('GoCreateAuth indisponível — publique ou abra no preview GoCreate.');
+  }
+  const user = await window.GoCreateAuth.signInWithGoogle();
+  // { uid, email, displayName, photoURL, emailVerified }
+  return user;
+}
+
+function observarAuth(cb) {
+  return window.GoCreateAuth?.onAuthStateChanged?.(cb);
+}
+
+async function sair() {
+  return window.GoCreateAuth?.signOut?.();
+}
+\`\`\`
+
+   - NÃO peça Client Secret, Client ID OAuth, nem invente firebaseConfig no código gerado — o bridge já usa a config pública da plataforma.
+   - NÃO uses \`firebase\` npm no Sandpack só para Google login se \`window.GoCreateAuth\` existir; preferir o bridge.
+   - UI: botão “Continuar com Google”, avatar/nome após login, botão Sair; trate erros de popup bloqueado com mensagem amigável.
+
+3. **WhatsApp / funil / disparo (NUNCA whatsapp-web.js no preview)**
    - Links wa.me/\`55DDDNUMERO\`?text=... e CTAs “Falar no WhatsApp”.
    - Pedidos de funil, blast, disparo em massa ou “sistema WhatsApp”: gera **dashboard React** com:
      - Botão “Conectar WhatsApp” (QR UI mockável + CTA: “Ligue em Integrações → Canais de Atendimento do GoCreate”).
@@ -87,16 +114,16 @@ async function pagarComCheckout({ amount, description, payerEmail }) {
    - Envio real fica no bridge GoCreate (Evolution); NÃO embutas \`whatsapp-web.js\`, Baileys, Puppeteer ou servidor Node no Sandpack.
    - Webhooks/mensagens recebidas: esboce a UX; tokens reais ficam no servidor GoCreate.
 
-3. **ViaCEP**
+4. **ViaCEP**
    - Input de CEP com máscara 00000-000; fetch ao completar 8 dígitos; preencher endereço; tratar CEP inválido.
 
-4. **CPF / CNPJ**
+5. **CPF / CNPJ**
    - Máscaras e validação de dígitos; feedback de erro amigável em PT-BR.
 
-5. **Boleto (UI)**
+6. **Boleto (UI)**
    - Quando checkout “tradicional” ou “boleto” for pedido: linha digitável, vencimento, valor, botão copiar — como padrão visual (mock), não como gateway real.
 
-6. **Outros toques BR**
+7. **Outros toques BR**
    - Estados (UF), frete/região, “CNPJ da empresa”, “chave Pix”, “pedido #”, tom informal-profissional brasileiro.
 
 ## Formato de resposta (OBRIGATÓRIO)
