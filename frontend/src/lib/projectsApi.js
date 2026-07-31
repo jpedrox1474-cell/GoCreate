@@ -1,5 +1,7 @@
 // Cliente DELETE /api/projects + helpers de thumbnail.
 
+import { getProjectInitials, getProjectThumbPalette } from './projectThumb';
+
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 function apiUrl(path) {
@@ -7,56 +9,36 @@ function apiUrl(path) {
 }
 
 /**
- * Gera SVG data-URL como placeholder (sem Unsplash).
+ * Gera SVG data-URL no estilo da 1ª versão (chrome + gradiente horizontal + iniciais).
+ * Sem Unsplash / fotos stock.
  * @param {string} name
  * @param {string} [colorClass] Tailwind-ish gradient hint
  */
 export function buildProjectThumbnailDataUrl(name = 'Projeto', colorClass = '') {
   const label = String(name || 'Projeto').trim() || 'Projeto';
-  const initials = label
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() || '')
-    .join('') || 'GC';
-
-  const palette = [
-    ['#1e3a5f', '#2563eb'],
-    ['#064e3b', '#059669'],
-    ['#4c1d95', '#7c3aed'],
-    ['#7c2d12', '#ea580c'],
-    ['#881337', '#e11d48'],
-    ['#164e63', '#0891b2'],
-  ];
-  let h = 0;
-  for (let i = 0; i < label.length; i += 1) h = (h * 31 + label.charCodeAt(i)) >>> 0;
-  const [c1, c2] = palette[h % palette.length];
-  // Prefer explicit blues if color hint mentions blue
-  const from = /emerald|teal/.test(colorClass)
-    ? ['#064e3b', '#059669']
-    : /violet|purple/.test(colorClass)
-      ? ['#4c1d95', '#7c3aed']
-      : /amber|orange/.test(colorClass)
-        ? ['#7c2d12', '#ea580c']
-        : /rose|pink/.test(colorClass)
-          ? ['#881337', '#e11d48']
-          : /cyan/.test(colorClass)
-            ? ['#164e63', '#0891b2']
-            : [c1, c2];
-
+  const initials = getProjectInitials(label);
+  const { stops } = getProjectThumbPalette(label, colorClass);
+  const [c1, c2, c3] = stops;
   const safe = label.replace(/[<>&"']/g, '').slice(0, 28);
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="${from[0]}"/>
-      <stop offset="100%" stop-color="${from[1]}"/>
+    <linearGradient id="g" x1="0" y1="0.5" x2="1" y2="0.5">
+      <stop offset="0%" stop-color="${c1}"/>
+      <stop offset="50%" stop-color="${c2}"/>
+      <stop offset="100%" stop-color="${c3}"/>
     </linearGradient>
   </defs>
   <rect width="800" height="450" fill="#09090b"/>
-  <rect x="0" y="0" width="800" height="450" fill="url(#g)" opacity="0.85"/>
-  <rect x="48" y="48" width="704" height="354" rx="16" fill="rgba(9,9,11,0.45)" stroke="rgba(255,255,255,0.08)"/>
-  <text x="400" y="210" text-anchor="middle" font-family="system-ui,sans-serif" font-size="72" font-weight="700" fill="rgba(255,255,255,0.92)">${initials}</text>
-  <text x="400" y="270" text-anchor="middle" font-family="system-ui,sans-serif" font-size="22" fill="rgba(255,255,255,0.55)">${safe}</text>
+  <rect x="0" y="0" width="800" height="36" fill="#18181b"/>
+  <circle cx="22" cy="18" r="6" fill="#ef4444"/>
+  <circle cx="42" cy="18" r="6" fill="#fbbf24"/>
+  <circle cx="62" cy="18" r="6" fill="#22c55e"/>
+  <rect x="82" y="12" width="220" height="12" rx="4" fill="#27272a"/>
+  <rect x="0" y="36" width="800" height="414" fill="url(#g)"/>
+  <text x="400" y="230" text-anchor="middle" font-family="system-ui,sans-serif" font-size="96" font-weight="700" fill="rgba(255,255,255,0.95)">${initials}</text>
+  <text x="400" y="290" text-anchor="middle" font-family="system-ui,sans-serif" font-size="22" fill="rgba(255,255,255,0.7)">${safe}</text>
+  <rect x="36" y="370" width="48" height="48" rx="10" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.12)"/>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }

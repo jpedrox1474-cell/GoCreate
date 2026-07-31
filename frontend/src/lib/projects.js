@@ -66,10 +66,8 @@ export function mapProjectDoc(d) {
   const data = d.data();
   const name = data.name || 'Projeto';
   const color = data.color || 'from-blue-600 to-indigo-600';
-  const thumbnail =
-    data.thumbnailUrl ||
-    data.thumbnail ||
-    buildProjectThumbnailDataUrl(name, color);
+  // Always use the branded initials/gradient thumb for cards (ignore Unsplash / old screenshots).
+  const thumbnail = buildProjectThumbnailDataUrl(name, color);
   return {
     id: d.id,
     name,

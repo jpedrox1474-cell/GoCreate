@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Plus,
   Clock,
-  FolderKanban,
   Search,
   Loader2,
   Zap,
@@ -22,11 +21,11 @@ import {
   deleteProjects,
   duplicateProject,
 } from '../lib/projects';
-import { buildProjectThumbnailDataUrl } from '../lib/projectsApi';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import Toast from '../components/Toast';
 import ProjectActionsMenu from '../components/ProjectActionsMenu';
+import ProjectCardThumbnail from '../components/ProjectCardThumbnail';
 
 const STATUS_LABEL = {
   draft: { text: 'Rascunho', className: 'bg-zinc-800 text-zinc-400 border-zinc-700' },
@@ -34,13 +33,6 @@ const STATUS_LABEL = {
 };
 
 const HIDDEN_DEMOS_KEY = 'gocreate-hidden-demos';
-
-function getProjectThumb(project) {
-  return (
-    project.thumbnail ||
-    buildProjectThumbnailDataUrl(project.name, project.color)
-  );
-}
 
 function loadHiddenDemos() {
   try {
@@ -234,7 +226,6 @@ export default function Dashboard() {
 
   function ProjectCard({ project, isDemo = false }) {
     const status = STATUS_LABEL[project.status] || STATUS_LABEL.draft;
-    const thumb = getProjectThumb(project);
     const selected = selectedIds.has(project.id);
 
     return (
@@ -273,38 +264,11 @@ export default function Dashboard() {
           }}
           className="block"
         >
-          {/* Browser-chrome thumbnail */}
-          <div className="relative h-36 bg-zinc-950 border-b border-zinc-800 overflow-hidden">
-            <div className="absolute top-0 inset-x-0 h-6 bg-zinc-900/95 border-b border-zinc-800 flex items-center gap-1.5 px-2.5 z-10">
-              <span className="w-2 h-2 rounded-full bg-zinc-700" />
-              <span className="w-2 h-2 rounded-full bg-zinc-700" />
-              <span className="w-2 h-2 rounded-full bg-zinc-700" />
-              <span className="ml-2 flex-1 h-3 rounded bg-zinc-800/80 max-w-[55%]" />
-            </div>
-            <img
-              src={thumb}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-95 transition-opacity pt-6"
-              loading="lazy"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-              }}
-            />
-            <div
-              className={`absolute inset-0 pt-6 bg-gradient-to-br ${project.color || 'from-blue-600 to-indigo-600'} opacity-40 mix-blend-overlay pointer-events-none`}
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/80 via-transparent to-transparent pointer-events-none" />
-            <div className="absolute bottom-3 left-3 flex items-center gap-2 z-[1]">
-              <div className="w-8 h-8 rounded-lg bg-black/40 backdrop-blur-sm flex items-center justify-center border border-white/10">
-                <FolderKanban size={14} className="text-white" />
-              </div>
-            </div>
-            {isDemo && (
-              <span className="absolute top-8 left-2 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-black/50 text-white/90 border border-white/10 z-[1]">
-                Exemplo
-              </span>
-            )}
-          </div>
+          <ProjectCardThumbnail
+            name={project.name}
+            color={project.color}
+            isDemo={isDemo}
+          />
           <div className="p-4">
             <div className="flex items-start justify-between gap-2 mb-1">
               <h2 className="text-sm font-semibold text-zinc-100 truncate">{project.name}</h2>
