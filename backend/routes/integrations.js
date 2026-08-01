@@ -84,18 +84,18 @@ router.get('/status', requireAuth, async (req, res) => {
 router.post('/connect/:providerId', requireAuth, async (req, res) => {
   try {
     const providerId = String(req.params.providerId || '').trim();
-    if (providerId === 'stripe' || providerId === 'paypal') {
+    if (providerId === 'stripe' || providerId === 'paypal' || providerId === 'mercadopago') {
       return res.status(400).json({
         error: `Usa OAuth: GET /api/integrations/${providerId}/oauth/start (botão Conectar).`,
         code: 'USE_OAUTH_CONNECT',
-        message: `Não cole Client Secret / API keys. Clique em Conectar para abrir o login oficial.`,
+        message: `Não cole Client Secret / Access Token. Clique em Conectar para abrir o login oficial.`,
       });
     }
-    if (providerId === 'mercadopago' || providerId === 'pix') {
+    if (providerId === 'pix') {
       return res.status(400).json({
-        error: 'Mercado Pago usa o token da plataforma GoCreate — sem colar Access Token.',
+        error: 'Pix usa Mercado Pago — conecte Mercado Pago via OAuth ou use o token da plataforma.',
         code: 'PLATFORM_PROVIDER',
-        message: 'Mercado Pago já está ligado pela plataforma quando MERCADOPAGO_ACCESS_TOKEN existe.',
+        message: 'Conecte Mercado Pago em Integrações → Conectar com Mercado Pago.',
       });
     }
     if (!CONNECTABLE_PROVIDERS.has(providerId)) {
@@ -142,7 +142,7 @@ router.post('/disconnect/:providerId', requireAuth, async (req, res) => {
         code: 'USE_META_DISCONNECT',
       });
     }
-    if (providerId === 'youtube' || providerId === 'tiktok' || providerId === 'stripe' || providerId === 'paypal') {
+    if (providerId === 'youtube' || providerId === 'tiktok' || providerId === 'stripe' || providerId === 'paypal' || providerId === 'mercadopago') {
       return res.status(400).json({
         error: `Usa POST /api/integrations/${providerId}/oauth/disconnect.`,
         code: 'USE_OAUTH_DISCONNECT',
@@ -476,7 +476,7 @@ router.get('/meta/config', requireAuth, (_req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// YouTube / TikTok / Stripe Connect / PayPal — OAuth popup
+// YouTube / TikTok / Stripe Connect / PayPal / Mercado Pago — OAuth popup
 // ═══════════════════════════════════════════════════════════════════════════
 
 router.get('/:platform/oauth/start', requireAuth, async (req, res, next) => {
@@ -564,6 +564,7 @@ router.get('/:platform/oauth/callback', async (req, res) => {
       fields.tiktokUsername ||
       fields.youtubeChannelTitle ||
       fields.stripeUserId ||
+      fields.mpUserId ||
       fields.email ||
       null;
 

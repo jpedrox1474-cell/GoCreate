@@ -96,7 +96,7 @@ export const PLATFORM_PROVIDERS = new Set([
   'cloudinary',
   'viacep',
   'pix',
-  'mercadopago',
+  // mercadopago → OAuth Connect (seller); billing plataforma continua via env
 ]);
 
 function secretsRef(uid, providerId) {
@@ -302,7 +302,7 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
   const providers = {};
 
   for (const id of PLATFORM_PROVIDERS) {
-    if (id === 'mercadopago' || id === 'pix') continue;
+    if (id === 'pix') continue;
     providers[id] = {
       id,
       status: 'connected',
@@ -311,34 +311,47 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
     };
   }
 
-  // Mercado Pago / Pix: token da plataforma (env). BYO user opcional legado se existir.
+  // Mercado Pago — OAuth Connect (conta do vendedor) + billing da plataforma
   const mpUser = integrationsMeta.mercadopago;
   const mpUserConnected = Boolean(mpUser?.connected);
   const mpPlatform = isMercadoPagoConfigured();
-  const mpOk = mpPlatform || mpUserConnected;
+  const mpOAuthReady = oauthConfigured('mercadopago');
   providers.mercadopago = {
     id: 'mercadopago',
-    status: mpOk ? 'connected' : 'available',
-    source: mpPlatform ? 'platform' : mpUserConnected ? 'user' : 'none',
-    meta: {
-      connected: mpOk,
-      label: mpPlatform
-        ? 'Ligado (plataforma)'
-        : mpUserConnected
-          ? mpUser?.label || 'Access Token (conta)'
-          : undefined,
-      platformPowered: mpPlatform,
-    },
+    status: mpUserConnected ? 'connected' : 'available',
+    source: mpUserConnected ? 'oauth' : 'none',
+    meta: mpUserConnected
+      ? {
+          ...stripTimestamps(mpUser),
+          label:
+            mpUser?.label ||
+            (mpUser?.mpUserId ? `Mercado Pago (ID ${mpUser.mpUserId})` : 'Mercado Pago OAuth'),
+        }
+      : {
+          oauthConfigured: mpOAuthReady,
+          platformBilling: mpPlatform,
+          label: mpOAuthReady
+            ? 'Conectar com Mercado Pago'
+            : mpPlatform
+              ? 'OAuth não configurado (billing plataforma OK)'
+              : undefined,
+        },
   };
   providers.pix = {
     id: 'pix',
-    status: mpOk ? 'connected' : 'available',
-    source: mpPlatform ? 'platform' : mpUserConnected ? 'user' : 'none',
+    status: mpUserConnected || mpPlatform ? 'connected' : 'available',
+    source: mpUserConnected ? 'oauth' : mpPlatform ? 'platform' : 'none',
     meta: {
-      connected: mpOk,
+      connected: mpUserConnected || mpPlatform,
       viaMercadoPago: true,
-      label: mpPlatform ? 'Ligado (plataforma)' : undefined,
-      platformPowered: mpPlatform,
+      label: mpUserConnected
+        ? mpUser?.mpUserId
+          ? `Via MP OAuth (ID ${mpUser.mpUserId})`
+          : 'Via Mercado Pago OAuth'
+        : mpPlatform
+          ? 'Ligado (plataforma)'
+          : undefined,
+      platformPowered: !mpUserConnected && mpPlatform,
     },
   };
 
@@ -473,6 +486,7 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
       tiktokOAuth: oauthConfigured('tiktok'),
       stripeOAuth: oauthConfigured('stripe'),
       paypalOAuth: oauthConfigured('paypal'),
+      mercadopagoOAuth: oauthConfigured('mercadopago'),
     },
   };
 }
@@ -581,10 +595,10 @@ export async function clearMetaSocialConnection(uid) {
 }
 
 /**
- * Persiste tokens OAuth YouTube/TikTok/Stripe/PayPal (secrets) + meta pública.
+ * Persiste tokens OAuth YouTube/TikTok/Stripe/PayPal/Mercado Pago (secrets) + meta pública.
  */
 export async function saveSocialOAuthConnection(uid, platform, fields) {
-  const allowed = new Set(['youtube', 'tiktok', 'stripe', 'paypal']);
+  const allowed = new Set(['youtube', 'tiktok', 'stripe', 'paypal', 'mercadopago']);
   if (!allowed.has(platform)) {
     const err = new Error('Plataforma OAuth inválida.');
     err.status = 400;
@@ -684,6 +698,42 @@ export async function saveSocialOAuthConnection(uid, platform, fields) {
     };
   }
 
+  if (platform === 'mercadopago') {
+    await secretsRef(uid, 'mercadopago').set(
+      {
+        providerId: 'mercadopago',
+        source: 'oauth',
+        accessToken: fields.accessToken || null,
+        refreshToken: fields.refreshToken || null,
+        publicKey: fields.publicKey || null,
+        mpUserId: fields.mpUserId || null,
+        connectedViaOAuth: true,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    const meta = {
+      connected: true,
+      source: 'oauth',
+      connectedViaOAuth: true,
+      mpUserId: fields.mpUserId || null,
+      hasAccessToken: Boolean(fields.accessToken),
+      hasPublicKey: Boolean(fields.publicKey),
+      label: fields.mpUserId
+        ? `Mercado Pago (ID ${fields.mpUserId})`
+        : 'Mercado Pago OAuth',
+      connectedAt: now,
+      updatedAt: now,
+    };
+    await userRef(uid).set({ integrations: { mercadopago: meta } }, { merge: true });
+    return {
+      success: true,
+      providerId: 'mercadopago',
+      displayName: fields.mpUserId ? `MP ${fields.mpUserId}` : 'Mercado Pago',
+      meta: stripTimestamps(meta),
+    };
+  }
+
   // paypal
   await secretsRef(uid, 'paypal').set(
     {
@@ -721,7 +771,7 @@ export async function saveSocialOAuthConnection(uid, platform, fields) {
 }
 
 export async function clearSocialOAuthConnection(uid, platform) {
-  const allowed = new Set(['youtube', 'tiktok', 'stripe', 'paypal']);
+  const allowed = new Set(['youtube', 'tiktok', 'stripe', 'paypal', 'mercadopago']);
   if (!allowed.has(platform)) {
     const err = new Error('Plataforma OAuth inválida.');
     err.status = 400;
@@ -859,10 +909,16 @@ export async function loadUserIntegrationsForPrompt(uid) {
   }
 
   if (providers.mercadopago?.status === 'connected') {
+    const mpCreds =
+      providers.mercadopago.source === 'oauth'
+        ? await getStoredCredentials(uid, 'mercadopago')
+        : null;
     out.mercadopago = {
       connected: true,
       platform: providers.mercadopago.source === 'platform',
       source: providers.mercadopago.source || 'none',
+      mpUserId: providers.mercadopago.meta?.mpUserId || mpCreds?.mpUserId || null,
+      hasPublicKey: Boolean(mpCreds?.publicKey || providers.mercadopago.meta?.hasPublicKey),
     };
   }
 
@@ -902,11 +958,21 @@ export async function loadUserIntegrationsForPrompt(uid) {
  * plataforma não tiver token.
  */
 async function resolveMpAccessToken(uid, { preferTest = true } = {}) {
+  // Conta OAuth do vendedor tem prioridade sobre token da plataforma
+  const creds = await getStoredCredentials(uid, 'mercadopago');
+  if (creds?.accessToken && (creds.source === 'oauth' || creds.connectedViaOAuth)) {
+    return {
+      accessToken: creds.accessToken,
+      source: 'user_oauth',
+      mode: isTestAccessToken(creds.accessToken) ? 'test' : 'live',
+      publicKey: creds.publicKey || null,
+      mpUserId: creds.mpUserId || null,
+    };
+  }
   const platform = getAccessTokenForAppPayments({ preferTest });
   if (platform?.accessToken) {
     return platform;
   }
-  const creds = await getStoredCredentials(uid, 'mercadopago');
   if (creds?.accessToken) {
     return {
       accessToken: creds.accessToken,

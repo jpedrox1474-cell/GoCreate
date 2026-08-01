@@ -60,7 +60,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import { PREMIUM_REQUIRED_MESSAGE } from '../lib/plans';
 
-const OAUTH_PROVIDERS = new Set(['github', 'stripe', 'paypal']);
+const OAUTH_PROVIDERS = new Set(['github', 'stripe', 'paypal', 'mercadopago']);
 const ICONS = {
   Wallet,
   CreditCard,
@@ -246,8 +246,8 @@ export default function Integrations() {
       }
       setToast({
         message:
-          item.id === 'mercadopago' || item.id === 'pix'
-            ? `${item.name} usa o token da plataforma GoCreate — já ligado quando o servidor tem MERCADOPAGO_ACCESS_TOKEN.`
+          item.id === 'pix'
+            ? 'Pix usa Mercado Pago — conecta Mercado Pago nesta página ou usa o token da plataforma.'
             : `${item.name} já faz parte da plataforma GoCreate.`,
         type: 'info',
       });
@@ -278,7 +278,10 @@ export default function Integrations() {
       return;
     }
 
-    if (item.connectType === 'oauth' && (item.id === 'stripe' || item.id === 'paypal')) {
+    if (
+      item.connectType === 'oauth' &&
+      (item.id === 'stripe' || item.id === 'paypal' || item.id === 'mercadopago')
+    ) {
       setBusyId(item.id);
       try {
         const token = await user.getIdToken();
@@ -294,9 +297,11 @@ export default function Integrations() {
               err?.details?.hint ||
               err?.details?.note ||
               err.message ||
-              (item.id === 'paypal'
-                ? 'PayPal OAuth: define PAYPAL_CLIENT_ID e PAYPAL_CLIENT_SECRET no servidor e faz redeploy.'
-                : `${item.name} OAuth ainda não configurado no servidor.`),
+              (item.id === 'mercadopago'
+                ? 'Mercado Pago OAuth: define TENANT_MP_OAUTH_APP_ID + TENANT_MP_OAUTH_APP_SECRET no servidor, regista o redirect URI no painel MP e faz redeploy.'
+                : item.id === 'paypal'
+                  ? 'PayPal OAuth: define PAYPAL_CLIENT_ID e PAYPAL_CLIENT_SECRET no servidor e faz redeploy.'
+                  : `${item.name} OAuth ainda não configurado no servidor.`),
             type: 'error',
           });
         } else {
@@ -523,9 +528,11 @@ export default function Integrations() {
                         : 'Gerir'
                       : item.id === 'google_oauth' || item.id === 'firebase_auth'
                         ? 'Entrar com Google'
-                        : item.connectType === 'oauth'
-                          ? 'Conectar'
-                          : 'Ligar'}
+                        : item.id === 'mercadopago'
+                          ? 'Conectar com Mercado Pago'
+                          : item.connectType === 'oauth'
+                            ? 'Conectar'
+                            : 'Ligar'}
                 </button>
               </article>
             );

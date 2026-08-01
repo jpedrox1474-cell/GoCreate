@@ -1,13 +1,15 @@
 /**
- * OAuth popup platforms — YouTube, TikTok, Stripe Connect, PayPal.
+ * OAuth popup platforms — YouTube, TikTok, Stripe Connect, PayPal, Mercado Pago.
  * postMessage type: gocreate-oauth.
  */
 import { saveOAuthState } from './state.js';
 import { createOAuthState, createCodeVerifier, createCodeChallenge } from './pkce.js';
 
-const PLATFORMS = ['youtube', 'tiktok', 'stripe', 'paypal'];
+const PLATFORMS = ['youtube', 'tiktok', 'stripe', 'paypal', 'mercadopago'];
 /** Social channels that require premium plan. */
 export const PREMIUM_OAUTH_PLATFORMS = new Set(['youtube', 'tiktok']);
+
+const MP_AUTH_BASE = 'https://auth.mercadopago.com.br/authorization';
 
 function pick(...keys) {
   for (const k of keys) {
@@ -15,6 +17,16 @@ function pick(...keys) {
     if (v) return v;
   }
   return '';
+}
+
+function isMpOAuthClientId(clientId) {
+  const id = String(clientId || '').trim();
+  return Boolean(id && /^\d{10,}$/.test(id));
+}
+
+function isMpPkceEnabled() {
+  const v = String(process.env.MP_OAUTH_PKCE || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
 }
 
 export function getPublicApiUrl() {
@@ -59,6 +71,27 @@ export function getOAuthConfig(platform) {
       mode: pick('PAYPAL_MODE') || 'sandbox',
     };
   }
+  if (platform === 'mercadopago') {
+    // TEMP teste: mesmas vars TENANT_MP_* do BarberPro Connect.
+    // Redirect canónico GoCreate (registar no painel MP):
+    //   {PUBLIC_APP_URL}/api/integrations/mercadopago/oauth/callback
+    const clientId = pick(
+      'MERCADOPAGO_OAUTH_CLIENT_ID',
+      'TENANT_MP_OAUTH_CLIENT_ID',
+      'TENANT_MP_OAUTH_APP_ID',
+      'MP_OAUTH_CLIENT_ID'
+    );
+    const clientSecret = pick(
+      'MERCADOPAGO_OAUTH_CLIENT_SECRET',
+      'TENANT_MP_OAUTH_APP_SECRET',
+      'MP_OAUTH_CLIENT_SECRET'
+    );
+    return {
+      clientId: isMpOAuthClientId(clientId) ? clientId : '',
+      clientSecret,
+      pkce: isMpPkceEnabled(),
+    };
+  }
   return { clientId: '', clientSecret: '' };
 }
 
@@ -71,6 +104,9 @@ export function oauthConfigured(platform) {
   if (platform === 'stripe') {
     // Connect needs ca_ client id + platform sk_
     return Boolean(c.clientId?.startsWith('ca_') && c.clientSecret?.startsWith('sk_'));
+  }
+  if (platform === 'mercadopago') {
+    return Boolean(isMpOAuthClientId(c.clientId) && c.clientSecret);
   }
   return Boolean(c.clientId && c.clientSecret);
 }
@@ -101,6 +137,18 @@ export function oauthConfigHints(platform) {
       console: 'https://developer.paypal.com/dashboard/applications',
       redirect: `${base}/api/integrations/paypal/oauth/callback`,
       note: 'App REST API → Login with PayPal. Adicione o redirect URI. PAYPAL_MODE=live|sandbox.',
+    },
+    mercadopago: {
+      vars: [
+        'TENANT_MP_OAUTH_APP_ID',
+        'TENANT_MP_OAUTH_APP_SECRET',
+        'MERCADOPAGO_OAUTH_CLIENT_ID',
+        'MERCADOPAGO_OAUTH_CLIENT_SECRET',
+      ],
+      console: 'https://www.mercadopago.com.br/developers/panel/app',
+      redirect: `${base}/api/integrations/mercadopago/oauth/callback`,
+      note:
+        'OAuth Connect (vendedor). TEMP: pode usar a app MP do BarberPro — registe o redirect URI acima no painel. Credenciais de produção → Client ID + Client Secret.',
     },
   };
   return hints[platform] || null;
@@ -204,6 +252,25 @@ export async function buildAuthorizeUrl(platform, uid) {
       state,
     });
     authUrl = `${host}/signin/authorize?${params}`;
+  } else if (platform === 'mercadopago') {
+    const { clientId, pkce } = getOAuthConfig('mercadopago');
+    const params = new URLSearchParams({
+      client_id: clientId,
+      response_type: 'code',
+      platform_id: 'mp',
+      state,
+      redirect_uri: redir,
+    });
+    if (pkce) {
+      const codeVerifier = createCodeVerifier();
+      const codeChallenge = createCodeChallenge(codeVerifier);
+      params.set('code_challenge', codeChallenge);
+      params.set('code_challenge_method', 'S256');
+      authUrl = `${MP_AUTH_BASE}?${params}`;
+      await saveOAuthState({ state, uid, platform, codeVerifier, redirectUri: redir });
+      return { authUrl, state, redirectUri: redir };
+    }
+    authUrl = `${MP_AUTH_BASE}?${params}`;
   } else {
     throw new Error('Plataforma inválida');
   }
@@ -371,6 +438,43 @@ async function exchangePaypal(code, redirect) {
   };
 }
 
+async function exchangeMercadoPago(code, redirect, codeVerifier) {
+  const { clientId, clientSecret } = getOAuthConfig('mercadopago');
+  const body = {
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: 'authorization_code',
+    code: String(code || '').trim(),
+    redirect_uri: redirect,
+  };
+  if (codeVerifier) body.code_verifier = codeVerifier;
+
+  const tokenRes = await fetch('https://api.mercadopago.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const d = await parseJson(tokenRes);
+  if (!tokenRes.ok) {
+    const msg = String(d?.message || d?.error_description || d?.error || 'Falha no token Mercado Pago.');
+    if (/invalid client_id|client_secret/i.test(msg)) {
+      throw new Error(
+        'Client ID ou Client Secret inválidos. No painel MP use Credenciais de produção → Client ID + Client Secret.'
+      );
+    }
+    throw new Error(msg);
+  }
+  return {
+    mercadopagoConnected: true,
+    accessToken: String(d.access_token || '').trim() || null,
+    refreshToken: String(d.refresh_token || '').trim() || null,
+    publicKey: String(d.public_key || '').trim() || null,
+    mpUserId: d.user_id != null ? String(d.user_id).trim() : null,
+    expiresIn: d.expires_in || null,
+    scope: d.scope || null,
+  };
+}
+
 export async function exchangeCode(platform, code, redirect, codeVerifier) {
   if (!oauthConfigured(platform)) {
     const err = new Error('OAUTH_NOT_CONFIGURED');
@@ -381,6 +485,7 @@ export async function exchangeCode(platform, code, redirect, codeVerifier) {
   if (platform === 'tiktok') return exchangeTiktok(code, redirect, codeVerifier);
   if (platform === 'stripe') return exchangeStripe(code, redirect);
   if (platform === 'paypal') return exchangePaypal(code, redirect);
+  if (platform === 'mercadopago') return exchangeMercadoPago(code, redirect, codeVerifier);
   throw new Error('Plataforma inválida');
 }
 
@@ -422,6 +527,15 @@ export function clearOAuthFields(platform) {
       clientId: null,
       email: null,
       payerId: null,
+    };
+  }
+  if (platform === 'mercadopago') {
+    return {
+      mercadopagoConnected: false,
+      accessToken: null,
+      refreshToken: null,
+      publicKey: null,
+      mpUserId: null,
     };
   }
   return {};

@@ -69,6 +69,9 @@ export default function ConnectIntegrationModal({
 
   const metaHints = [];
   if (connectedMeta?.label) metaHints.push(connectedMeta.label);
+  if (connectedMeta?.mpUserId && !connectedMeta?.label?.includes(String(connectedMeta.mpUserId))) {
+    metaHints.push(`MP ID ${connectedMeta.mpUserId}`);
+  }
   if (connectedMeta?.mode) metaHints.push(`modo ${connectedMeta.mode}`);
   if (connectedMeta?.url) metaHints.push(connectedMeta.url);
   if (connectedMeta?.shop) metaHints.push(connectedMeta.shop);

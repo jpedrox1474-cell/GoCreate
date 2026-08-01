@@ -4,8 +4,8 @@
  * com foco BR (Mercado Pago, Pix, ViaCEP, WhatsApp).
  *
  * connectType:
- *   - platform  → já ligado via GoCreate (Firebase Auth, Cloudinary upload, Mercado Pago)
- *   - oauth     → fluxo OAuth (GitHub, Stripe Connect, PayPal, YouTube, TikTok)
+ *   - platform  → já ligado via GoCreate (Firebase Auth, Cloudinary upload)
+ *   - oauth     → fluxo OAuth (GitHub, Stripe Connect, PayPal, Mercado Pago, YouTube, TikTok)
  *   - api_key   → modal com Access Token / API Key (guardado server-side) — só BYO opcionais
  *   - coming_soon → cartão + CTA desabilitado (só canais sociais filtrados do grid)
  */
@@ -47,10 +47,10 @@ export const INTEGRATIONS_CATALOG = [
     name: 'Mercado Pago',
     category: 'payments',
     description:
-      'Pix e Checkout Pro nos apps gerados via token da plataforma — sem colar Access Token. Billing GoCreate + GoCreatePayments.',
+      'Conectar com Mercado Pago (OAuth) — recebe na tua conta. Billing GoCreate e GoCreatePayments usam a conta ligada.',
     icon: 'Wallet',
-    connectType: 'platform',
-    docsUrl: 'https://www.mercadopago.com.br/developers',
+    connectType: 'oauth',
+    docsUrl: 'https://www.mercadopago.com.br/developers/docs/security/oauth',
     competitors: ['Lovable', 'Bolt', 'Nova', 'Base44'],
   },
   {
