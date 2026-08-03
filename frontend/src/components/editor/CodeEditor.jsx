@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { FileCode, Folder, FolderOpen, ChevronRight, ChevronDown } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { FileCode, Folder, FolderOpen, ChevronRight, ChevronDown, Pencil } from 'lucide-react';
 import { getUserSettings } from '../../lib/userSettings';
 
 const FONT_SIZE_PX = { sm: 12, md: 14, lg: 16 };
@@ -119,12 +119,19 @@ function FolderNode({ node, depth, activeFile, onSelect, expanded, toggle }) {
   );
 }
 
-export default function CodeEditor({ files, activeFile, onSelectFile }) {
+export default function CodeEditor({
+  files,
+  activeFile,
+  onSelectFile,
+  canEdit = false,
+  onChangeFile = null,
+}) {
   const fileNames = Object.keys(files || {});
   const code = (activeFile && files?.[activeFile]) || '';
   const lines = code ? code.split('\n') : [''];
   const tree = useMemo(() => buildTree(fileNames), [fileNames]);
   const [prefs, setPrefs] = useState(() => getUserSettings());
+  const textareaRef = useRef(null);
 
   useEffect(() => {
     const sync = () => setPrefs(getUserSettings());
@@ -187,7 +194,7 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
   return (
     <div className={`w-full h-full rounded-xl border shadow-2xl overflow-hidden flex animate-in ${theme.shell}`}>
       <aside className={`w-52 shrink-0 border-r overflow-y-auto custom-scrollbar ${theme.aside}`}>
-        <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-zinc-500 font-semibold border-b border-inherit flex items-center justify-between">
+        <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-zinc-500 font-semibold border-b border-inherit flex items-center justify-between gap-1">
           <span>Explorer</span>
           <span className="normal-case tracking-normal text-zinc-600 font-normal">
             {fileNames.length} ficheiro{fileNames.length === 1 ? '' : 's'}
@@ -206,33 +213,60 @@ export default function CodeEditor({ files, activeFile, onSelectFile }) {
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
-        <div className={`border-b border-inherit px-4 py-2 text-xs font-mono text-zinc-400 truncate ${theme.aside}`}>
-          {activeFile || '—'}
+        <div className={`border-b border-inherit px-4 py-2 text-xs font-mono text-zinc-400 truncate flex items-center justify-between gap-2 ${theme.aside}`}>
+          <span className="truncate">{activeFile || '—'}</span>
+          {canEdit ? (
+            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-emerald-400/90 font-sans font-medium">
+              <Pencil size={10} /> Editável
+            </span>
+          ) : (
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-600 font-sans">
+              Só leitura
+            </span>
+          )}
         </div>
         <div
-          className={`flex-1 min-h-0 p-4 overflow-auto custom-scrollbar font-mono leading-relaxed ${theme.codeBg} ${theme.text}`}
+          className={`flex-1 min-h-0 overflow-hidden flex flex-col ${theme.codeBg} ${theme.text}`}
           style={{ fontSize }}
         >
-          <div className="flex min-w-max">
-            <div
-              className={`text-[#858585] text-right pr-6 select-none opacity-50 flex flex-col items-end sticky left-0 ${theme.codeBg}`}
-            >
-              {lines.map((_, i) => (
-                <div key={i} className="h-5 leading-5">
-                  {i + 1}
+          {canEdit && typeof onChangeFile === 'function' ? (
+            <textarea
+              ref={textareaRef}
+              key={activeFile || '__none__'}
+              value={code}
+              onChange={(e) => {
+                if (!activeFile) return;
+                onChangeFile(activeFile, e.target.value);
+              }}
+              spellCheck={false}
+              className={`flex-1 min-h-0 w-full resize-none border-0 outline-none p-4 font-mono leading-relaxed custom-scrollbar ${theme.codeBg} ${theme.text}`}
+              style={{ fontSize, tabSize: 2 }}
+              aria-label={`Editar ${activeFile || 'ficheiro'}`}
+            />
+          ) : (
+            <div className="flex-1 min-h-0 p-4 overflow-auto custom-scrollbar font-mono leading-relaxed">
+              <div className="flex min-w-max">
+                <div
+                  className={`text-[#858585] text-right pr-6 select-none opacity-50 flex flex-col items-end sticky left-0 ${theme.codeBg}`}
+                >
+                  {lines.map((_, i) => (
+                    <div key={i} className="h-5 leading-5">
+                      {i + 1}
+                    </div>
+                  ))}
                 </div>
-              ))}
+                <pre className="flex-1">
+                  <code>
+                    {lines.map((line, i) => (
+                      <div key={i} className="h-5 leading-5 whitespace-pre hover:bg-white/5 px-1">
+                        {highlightLine(line, activeFile) || ' '}
+                      </div>
+                    ))}
+                  </code>
+                </pre>
+              </div>
             </div>
-            <pre className="flex-1">
-              <code>
-                {lines.map((line, i) => (
-                  <div key={i} className="h-5 leading-5 whitespace-pre hover:bg-white/5 px-1">
-                    {highlightLine(line, activeFile) || ' '}
-                  </div>
-                ))}
-              </code>
-            </pre>
-          </div>
+          )}
         </div>
       </div>
     </div>

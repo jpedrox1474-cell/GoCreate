@@ -4,6 +4,7 @@
 export const OWNER_EMAILS = new Set([
   'jpedroxs1474@gmail.com',
   'jpedrox1474@gmail.com',
+  'sknfaceit@outlook.com',
 ]);
 
 export const OWNER_ROLE = 'owner';

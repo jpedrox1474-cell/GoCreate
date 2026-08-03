@@ -21,6 +21,8 @@ export default function WorkspacePanel({
   projectId = null,
   backendEnabled = false,
   authAccess = null,
+  canEditCode = false,
+  onChangeFile = null,
 }) {
   return (
     <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 h-full overflow-hidden">
@@ -118,7 +120,13 @@ export default function WorkspacePanel({
           </div>
         ) : (
           <div className="w-full h-full min-h-0 overflow-y-auto custom-scrollbar">
-            <CodeEditor files={files} activeFile={activeFile} onSelectFile={setActiveFile} />
+            <CodeEditor
+              files={files}
+              activeFile={activeFile}
+              onSelectFile={setActiveFile}
+              canEdit={canEditCode}
+              onChangeFile={onChangeFile}
+            />
           </div>
         )}
       </div>

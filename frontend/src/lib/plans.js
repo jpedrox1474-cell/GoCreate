@@ -9,6 +9,7 @@ export const PLAN_ALLOWANCE = {
 export const OWNER_EMAILS = new Set([
   'jpedroxs1474@gmail.com',
   'jpedrox1474@gmail.com',
+  'sknfaceit@outlook.com',
 ]);
 
 export const OWNER_ROLE = 'owner';
@@ -109,6 +110,14 @@ export function isOwnerUser(user) {
   if (!user) return false;
   if (user.role === OWNER_ROLE || user.plan === OWNER_PLAN) return true;
   return isOwnerEmail(user.email);
+}
+
+/**
+ * Contas privilegiadas (owner allowlist) podem editar código na aba Código
+ * estilo Base44 — digitar / copiar / colar e gravar no projeto.
+ */
+export function canEditProjectCode(user) {
+  return isOwnerUser(user);
 }
 
 /**

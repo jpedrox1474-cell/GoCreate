@@ -35,7 +35,7 @@ import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
 import IntegrationsBanner from '../components/editor/IntegrationsBanner';
 import SuggestedIntegrationsBanner from '../components/editor/SuggestedIntegrationsBanner';
-import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, deleteProjects, duplicateProject } from '../lib/projects';
+import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, deleteProjects, duplicateProject, saveMessage } from '../lib/projects';
 import { scheduleAutomationCheck, rememberLastProjectId } from '../lib/automations';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
 import { uploadFile } from '../lib/uploadApi';
@@ -47,6 +47,7 @@ import {
   pickRecoveryPrompt,
 } from '../lib/artifactParser';
 import { seedDetectedEntities } from '../lib/entities';
+import { canEditProjectCode } from '../lib/plans';
 import {
   getProjectById,
   getMessagesForProject,
@@ -161,6 +162,8 @@ export default function Editor() {
   const continueAutoTriedRef = useRef(false);
   const lastRawRef = useRef('');
   const sendMessageTextRef = useRef(null);
+  const localCodeEditsRef = useRef({});
+  const codeSaveTimerRef = useRef(null);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -242,6 +245,7 @@ export default function Editor() {
   }, []);
 
   const project = projectMeta || getProjectById(routeId || 'new');
+  const canEditCode = canEditProjectCode(user);
   const showQuickActions =
     !isGenerating &&
     !projectLoading &&
@@ -252,15 +256,47 @@ export default function Editor() {
   const mergeGeneratedFiles = useCallback((incoming) => {
     if (!incoming || !Object.keys(incoming).length) return;
     setGeneratedFiles((prev) => {
-      const next = { ...prev, ...incoming };
+      const next = { ...prev, ...incoming, ...localCodeEditsRef.current };
       return next;
     });
     setActiveFile((current) => {
-      if (current && incoming[current] !== undefined) return current;
+      if (current && (incoming[current] !== undefined || localCodeEditsRef.current[current] !== undefined)) {
+        return current;
+      }
       const keys = Object.keys(incoming);
       return keys[0] || current;
     });
   }, []);
+
+  const handleChangeFile = useCallback(
+    (path, content) => {
+      if (!path || !canEditCode) return;
+      localCodeEditsRef.current = { ...localCodeEditsRef.current, [path]: content };
+      setGeneratedFiles((prev) => ({ ...prev, [path]: content }));
+
+      if (codeSaveTimerRef.current) clearTimeout(codeSaveTimerRef.current);
+      codeSaveTimerRef.current = setTimeout(async () => {
+        if (!firestoreId) return;
+        const latest = localCodeEditsRef.current[path];
+        if (latest == null) return;
+        // Avoid breaking XML if the source contains a literal </file> closer.
+        const safe = String(latest).replace(/<\/file>/gi, '</\u200bfile>');
+        const text =
+          `Código atualizado manualmente (${path}).\n\n` +
+          `<gocreate_artifact>\n` +
+          `<file path="${path}">\n${safe}\n</file>\n` +
+          `</gocreate_artifact>`;
+        try {
+          await saveMessage(firestoreId, { role: 'ai', text, uid: user?.uid || null });
+          await touchProject(firestoreId);
+        } catch (err) {
+          console.error('[Editor] save code edit:', err);
+          setToast({ message: 'Não foi possível guardar a edição do código.', type: 'error' });
+        }
+      }, 900);
+    },
+    [canEditCode, firestoreId, user?.uid]
+  );
 
   const notifyAutomations = useCallback(
     (projectId) => {
@@ -315,6 +351,11 @@ export default function Editor() {
         setProjectMeta(meta || getProjectById(id));
         setFirestoreId(id);
         rememberLastProjectId(id);
+        localCodeEditsRef.current = {};
+        if (codeSaveTimerRef.current) {
+          clearTimeout(codeSaveTimerRef.current);
+          codeSaveTimerRef.current = null;
+        }
         setGeneratedFiles({});
         setActiveFile(null);
 
@@ -1617,6 +1658,8 @@ export default function Editor() {
             ownerId: projectMeta?.ownerId || user?.uid || null,
             ownerEmail: projectMeta?.ownerEmail || user?.email || null,
           }}
+          canEditCode={canEditCode}
+          onChangeFile={handleChangeFile}
         />
       </main>
 
