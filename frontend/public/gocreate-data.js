@@ -82,9 +82,18 @@
       throw noId;
     }
 
+    var headers = { 'Content-Type': 'application/json' };
+    try {
+      if (global.__GOCREATE_API_KEY__) {
+        headers['X-GoCreate-Key'] = String(global.__GOCREATE_API_KEY__);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+
     var res = await fetch(apiBase() + '/api/projects/' + encodeURIComponent(pid) + '/data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify(body),
     });
 

@@ -76,4 +76,36 @@ export async function updateProjectSlug({ idToken, projectId, slug }) {
   return data;
 }
 
+export async function listDeployHistory({ idToken, projectId, env = 'production' }) {
+  const q = new URLSearchParams({ env });
+  const res = await fetch(`${API_URL}/api/deploy/history/${encodeURIComponent(projectId)}?${q}`, {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data?.items || [];
+}
+
+export async function rollbackDeploy({ idToken, projectId, historyId }) {
+  const res = await fetch(`${API_URL}/api/deploy/rollback`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projectId, historyId }),
+  });
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
 export default publishViaApi;

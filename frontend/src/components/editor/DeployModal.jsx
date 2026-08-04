@@ -9,10 +9,11 @@ import {
   Check,
   Pencil,
   Server,
+  History,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { publishProject, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
-import { publishViaApi, checkSlugAvailability, updateProjectSlug } from '../../lib/deployApi';
+import { publishViaApi, checkSlugAvailability, updateProjectSlug, listDeployHistory, rollbackDeploy } from '../../lib/deployApi';
 import { getUserSettings, recordDeployNotificationStub } from '../../lib/userSettings';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditsContext';
@@ -46,6 +47,9 @@ export default function DeployModal({
   const [slugDraft, setSlugDraft] = useState('');
   const [slugBusy, setSlugBusy] = useState(false);
   const [slugHint, setSlugHint] = useState('');
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [rollbackBusy, setRollbackBusy] = useState(null);
 
   const effectivePlan = plan || ownerPlan;
   const publicKey = useMemo(
@@ -66,12 +70,55 @@ export default function DeployModal({
       setCopied(false);
       setEditingSlug(false);
       setSlugHint('');
+      setHistory([]);
     } else {
       const initial = projectSlug || projectId || '';
       setSlug(initial);
       setSlugDraft(initial);
     }
   }, [open, projectSlug, projectId]);
+
+  useEffect(() => {
+    if (!open || !projectId || !user) return undefined;
+    let cancelled = false;
+    async function loadHistory() {
+      setHistoryLoading(true);
+      try {
+        const idToken = await user.getIdToken();
+        const items = await listDeployHistory({ idToken, projectId, env });
+        if (!cancelled) setHistory(items);
+      } catch {
+        if (!cancelled) setHistory([]);
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    }
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectId, user, env, phase]);
+
+  async function handleRollback(historyId) {
+    if (!user || !projectId || rollbackBusy) return;
+    if (!window.confirm('Reverter para este snapshot? O deploy atual será guardado no histórico.')) {
+      return;
+    }
+    setRollbackBusy(historyId);
+    try {
+      const idToken = await user.getIdToken();
+      const result = await rollbackDeploy({ idToken, projectId, historyId });
+      setDeployUrl(result.url || fixedUrl);
+      setPhase('done');
+      onToast?.({ message: 'Rollback concluído.', type: 'success' });
+      const items = await listDeployHistory({ idToken, projectId, env });
+      setHistory(items);
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha no rollback.', type: 'error' });
+    } finally {
+      setRollbackBusy(null);
+    }
+  }
 
   useEffect(() => {
     if (phase !== 'deploying') return undefined;
@@ -410,6 +457,48 @@ export default function DeployModal({
                 Redeploy
               </button>
             </div>
+          </div>
+        )}
+
+        {projectId && (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-300 uppercase tracking-wide">
+              <History size={12} className="text-blue-400" /> Histórico / rollback
+            </div>
+            {historyLoading ? (
+              <p className="text-[11px] text-zinc-500 flex items-center gap-1">
+                <Loader2 size={11} className="animate-spin" /> A carregar…
+              </p>
+            ) : !history.length ? (
+              <p className="text-[11px] text-zinc-500">
+                Ainda sem snapshots. Cada redeploy guarda a versão anterior.
+              </p>
+            ) : (
+              <ul className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
+                {history.map((h) => (
+                  <li
+                    key={h.id}
+                    className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md border border-zinc-800/80 text-[11px]"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-zinc-300 truncate">
+                        {h.fileCount} ficheiros
+                        {h.slug ? ` · ${h.slug}` : ''}
+                      </p>
+                      <p className="text-[10px] text-zinc-600 font-mono truncate">{h.id.slice(0, 12)}…</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!!rollbackBusy}
+                      onClick={() => void handleRollback(h.id)}
+                      className="shrink-0 px-2 py-1 rounded-md text-[10px] font-medium border border-zinc-700 text-zinc-300 hover:border-amber-500/40 hover:text-amber-300 disabled:opacity-40"
+                    >
+                      {rollbackBusy === h.id ? '…' : 'Reverter'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </div>

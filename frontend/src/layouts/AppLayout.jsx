@@ -15,6 +15,7 @@ import {
   CheckSquare,
   Trash2,
   Database,
+  Shield,
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
@@ -22,6 +23,7 @@ import ProjectActionsMenu from '../components/ProjectActionsMenu';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { isOwnerUser } from '../lib/plans';
 import {
   listUserProjects,
   renameProject,
@@ -50,6 +52,10 @@ export default function AppLayout() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const navItems = isOwnerUser(user)
+    ? [...NAV, { to: '/admin', label: 'Admin', icon: Shield }]
+    : NAV;
 
   const refreshProjects = useCallback(async () => {
     if (!user?.uid) return;
@@ -192,7 +198,7 @@ export default function AppLayout() {
       </div>
 
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar min-h-0">
-        {NAV.map(({ to, label, icon: Icon }) => (
+        {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink key={to} to={to} className={linkClass} onClick={() => setMobileOpen(false)}>
             <Icon size={16} />
             {label}

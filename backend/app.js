@@ -9,6 +9,7 @@ import integrationsRouter from './routes/integrations.js';
 import meRouter from './routes/me.js';
 import deployRouter from './routes/deploy.js';
 import projectsRouter from './routes/projects.js';
+import adminRouter from './routes/admin.js';
 
 export function createApp() {
   const app = express();
@@ -52,6 +53,8 @@ export function createApp() {
   app.use('/api/deploy', deployRouter);
   // Cascade delete de projetos (Admin SDK) — owner only
   app.use('/api/projects', projectsRouter);
+  // Admin panel — owner allowlist
+  app.use('/api/admin', adminRouter);
 
   app.use((err, _req, res, _next) => {
     console.error('[server] Erro não tratado:', err);

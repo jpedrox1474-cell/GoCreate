@@ -105,6 +105,27 @@ service cloud.firestore {
           allow read, write: if isProjectOwner();
         }
       }
+
+      // Chat AI checkpoints (undo last turn)
+      match /checkpoints/{checkpointId} {
+        allow read, write: if isProjectOwner();
+      }
+
+      // API keys — hashes; writes only via Admin SDK
+      match /apiKeys/{keyId} {
+        allow read, write: if false;
+      }
+
+      // Deploy snapshots for rollback — read owner; write via Admin
+      match /deployHistory/{histId} {
+        allow read: if isProjectOwner();
+        allow write: if false;
+      }
+
+      // Project env secrets — Admin SDK only
+      match /envSecrets/{secretId} {
+        allow read, write: if false;
+      }
     }
 
     // Publicações partilháveis — leitura aberta (só snapshot de ficheiros, sem chat).

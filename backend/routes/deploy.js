@@ -171,6 +171,38 @@ async function publishHandler(req, res) {
       await projectRef.set({ ownerEmail }, { merge: true });
     }
 
+    // Snapshot previous deploy for rollback (keep last 15)
+    try {
+      const prevSnap = await db.collection('publicProjects').doc(pubId).get();
+      if (prevSnap.exists) {
+        const prev = prevSnap.data() || {};
+        if (prev.files && typeof prev.files === 'object' && Object.keys(prev.files).length) {
+          await projectRef.collection('deployHistory').add({
+            env,
+            pubId,
+            url: prev.url || null,
+            slug: prev.slug || null,
+            name: prev.name || null,
+            files: prev.files,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          const hist = await projectRef
+            .collection('deployHistory')
+            .orderBy('createdAt', 'desc')
+            .limit(40)
+            .get();
+          const sameEnv = hist.docs.filter((d) => (d.data()?.env || 'production') === env);
+          if (sameEnv.length > 15) {
+            const batch = db.batch();
+            sameEnv.slice(15).forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+          }
+        }
+      }
+    } catch (histErr) {
+      console.warn('[deploy/publish] history snapshot:', histErr?.message);
+    }
+
     await db.collection('publicProjects').doc(pubId).set(payload, { merge: true });
 
     const thumbName = name || project.name || 'Projeto';
@@ -340,6 +372,109 @@ router.get('/resolve/:key', async (req, res) => {
   } catch (err) {
     console.error('[deploy/resolve]', err);
     res.status(500).json({ error: err.message || 'Falha ao resolver.' });
+  }
+});
+
+/** GET /api/deploy/history/:projectId — list rollback snapshots */
+router.get('/history/:projectId', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const env = req.query?.env === 'preview' ? 'preview' : 'production';
+    await assertProjectOwner(projectId, req.user.uid);
+    const snap = await db
+      .collection('projects')
+      .doc(projectId)
+      .collection('deployHistory')
+      .orderBy('createdAt', 'desc')
+      .limit(30)
+      .get();
+    const items = snap.docs
+      .map((d) => {
+        const data = d.data() || {};
+        return {
+          id: d.id,
+          env: data.env || 'production',
+          url: data.url || null,
+          slug: data.slug || null,
+          name: data.name || null,
+          fileCount: data.files ? Object.keys(data.files).length : 0,
+          createdAt: data.createdAt || null,
+        };
+      })
+      .filter((i) => i.env === env);
+    res.json({ ok: true, items });
+  } catch (err) {
+    console.error('[deploy/history]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao listar histórico.' });
+  }
+});
+
+/** POST /api/deploy/rollback — restore a deployHistory snapshot */
+router.post('/rollback', requireAuth, async (req, res) => {
+  try {
+    const { projectId, historyId } = req.body || {};
+    if (!projectId || !historyId) {
+      return res.status(400).json({ error: 'projectId e historyId são obrigatórios.' });
+    }
+    const { projectRef, project } = await assertProjectOwner(projectId, req.user.uid);
+    const histRef = projectRef.collection('deployHistory').doc(historyId);
+    const histSnap = await histRef.get();
+    if (!histSnap.exists) {
+      return res.status(404).json({ error: 'Snapshot não encontrado.' });
+    }
+    const hist = histSnap.data() || {};
+    const files = hist.files;
+    if (!files || typeof files !== 'object' || !Object.keys(files).length) {
+      return res.status(400).json({ error: 'Snapshot sem ficheiros.' });
+    }
+    const env = hist.env === 'preview' ? 'preview' : 'production';
+    const pubId = hist.pubId || (env === 'preview' ? `${projectId}_preview` : projectId);
+    const publicKey = resolveProjectPublicKey(project, projectId);
+    const url = buildPublishUrl(publicKey, env);
+
+    // Save current as history before rollback
+    const current = await db.collection('publicProjects').doc(pubId).get();
+    if (current.exists) {
+      const cur = current.data() || {};
+      if (cur.files) {
+        await projectRef.collection('deployHistory').add({
+          env,
+          pubId,
+          url: cur.url || null,
+          slug: cur.slug || null,
+          name: cur.name || null,
+          files: cur.files,
+          note: 'pre-rollback',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    }
+
+    await db.collection('publicProjects').doc(pubId).set(
+      {
+        files,
+        url,
+        slug: publicKey,
+        env,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        rolledBackFrom: historyId,
+      },
+      { merge: true }
+    );
+    await projectRef.set(
+      {
+        publishedUrl: url,
+        publishedEnv: env,
+        publishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    res.json({ ok: true, url, env, historyId, projectId });
+  } catch (err) {
+    console.error('[deploy/rollback]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha no rollback.' });
   }
 });
 

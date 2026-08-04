@@ -19,8 +19,10 @@ import {
   Search,
   RotateCcw,
   Save,
+  GitCompare,
 } from 'lucide-react';
 import { getUserSettings } from '../../lib/userSettings';
+import CodeDiffView from './CodeDiffView';
 
 const FONT_SIZE_PX = { sm: 12, md: 14, lg: 16 };
 
@@ -160,6 +162,7 @@ export default function CodeEditor({
   onSaveFile = null,
   dirtyFiles = null,
   baselines = null,
+  diffBaselines = null,
 }) {
   const fileNames = Object.keys(files || {});
   const code = (activeFile && files?.[activeFile]) || '';
@@ -167,6 +170,7 @@ export default function CodeEditor({
   const [prefs, setPrefs] = useState(() => getUserSettings());
   const viewRef = useRef(null);
   const [saveFlash, setSaveFlash] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
 
   useEffect(() => {
     const sync = () => setPrefs(getUserSettings());
@@ -194,6 +198,22 @@ export default function CodeEditor({
     baselines &&
     activeFile in baselines &&
     baselines[activeFile] !== code;
+
+  const diffBefore =
+    activeFile && diffBaselines && activeFile in diffBaselines
+      ? diffBaselines[activeFile]
+      : activeFile && baselines && activeFile in baselines
+        ? baselines[activeFile]
+        : null;
+
+  const canShowDiff =
+    Boolean(activeFile) &&
+    diffBefore != null &&
+    String(diffBefore) !== String(code);
+
+  useEffect(() => {
+    if (!canShowDiff) setShowDiff(false);
+  }, [canShowDiff, activeFile]);
 
   const allFolderKeys = useMemo(() => {
     const keys = new Set(['__root__']);
@@ -335,6 +355,20 @@ export default function CodeEditor({
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {canShowDiff && (
+              <button
+                type="button"
+                onClick={() => setShowDiff((v) => !v)}
+                className={`p-1.5 rounded-md transition-all ${
+                  showDiff
+                    ? 'text-blue-400 bg-blue-500/15'
+                    : 'text-zinc-500 hover:text-blue-400 hover:bg-zinc-800/80'
+                }`}
+                title={showDiff ? 'Fechar diff' : 'Ver diff (antes / depois)'}
+              >
+                <GitCompare size={13} />
+              </button>
+            )}
             <button
               type="button"
               onClick={openFind}
@@ -376,29 +410,38 @@ export default function CodeEditor({
           </div>
         </div>
         <div className={`flex-1 min-h-0 overflow-hidden ${theme.codeBg} ${theme.text}`}>
-          <CodeMirror
-            key={activeFile || '__none__'}
-            value={code}
-            height="100%"
-            theme={oneDark}
-            extensions={extensions}
-            editable={canEdit && typeof onChangeFile === 'function'}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: true,
-              highlightActiveLine: true,
-              highlightActiveLineGutter: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              autocompletion: true,
-              indentOnInput: true,
-            }}
-            onChange={handleChange}
-            onCreateEditor={(view) => {
-              viewRef.current = view;
-            }}
-            className="h-full text-sm [&_.cm-editor]:h-full [&_.cm-editor]:outline-none"
-          />
+          {showDiff && canShowDiff ? (
+            <CodeDiffView
+              before={diffBefore}
+              after={code}
+              fileName={activeFile}
+              fontSize={fontSize}
+            />
+          ) : (
+            <CodeMirror
+              key={activeFile || '__none__'}
+              value={code}
+              height="100%"
+              theme={oneDark}
+              extensions={extensions}
+              editable={canEdit && typeof onChangeFile === 'function'}
+              basicSetup={{
+                lineNumbers: true,
+                foldGutter: true,
+                highlightActiveLine: true,
+                highlightActiveLineGutter: true,
+                bracketMatching: true,
+                closeBrackets: true,
+                autocompletion: true,
+                indentOnInput: true,
+              }}
+              onChange={handleChange}
+              onCreateEditor={(view) => {
+                viewRef.current = view;
+              }}
+              className="h-full text-sm [&_.cm-editor]:h-full [&_.cm-editor]:outline-none"
+            />
+          )}
         </div>
       </div>
     </div>

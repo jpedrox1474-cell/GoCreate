@@ -4,14 +4,14 @@
 import { Router } from 'express';
 import admin from '../config/firebaseAdmin.js';
 import { db } from '../config/firebaseAdmin.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, optionalAuth } from '../middleware/auth.js';
 import { ensureUserAdmin, debitCredit } from '../middleware/credits.js';
 import {
   canUsePremium,
   BACKEND_ENABLE_CREDIT_COST,
   BACKEND_REQUIRED_MESSAGE,
 } from '../lib/owner.js';
-import { projectDataOp } from '../services/entities.js';
+import { projectDataOp, getEntityPermissions } from '../services/entities.js';
 import {
   AUTH_ACCESS_DENIED_MESSAGE,
   isEmailAllowedForProjectAuth,
@@ -19,6 +19,13 @@ import {
   normalizeEmail,
   publicAuthAccessPayload,
 } from '../services/authAccess.js';
+import {
+  createProjectApiKey,
+  listProjectApiKeys,
+  revokeProjectApiKey,
+  resolveDataAccessLevel,
+  normalizeAccessLevel,
+} from '../services/projectApiKeys.js';
 
 const router = Router();
 
@@ -60,6 +67,10 @@ async function cascadeDeleteProject(projectId) {
   await deleteQueryInChunks(projectRef.collection('messages'));
   await deleteQueryInChunks(projectRef.collection('automations'));
   await deleteQueryInChunks(projectRef.collection('automationRuns'));
+  await deleteQueryInChunks(projectRef.collection('checkpoints'));
+  await deleteQueryInChunks(projectRef.collection('apiKeys'));
+  await deleteQueryInChunks(projectRef.collection('deployHistory'));
+  await deleteQueryInChunks(projectRef.collection('envSecrets'));
 
   const entitiesSnap = await projectRef.collection('entities').get();
   for (const ent of entitiesSnap.docs) {
@@ -388,12 +399,270 @@ router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
 });
 
 /**
+ * Resolve caller access for Data API (public | API key | Firebase).
+ */
+async function resolveRequestAccess(req, projectId, project) {
+  const apiKeyHeader =
+    req.headers['x-gocreate-key'] ||
+    req.headers['x-api-key'] ||
+    (String(req.headers.authorization || '').startsWith('Bearer gck_')
+      ? String(req.headers.authorization).slice(7)
+      : '');
+  return resolveDataAccessLevel(projectId, {
+    apiKeyHeader,
+    firebaseUser: req.user || null,
+    projectOwnerId: project.ownerId,
+  });
+}
+
+/**
+ * GET/POST /api/projects/:projectId/api-keys — owner only.
+ */
+router.get('/:projectId/api-keys', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const keys = await listProjectApiKeys(projectId);
+    res.json({ ok: true, keys });
+  } catch (err) {
+    console.error('[projects/api-keys/list]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao listar API keys.' });
+  }
+});
+
+router.post('/:projectId/api-keys', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const created = await createProjectApiKey(projectId, { name: req.body?.name });
+    res.json({ ok: true, ...created });
+  } catch (err) {
+    console.error('[projects/api-keys/create]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao criar API key.' });
+  }
+});
+
+router.delete('/:projectId/api-keys/:keyId', requireAuth, async (req, res) => {
+  try {
+    const { projectId, keyId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    await revokeProjectApiKey(projectId, keyId);
+    res.json({ ok: true, id: keyId });
+  } catch (err) {
+    console.error('[projects/api-keys/revoke]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao revogar API key.' });
+  }
+});
+
+/**
+ * PATCH /api/projects/:projectId/entities/:entityId/permissions
+ */
+router.patch('/:projectId/entities/:entityId/permissions', requireAuth, async (req, res) => {
+  try {
+    const { projectId, entityId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const ref = db.collection('projects').doc(projectId).collection('entities').doc(entityId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Entidade não encontrada.' });
+    }
+    const permissions = {
+      read: normalizeAccessLevel(req.body?.read ?? snap.data()?.permissions?.read, 'public'),
+      write: normalizeAccessLevel(req.body?.write ?? snap.data()?.permissions?.write, 'public'),
+    };
+    await ref.set(
+      { permissions, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    res.json({ ok: true, entityId, permissions });
+  } catch (err) {
+    console.error('[projects/entities/permissions]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao guardar permissões.' });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/openapi.json — docs for Data API.
+ */
+router.get('/:projectId/openapi.json', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { data: project } = await loadProjectOrThrow(projectId);
+    const entitiesSnap = await db.collection('projects').doc(projectId).collection('entities').get();
+    const entities = entitiesSnap.docs.map((d) => {
+      const data = d.data() || {};
+      return {
+        id: d.id,
+        name: data.name || d.id,
+        columns: data.columns || [],
+        permissions: getEntityPermissions(data),
+      };
+    });
+
+    const basePath = `/api/projects/${projectId}/data`;
+    const spec = {
+      openapi: '3.0.3',
+      info: {
+        title: `GoCreate Data API — ${project.name || projectId}`,
+        version: '1.0.0',
+        description:
+          'CRUD de entidades do projeto. Header `X-GoCreate-Key: gck_…` para nível authenticated; Bearer Firebase do dono = admin.',
+      },
+      servers: [{ url: 'https://gocreate.web.app' }],
+      paths: {
+        [basePath]: {
+          post: {
+            summary: 'CRUD (list|get|create|update|delete)',
+            parameters: [
+              {
+                name: 'X-GoCreate-Key',
+                in: 'header',
+                required: false,
+                schema: { type: 'string' },
+                description: 'API key do projeto (gck_…)',
+              },
+            ],
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['action', 'entity'],
+                    properties: {
+                      action: {
+                        type: 'string',
+                        enum: ['list', 'get', 'create', 'update', 'delete'],
+                      },
+                      entity: { type: 'string', example: entities[0]?.id || 'products' },
+                      id: { type: 'string' },
+                      data: { type: 'object' },
+                    },
+                  },
+                  examples: {
+                    list: {
+                      value: { action: 'list', entity: entities[0]?.id || 'products' },
+                    },
+                    create: {
+                      value: {
+                        action: 'create',
+                        entity: entities[0]?.id || 'products',
+                        data: { name: 'Exemplo' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            responses: {
+              200: { description: 'OK' },
+              403: { description: 'Backend off ou permissão negada' },
+            },
+          },
+          get: {
+            summary: 'Listar linhas (?entity=)',
+            parameters: [
+              { name: 'entity', in: 'query', required: true, schema: { type: 'string' } },
+              {
+                name: 'X-GoCreate-Key',
+                in: 'header',
+                required: false,
+                schema: { type: 'string' },
+              },
+            ],
+            responses: { 200: { description: 'OK' } },
+          },
+        },
+      },
+      'x-gocreate-entities': entities,
+      'x-gocreate-backendEnabled': Boolean(project.backendEnabled),
+    };
+    res.json(spec);
+  } catch (err) {
+    console.error('[projects/openapi]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao gerar OpenAPI.' });
+  }
+});
+
+/**
+ * Env secrets (masked) — owner only.
+ */
+router.get('/:projectId/env-secrets', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const snap = await db.collection('projects').doc(projectId).collection('envSecrets').get();
+    const secrets = snap.docs.map((d) => {
+      const data = d.data() || {};
+      const val = String(data.value || '');
+      return {
+        id: d.id,
+        key: data.key || d.id,
+        masked: val ? `${'*'.repeat(Math.min(8, val.length))}${val.slice(-4)}` : '',
+        updatedAt: data.updatedAt || null,
+      };
+    });
+    res.json({ ok: true, secrets });
+  } catch (err) {
+    console.error('[projects/env-secrets/list]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao listar secrets.' });
+  }
+});
+
+router.put('/:projectId/env-secrets/:key', requireAuth, async (req, res) => {
+  try {
+    const { projectId, key } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const safeKey = String(key || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '')
+      .slice(0, 64);
+    if (!safeKey) return res.status(400).json({ error: 'Chave inválida.' });
+    const value = String(req.body?.value ?? '');
+    if (!value) return res.status(400).json({ error: 'value é obrigatório.' });
+    await db
+      .collection('projects')
+      .doc(projectId)
+      .collection('envSecrets')
+      .doc(safeKey)
+      .set(
+        {
+          key: safeKey,
+          value,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    res.json({
+      ok: true,
+      key: safeKey,
+      masked: `${'*'.repeat(Math.min(8, value.length))}${value.slice(-4)}`,
+    });
+  } catch (err) {
+    console.error('[projects/env-secrets/put]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao guardar secret.' });
+  }
+});
+
+router.delete('/:projectId/env-secrets/:key', requireAuth, async (req, res) => {
+  try {
+    const { projectId, key } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    await db.collection('projects').doc(projectId).collection('envSecrets').doc(key).delete();
+    res.json({ ok: true, key });
+  } catch (err) {
+    console.error('[projects/env-secrets/delete]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao apagar secret.' });
+  }
+});
+
+/**
  * POST /api/projects/:projectId/data — runtime CRUD (preview + published apps).
- * Público (sem auth Firebase): end-users of published apps must be able to save.
- * Gate: projects.backendEnabled must be true. Writes via Admin SDK → entities/rows.
+ * Auth: optional Firebase / X-GoCreate-Key; entity permissions enforce RLS-ish.
  * Body: { action, entity, id?, data? }
  */
-router.post('/:projectId/data', async (req, res) => {
+router.post('/:projectId/data', optionalAuth, async (req, res) => {
   try {
     const { projectId } = req.params;
     if (!projectId) {
@@ -408,11 +677,13 @@ router.post('/:projectId/data', async (req, res) => {
       });
     }
 
+    const accessLevel = await resolveRequestAccess(req, projectId, project);
     const result = await projectDataOp(projectId, {
       action: req.body?.action,
       entity: req.body?.entity,
       id: req.body?.id,
       data: req.body?.data,
+      accessLevel,
     });
     res.json(result);
   } catch (err) {
@@ -427,7 +698,7 @@ router.post('/:projectId/data', async (req, res) => {
 /**
  * GET /api/projects/:projectId/data?entity=products — list rows (requires backendEnabled).
  */
-router.get('/:projectId/data', async (req, res) => {
+router.get('/:projectId/data', optionalAuth, async (req, res) => {
   try {
     const { projectId } = req.params;
     const entity = req.query?.entity;
@@ -442,7 +713,8 @@ router.get('/:projectId/data', async (req, res) => {
         code: 'BACKEND_REQUIRED',
       });
     }
-    const result = await projectDataOp(projectId, { action: 'list', entity });
+    const accessLevel = await resolveRequestAccess(req, projectId, project);
+    const result = await projectDataOp(projectId, { action: 'list', entity, accessLevel });
     res.json(result);
   } catch (err) {
     console.error('[projects/data/get]', err);

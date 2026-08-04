@@ -28,4 +28,24 @@ export async function requireAuth(req, res, next) {
   }
 }
 
+/** Attach req.user when Bearer token is valid; otherwise continue as anonymous. */
+export async function optionalAuth(req, _res, next) {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+    const decoded = await authAdmin.verifyIdToken(token);
+    req.user = {
+      uid: decoded.uid,
+      email: decoded.email || null,
+    };
+  } catch {
+    req.user = null;
+  }
+  return next();
+}
+
 export default requireAuth;

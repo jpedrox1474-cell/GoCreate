@@ -7,6 +7,7 @@ import {
   Plus,
   ChevronRight,
   ScanSearch,
+  KeyRound,
 } from 'lucide-react';
 import {
   listEntities,
@@ -16,11 +17,12 @@ import {
   seedDetectedEntities,
 } from '../../lib/entities';
 import EntityBrowser from './EntityBrowser';
+import DataApiPanel from './DataApiPanel';
 
 /**
  * Compact entities browser scoped to a single project (editor workspace).
  */
-export default function EntitiesPanel({ projectId, files = {} }) {
+export default function EntitiesPanel({ projectId, files = {}, backendEnabled = false }) {
   const [entities, setEntities] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [rows, setRows] = useState([]);
@@ -28,6 +30,7 @@ export default function EntitiesPanel({ projectId, files = {} }) {
   const [rowsLoading, setRowsLoading] = useState(false);
   const [busy, setBusy] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [view, setView] = useState('entities'); // entities | api
 
   const selected = useMemo(
     () => entities.find((e) => e.id === selectedId) || null,
@@ -156,7 +159,37 @@ export default function EntitiesPanel({ projectId, files = {} }) {
         </div>
       )}
 
-      {loading ? (
+      {!selectedId && (
+        <div className="mb-2 flex p-0.5 bg-zinc-900 rounded-lg border border-zinc-800 w-fit">
+          <button
+            type="button"
+            onClick={() => setView('entities')}
+            className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition-all ${
+              view === 'entities' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Entidades
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('api')}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded-md transition-all ${
+              view === 'api' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <KeyRound size={11} /> Data API
+          </button>
+        </div>
+      )}
+
+      {view === 'api' && !selectedId ? (
+        <DataApiPanel
+          projectId={projectId}
+          backendEnabled={backendEnabled}
+          entities={entities}
+          onPermissionsSaved={() => refreshEntities(projectId)}
+        />
+      ) : loading ? (
         <div className="flex items-center justify-center gap-2 text-zinc-500 text-xs py-16">
           <Loader2 size={14} className="animate-spin" /> A carregar…
         </div>

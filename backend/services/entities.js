@@ -103,11 +103,43 @@ export async function upsertProjectEntities(projectId, entities) {
   return count;
 }
 
+import {
+  accessAllows,
+  normalizeAccessLevel,
+} from './projectApiKeys.js';
+
+/**
+ * Entity RLS-ish permissions. Defaults keep published apps working (public).
+ */
+export function getEntityPermissions(entityData) {
+  const p = entityData?.permissions || {};
+  return {
+    read: normalizeAccessLevel(p.read, 'public'),
+    write: normalizeAccessLevel(p.write, 'public'),
+  };
+}
+
+function assertEntityAccess(entityData, action, accessLevel) {
+  const perms = getEntityPermissions(entityData);
+  const op = String(action || 'list').toLowerCase();
+  const isRead = op === 'list' || op === 'get';
+  const required = isRead ? perms.read : perms.write;
+  if (!accessAllows(required, accessLevel || 'public')) {
+    const err = new Error(
+      `Sem permissão para ${isRead ? 'ler' : 'escrever'} esta entidade (requer ${required}).`
+    );
+    err.status = 403;
+    err.code = 'ENTITY_ACCESS_DENIED';
+    throw err;
+  }
+}
+
 /**
  * Public/runtime data ops for published apps (Admin SDK).
  * Caller must already assert project.backendEnabled.
+ * @param {{ accessLevel?: 'public'|'authenticated'|'admin' }} opts
  */
-export async function projectDataOp(projectId, { action, entity, id, data } = {}) {
+export async function projectDataOp(projectId, { action, entity, id, data, accessLevel = 'public' } = {}) {
   const entityId = slugify(entity);
   if (!entityId || entityId === 'entity') {
     const err = new Error('entity é obrigatório.');
@@ -125,6 +157,7 @@ export async function projectDataOp(projectId, { action, entity, id, data } = {}
           id: entityId,
           name: entityId,
           columns: [],
+          permissions: { read: 'public', write: 'public' },
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           source: 'runtime',
         },
@@ -132,6 +165,11 @@ export async function projectDataOp(projectId, { action, entity, id, data } = {}
       );
     }
   }
+
+  // Fresh read after possible create
+  const freshSnap = entitySnap.exists ? entitySnap : await entityRef.get();
+  const entityData = freshSnap.exists ? freshSnap.data() || {} : { permissions: { read: 'public', write: 'public' } };
+  assertEntityAccess(entityData, action, accessLevel);
 
   const op = String(action || 'list').toLowerCase();
 
@@ -174,6 +212,7 @@ export async function projectDataOp(projectId, { action, entity, id, data } = {}
             name,
             type: typeof data[name] === 'number' ? 'number' : typeof data[name] === 'boolean' ? 'boolean' : 'string',
           })),
+          permissions: { read: 'public', write: 'public' },
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           source: 'runtime',
         },
@@ -231,4 +270,4 @@ export async function projectDataOp(projectId, { action, entity, id, data } = {}
   throw err;
 }
 
-export default { parseEntitiesFromAiText, upsertProjectEntities, projectDataOp };
+export default { parseEntitiesFromAiText, upsertProjectEntities, projectDataOp, getEntityPermissions };

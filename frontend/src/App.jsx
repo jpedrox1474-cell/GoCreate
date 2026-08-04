@@ -14,6 +14,7 @@ import Settings from './pages/Settings';
 import Integrations from './pages/Integrations';
 import Automations from './pages/Automations';
 import Entities from './pages/Entities';
+import Admin from './pages/Admin';
 import PublicPreview from './pages/PublicPreview';
 
 function NeutralSpinner() {
@@ -89,6 +90,7 @@ export default function App() {
         <Route path="/automations" element={<Automations />} />
         <Route path="/entities" element={<Entities />} />
         <Route path="/database" element={<Entities />} />
+        <Route path="/admin" element={<Admin />} />
       </Route>
 
       <Route

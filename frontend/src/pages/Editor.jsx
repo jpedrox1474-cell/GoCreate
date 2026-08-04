@@ -22,6 +22,7 @@ import {
   PanelLeft,
   X,
   Loader2,
+  Undo2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
@@ -48,6 +49,7 @@ import {
 } from '../lib/artifactParser';
 import { seedDetectedEntities } from '../lib/entities';
 import { canEditProjectCode } from '../lib/plans';
+import { saveCheckpoint, undoLastCheckpoint, getLatestCheckpoint } from '../lib/checkpoints';
 import {
   getProjectById,
   getMessagesForProject,
@@ -167,6 +169,12 @@ export default function Editor() {
   const codeSaveTimerRef = useRef(null);
   const [codeBaselines, setCodeBaselines] = useState({});
   const [dirtyCodeFiles, setDirtyCodeFiles] = useState(() => new Set());
+  const [diffBaselines, setDiffBaselines] = useState({});
+  const [canUndo, setCanUndo] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const pendingCheckpointRef = useRef(null);
+  const generatedFilesRef = useRef({});
+  const messagesRef = useRef([]);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -192,6 +200,14 @@ export default function Editor() {
   useEffect(() => {
     pendingUserTextRef.current = pendingUserText;
   }, [pendingUserText]);
+
+  useEffect(() => {
+    generatedFilesRef.current = generatedFiles;
+  }, [generatedFiles]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Reload mid-generation: clear ghost incomplete states, show resume notice (stream can't resume).
   useEffect(() => {
@@ -438,10 +454,24 @@ export default function Editor() {
         }
         setGeneratedFiles({});
         setActiveFile(null);
+        setDiffBaselines({});
+        setCanUndo(false);
+        pendingCheckpointRef.current = null;
 
         listUserProjects(user.uid)
           .then((list) => {
             if (!cancelled) setHistoryProjects(list);
+          })
+          .catch(() => {});
+
+        getLatestCheckpoint(id)
+          .then((cp) => {
+            if (!cancelled && cp) {
+              setCanUndo(true);
+              if (cp.files && typeof cp.files === 'object') {
+                setDiffBaselines(cp.files);
+              }
+            }
           })
           .catch(() => {});
 
@@ -638,6 +668,15 @@ export default function Editor() {
         return;
       }
 
+      // Snapshot pré-apply para checkpoint + diff (não em continue automático).
+      if (!isContinue) {
+        pendingCheckpointRef.current = {
+          files: { ...generatedFilesRef.current },
+          messageCount: messagesRef.current.length,
+          prompt: trimmed,
+        };
+      }
+
       const historyForApi = [
         ...messages.map((m) => ({ role: m.role, text: m.text })),
         { role: 'user', text: trimmed },
@@ -741,6 +780,20 @@ export default function Editor() {
           return;
         }
 
+        // Apply bem-sucedido → persistir checkpoint + baselines de diff
+        const snap = pendingCheckpointRef.current;
+        if (snap && fileCount > 0) {
+          setDiffBaselines(snap.files || {});
+          void saveCheckpoint(firestoreId, {
+            files: snap.files || {},
+            messageCount: snap.messageCount,
+            prompt: snap.prompt,
+          })
+            .then(() => setCanUndo(true))
+            .catch((err) => console.warn('[Editor] checkpoint:', err?.message));
+          pendingCheckpointRef.current = null;
+        }
+
         setGenerationIncomplete(false);
         notifyAutomations(firestoreId);
         finishGeneration({ waitForHistory: true });
@@ -819,6 +872,44 @@ export default function Editor() {
   );
 
   sendMessageTextRef.current = sendMessageText;
+
+  const handleUndoLastTurn = useCallback(async () => {
+    if (!firestoreId || undoing || isBusy) return;
+    if (
+      !window.confirm(
+        'Desfazer a última alteração da IA? Os ficheiros e as mensagens desse turno serão restaurados.'
+      )
+    ) {
+      return;
+    }
+    setUndoing(true);
+    try {
+      const result = await undoLastCheckpoint(firestoreId);
+      const restored = result.files || {};
+      localCodeEditsRef.current = {};
+      codeBaselinesRef.current = { ...restored };
+      setCodeBaselines({ ...restored });
+      setGeneratedFiles({ ...restored });
+      setDiffBaselines({});
+      setDirtyCodeFiles(new Set());
+      setActiveFile((cur) => (cur && restored[cur] != null ? cur : Object.keys(restored)[0] || null));
+      const nextCp = await getLatestCheckpoint(firestoreId);
+      setCanUndo(Boolean(nextCp));
+      setToast({
+        message: 'Última alteração desfeita.',
+        type: 'success',
+      });
+    } catch (err) {
+      console.error('[Editor] undo:', err);
+      setCanUndo(false);
+      setToast({
+        message: err?.message || 'Não foi possível desfazer.',
+        type: 'error',
+      });
+    } finally {
+      setUndoing(false);
+    }
+  }, [firestoreId, undoing, isBusy]);
 
   function handleStopGeneration() {
     abortRef.current?.abort();
@@ -1690,13 +1781,31 @@ export default function Editor() {
                 </div>
               </div>
             </form>
-            <div className="mt-2 flex justify-between items-center px-1">
+            <div className="mt-2 flex justify-between items-center px-1 gap-2">
               <span className="text-[10px] text-zinc-600 font-medium flex items-center gap-1">
                 <Wand2 size={10} /> {HAS_API ? 'Gemini / API' : 'Modo demo'}
               </span>
-              <span className="text-[10px] text-zinc-600 font-medium">
-                {isGenerating ? 'Clica ■ para parar' : 'Shift + Enter'}
-              </span>
+              <div className="flex items-center gap-2">
+                {canUndo && !isBusy && (
+                  <button
+                    type="button"
+                    disabled={undoing}
+                    onClick={() => void handleUndoLastTurn()}
+                    className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-400/90 hover:text-amber-300 disabled:opacity-50 transition-colors"
+                    title="Desfazer última alteração da IA"
+                  >
+                    {undoing ? (
+                      <Loader2 size={10} className="animate-spin" />
+                    ) : (
+                      <Undo2 size={10} />
+                    )}
+                    Desfazer última alteração
+                  </button>
+                )}
+                <span className="text-[10px] text-zinc-600 font-medium">
+                  {isGenerating ? 'Clica ■ para parar' : 'Shift + Enter'}
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -1743,6 +1852,7 @@ export default function Editor() {
           onRevertFile={handleRevertFile}
           codeBaselines={codeBaselines}
           dirtyCodeFiles={dirtyCodeFiles}
+          diffBaselines={diffBaselines}
         />
       </main>
 

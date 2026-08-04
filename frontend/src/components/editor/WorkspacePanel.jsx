@@ -27,6 +27,7 @@ export default function WorkspacePanel({
   onRevertFile = null,
   codeBaselines = null,
   dirtyCodeFiles = null,
+  diffBaselines = null,
 }) {
   function openPreviewTab() {
     if (!projectId) return;
@@ -134,7 +135,11 @@ export default function WorkspacePanel({
           </div>
         ) : activeTab === 'entities' ? (
           <div className="w-full h-full min-h-0 overflow-hidden">
-            <EntitiesPanel projectId={projectId} files={files} />
+            <EntitiesPanel
+              projectId={projectId}
+              files={files}
+              backendEnabled={backendEnabled}
+            />
           </div>
         ) : (
           <div className="w-full h-full min-h-0 overflow-hidden">
@@ -148,6 +153,7 @@ export default function WorkspacePanel({
               onRevertFile={onRevertFile}
               baselines={codeBaselines}
               dirtyFiles={dirtyCodeFiles}
+              diffBaselines={diffBaselines}
             />
           </div>
         )}

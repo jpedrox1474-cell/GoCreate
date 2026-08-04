@@ -504,6 +504,13 @@ export default function SettingsModal({
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
+            Env secrets
+          </p>
+          <EnvSecretsBlock projectId={projectId} onToast={onToast} />
+        </section>
+
+        <section className="space-y-2 pt-1 border-t border-zinc-800/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
             Atalhos
           </p>
           <Link
@@ -620,5 +627,139 @@ export default function SettingsModal({
         </div>
       </form>
     </ModalShell>
+  );
+}
+
+function EnvSecretsBlock({ projectId, onToast }) {
+  const { user } = useAuth();
+  const [secrets, setSecrets] = useState([]);
+  const [keyName, setKeyName] = useState('');
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = React.useCallback(async () => {
+    if (!projectId || !user) {
+      setSecrets([]);
+      return;
+    }
+    try {
+      const idToken = await user.getIdToken();
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/env-secrets`,
+        { headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setSecrets(data.secrets || []);
+    } catch {
+      /* ignore */
+    }
+  }, [projectId, user]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!projectId || !user || !keyName.trim() || !value) return;
+    setBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const safe = keyName.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+      const res = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/env-secrets/${encodeURIComponent(safe)}`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ value }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Falha ao guardar');
+      setKeyName('');
+      setValue('');
+      onToast?.({ message: 'Secret guardado (mascarado).', type: 'success' });
+      await load();
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha ao guardar secret.', type: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete(key) {
+    if (!window.confirm(`Apagar secret ${key}?`)) return;
+    try {
+      const idToken = await user.getIdToken();
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/env-secrets/${encodeURIComponent(key)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      await load();
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha ao apagar.', type: 'error' });
+    }
+  }
+
+  if (!projectId) {
+    return <p className="text-[11px] text-zinc-500">Guarda o projeto primeiro.</p>;
+  }
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2">
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        Variáveis de ambiente do projeto (valores mascarados na UI). Não entram no git.
+      </p>
+      {secrets.length > 0 && (
+        <ul className="space-y-1">
+          {secrets.map((s) => (
+            <li
+              key={s.id || s.key}
+              className="flex items-center justify-between gap-2 text-[11px] px-2 py-1 rounded border border-zinc-800/80"
+            >
+              <span className="font-mono text-zinc-300">{s.key}</span>
+              <span className="text-zinc-600 font-mono truncate">{s.masked}</span>
+              <button
+                type="button"
+                onClick={() => void handleDelete(s.key)}
+                className="text-zinc-500 hover:text-red-400"
+              >
+                <X size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-col sm:flex-row gap-2">
+        <input
+          value={keyName}
+          onChange={(e) => setKeyName(e.target.value.toUpperCase())}
+          placeholder="API_TOKEN"
+          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1.5 text-xs text-zinc-200 font-mono outline-none focus:border-blue-500/50"
+        />
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="valor"
+          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-blue-500/50"
+        />
+        <button
+          type="button"
+          disabled={busy || !keyName.trim() || !value}
+          onClick={handleSave}
+          className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40"
+        >
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+          Guardar
+        </button>
+      </div>
+    </div>
   );
 }

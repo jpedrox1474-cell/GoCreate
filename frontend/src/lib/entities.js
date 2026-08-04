@@ -216,6 +216,7 @@ export async function upsertEntity(projectId, entity, { rows } = {}) {
       name: entity.name || id,
       columns,
       source: entity.source || 'manual',
+      permissions: entity.permissions || { read: 'public', write: 'public' },
       updatedAt: serverTimestamp(),
     },
     { merge: true }
