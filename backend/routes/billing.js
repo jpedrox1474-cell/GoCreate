@@ -150,6 +150,19 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       notificationUrl,
     });
 
+    if (!pix.qrCode && !pix.qrCodeBase64 && !pix.ticketUrl) {
+      console.error('[billing/create-payment] Pix sem QR/ticket', {
+        paymentId: pix.paymentId,
+        status: pix.status,
+      });
+      return res.status(502).json({
+        error:
+          'Mercado Pago não devolveu QR Code Pix. Verifique MERCADOPAGO_TEST_ACCESS_TOKEN (TEST-).',
+        code: 'MP_PIX_QR_MISSING',
+        paymentId: pix.paymentId,
+      });
+    }
+
     await txRef.update({
       mpPaymentId: pix.paymentId ? String(pix.paymentId) : null,
       mpStatus: pix.status || 'pending',

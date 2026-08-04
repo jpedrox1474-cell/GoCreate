@@ -311,11 +311,7 @@ export async function processBrickPayment({
       requestOptions: { idempotencyKey },
     });
 
-    const txData = result.point_of_interaction?.transaction_data || {};
-    const ticketUrl =
-      txData.ticket_url ||
-      result.transaction_details?.external_resource_url ||
-      null;
+    const tx = extractPixTransactionData(result);
 
     return {
       paymentId: result.id,
@@ -323,10 +319,10 @@ export async function processBrickPayment({
       statusDetail: result.status_detail || null,
       paymentMethodId: result.payment_method_id || raw.payment_method_id || null,
       paymentTypeId: result.payment_type_id || null,
-      qrCode: txData.qr_code || null,
-      qrCodeBase64: txData.qr_code_base64 || null,
-      ticketUrl,
-      barcode: txData.barcode || result.barcode?.content || null,
+      qrCode: tx.qrCode,
+      qrCodeBase64: tx.qrCodeBase64,
+      ticketUrl: tx.ticketUrl,
+      barcode: result.point_of_interaction?.transaction_data?.barcode || result.barcode?.content || null,
     };
   } catch (err) {
     throw mapMercadoPagoPaymentError(err);
@@ -334,7 +330,38 @@ export async function processBrickPayment({
 }
 
 /**
- * Pagamento Pix direto — devolve QR (base64) + copia-e-cola.
+ * Extrai transaction_data do pagamento Pix (SDK ou GET /v1/payments/:id).
+ * Normaliza qr_code_base64 (remove prefixo data: URI se vier junto).
+ */
+export function extractPixTransactionData(payment) {
+  const raw =
+    payment?.point_of_interaction?.transaction_data ||
+    payment?.body?.point_of_interaction?.transaction_data ||
+    payment?.transaction_data ||
+    {};
+
+  let qrCodeBase64 = raw.qr_code_base64 || raw.qrCodeBase64 || null;
+  if (typeof qrCodeBase64 === 'string' && qrCodeBase64.startsWith('data:')) {
+    const comma = qrCodeBase64.indexOf(',');
+    qrCodeBase64 = comma >= 0 ? qrCodeBase64.slice(comma + 1) : qrCodeBase64;
+  }
+
+  const ticketUrl =
+    raw.ticket_url ||
+    raw.ticketUrl ||
+    payment?.transaction_details?.external_resource_url ||
+    null;
+
+  return {
+    qrCode: raw.qr_code || raw.qrCode || null,
+    qrCodeBase64: qrCodeBase64 || null,
+    ticketUrl: ticketUrl || null,
+  };
+}
+
+/**
+ * Pagamento Pix direto — devolve QR (base64) + copia-e-cola + ticket_url.
+ * Se a criação vier sem base64, faz GET do pagamento (sandbox às vezes atrasa o poi).
  */
 export async function createPixPayment({
   product,
@@ -374,14 +401,39 @@ export async function createPixPayment({
       requestOptions: { idempotencyKey },
     });
 
-    const txData = result.point_of_interaction?.transaction_data || {};
+    let tx = extractPixTransactionData(result);
+
+    // Sandbox / SDK ocasionalmente devolve poi incompleto — reconsultar.
+    if (result?.id && (!tx.qrCodeBase64 || !tx.qrCode)) {
+      try {
+        const fresh = await payment.get({ id: String(result.id) });
+        const again = extractPixTransactionData(fresh);
+        tx = {
+          qrCode: again.qrCode || tx.qrCode,
+          qrCodeBase64: again.qrCodeBase64 || tx.qrCodeBase64,
+          ticketUrl: again.ticketUrl || tx.ticketUrl,
+        };
+      } catch (refreshErr) {
+        console.warn(
+          '[mercadopago/createPixPayment] refresh poi failed:',
+          refreshErr?.message || refreshErr
+        );
+      }
+    }
+
+    if (!tx.qrCodeBase64) {
+      console.warn(
+        '[mercadopago/createPixPayment] qr_code_base64 ausente',
+        { paymentId: result?.id, hasQrCode: Boolean(tx.qrCode), hasTicket: Boolean(tx.ticketUrl) }
+      );
+    }
 
     return {
       paymentId: result.id,
       status: result.status,
-      qrCode: txData.qr_code || null,
-      qrCodeBase64: txData.qr_code_base64 || null,
-      ticketUrl: txData.ticket_url || null,
+      qrCode: tx.qrCode,
+      qrCodeBase64: tx.qrCodeBase64,
+      ticketUrl: tx.ticketUrl,
     };
   } catch (err) {
     throw mapMercadoPagoPaymentError(err);

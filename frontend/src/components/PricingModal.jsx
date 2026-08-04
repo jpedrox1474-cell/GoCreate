@@ -10,16 +10,25 @@ import {
   Copy,
   ArrowLeft,
   CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PLANS } from '../lib/plans';
 import { createPayment, getPaymentStatus } from '../lib/billingApi';
 import Toast from './Toast';
 
+/** src de <img> a partir do qr_code_base64 do Mercado Pago (sem mock local). */
+function pixQrImageSrc(base64) {
+  const raw = String(base64 || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('data:image')) return raw;
+  return `data:image/png;base64,${raw}`;
+}
+
 /**
  * PricingModal — Free / Pro / Turbo.
- * Assinar Pro e Turbo → modal Pix no GoCreate (QR + copia-e-cola).
- * Sem Stripe, sem Payment Brick, sem redirect Mercado Pago Checkout Pro.
+ * Assinar Pro e Turbo → modal Pix no GoCreate (QR real MP + copia-e-cola).
+ * Fallback: iframe do ticket_url sandbox/produção. Sem mock SVG / qrserver.
  */
 export default function PricingModal({ open, onClose, currentPlan = 'free', message = null }) {
   const { user } = useAuth();
@@ -28,7 +37,9 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
   const [view, setView] = useState('plans'); // plans | pending | success
   const [pixData, setPixData] = useState(null);
   const [pixStatus, setPixStatus] = useState('pending');
+  const [iframeBlocked, setIframeBlocked] = useState(false);
   const pollRef = useRef(null);
+  const iframeTimerRef = useRef(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -40,14 +51,22 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
   useEffect(() => {
     if (!open) {
       stopPolling();
+      if (iframeTimerRef.current) {
+        clearTimeout(iframeTimerRef.current);
+        iframeTimerRef.current = null;
+      }
       setView('plans');
       setPixData(null);
       setPixStatus('pending');
       setBusyId(null);
+      setIframeBlocked(false);
     }
   }, [open, stopPolling]);
 
-  useEffect(() => () => stopPolling(), [stopPolling]);
+  useEffect(() => () => {
+    stopPolling();
+    if (iframeTimerRef.current) clearTimeout(iframeTimerRef.current);
+  }, [stopPolling]);
 
   const startStatusPolling = useCallback(
     (transactionId) => {
@@ -74,9 +93,14 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
 
   function resetToPlans() {
     stopPolling();
+    if (iframeTimerRef.current) {
+      clearTimeout(iframeTimerRef.current);
+      iframeTimerRef.current = null;
+    }
     setView('plans');
     setPixData(null);
     setPixStatus('pending');
+    setIframeBlocked(false);
   }
 
   async function handleSelect(plan) {
@@ -90,15 +114,27 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     }
 
     setBusyId(plan.id);
+    setIframeBlocked(false);
     try {
       const idToken = await user.getIdToken();
       const result = await createPayment({ productId: plan.id, idToken });
 
-      if (result.mode === 'pix' && (result.qrCode || result.qrCodeBase64)) {
+      if (
+        result.mode === 'pix' &&
+        (result.qrCode || result.qrCodeBase64 || result.ticketUrl)
+      ) {
         setPixData(result);
         setPixStatus('pending');
         setView('pending');
         startStatusPolling(result.transactionId);
+
+        // Se só houver ticket (sem base64), preparar detecção de X-Frame-Options.
+        if (!result.qrCodeBase64 && result.ticketUrl) {
+          if (iframeTimerRef.current) clearTimeout(iframeTimerRef.current);
+          iframeTimerRef.current = setTimeout(() => {
+            setIframeBlocked(true);
+          }, 4500);
+        }
         return;
       }
 
@@ -146,6 +182,12 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       ? `R$ ${Number(pixData.amount).toFixed(2).replace('.', ',')}`
       : '';
 
+  const qrSrc = pixQrImageSrc(pixData?.qrCodeBase64);
+  const useTicketIframe = Boolean(pixData?.ticketUrl) && !qrSrc;
+  // Link externo só quando o iframe do ticket for bloqueado (X-Frame-Options).
+  const showOpenMpLink = Boolean(pixData?.ticketUrl) && iframeBlocked && !qrSrc;
+  const pendingWide = useTicketIframe;
+
   const headerTitle =
     view === 'pending'
       ? 'Pagar com Pix'
@@ -155,7 +197,11 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
 
   const headerSub =
     view === 'pending'
-      ? 'Escaneia o QR ou copia o código. Ativamos o plano assim que o Pix for aprovado.'
+      ? qrSrc
+        ? 'Escaneia o QR do Mercado Pago ou copia o código. Ativamos o plano assim que o Pix for aprovado.'
+        : useTicketIframe
+          ? 'Checkout Pix do Mercado Pago embutido. Ativamos o plano assim que for aprovado.'
+          : 'Copia o código Pix. Ativamos o plano assim que for aprovado.'
       : view === 'success'
         ? 'Créditos e plano atualizados na tua conta.'
         : message || 'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.';
@@ -171,7 +217,11 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         role="dialog"
         aria-modal="true"
         className={`relative w-full gc-themed bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden ${
-          view === 'pending' || view === 'success' ? 'max-w-md' : 'max-w-5xl'
+          view === 'pending' && pendingWide
+            ? 'max-w-2xl max-h-[92vh] flex flex-col'
+            : view === 'pending' || view === 'success'
+              ? 'max-w-md'
+              : 'max-w-5xl'
         }`}
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_40%_at_50%_0%,rgba(37,99,235,0.12),transparent_60%)]" />
@@ -298,7 +348,11 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         )}
 
         {view === 'pending' && pixData && (
-          <div className="relative p-5 sm:p-7 flex flex-col items-center gap-5">
+          <div
+            className={`relative p-5 sm:p-7 flex flex-col items-center gap-5 ${
+              pendingWide ? 'overflow-y-auto min-h-0 flex-1' : ''
+            }`}
+          >
             <button
               type="button"
               onClick={resetToPlans}
@@ -327,19 +381,48 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                 <p className="text-xl font-bold tracking-tight text-zinc-50">{amountLabel}</p>
               </div>
 
-              {pixData.qrCodeBase64 ? (
+              {/* Primário: QR real do Mercado Pago (qr_code_base64) */}
+              {qrSrc ? (
                 <img
-                  src={`data:image/png;base64,${pixData.qrCodeBase64}`}
-                  alt="QR Code Pix"
-                  className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl bg-white p-3 shadow-lg shadow-black/40"
+                  src={qrSrc}
+                  alt="QR Code Pix Mercado Pago"
+                  width={256}
+                  height={256}
+                  className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl bg-white p-3 shadow-lg shadow-black/40 object-contain"
+                  onError={() => {
+                    // Base64 inválido → cair no iframe do ticket se existir
+                    setPixData((prev) =>
+                      prev ? { ...prev, qrCodeBase64: null } : prev
+                    );
+                    if (pixData.ticketUrl) {
+                      if (iframeTimerRef.current) clearTimeout(iframeTimerRef.current);
+                      iframeTimerRef.current = setTimeout(() => setIframeBlocked(true), 4500);
+                    }
+                  }}
                 />
-              ) : pixData.qrCode ? (
-                <div className="w-56 h-56 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-500 text-xs text-center px-6">
-                  Usa o código copia-e-cola abaixo no app do teu banco
+              ) : useTicketIframe && !iframeBlocked ? (
+                <div className="w-full rounded-xl overflow-hidden border border-zinc-700 bg-white min-h-[420px] h-[52vh] max-h-[560px]">
+                  <iframe
+                    title="Pix Mercado Pago"
+                    src={pixData.ticketUrl}
+                    className="w-full h-full border-0"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    allow="payment *; clipboard-write"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                    onLoad={() => {
+                      if (iframeTimerRef.current) {
+                        clearTimeout(iframeTimerRef.current);
+                        iframeTimerRef.current = null;
+                      }
+                      setIframeBlocked(false);
+                    }}
+                  />
                 </div>
               ) : (
                 <div className="w-56 h-56 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-500 text-xs text-center px-6">
-                  QR indisponível — tenta novamente
+                  {pixData.qrCode
+                    ? 'Usa o código copia-e-cola abaixo no app do teu banco'
+                    : 'QR indisponível — tenta novamente'}
                 </div>
               )}
 
@@ -364,11 +447,23 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                 </div>
               )}
 
+              {/* Só se o iframe for bloqueado (X-Frame-Options) — link secundário mínimo */}
+              {showOpenMpLink && (
+                <a
+                  href={pixData.ticketUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  Abrir no Mercado Pago <ExternalLink size={10} />
+                </a>
+              )}
+
               <div className="flex items-center gap-2 text-sm text-zinc-300">
                 {pixStatus === 'pending' ? (
                   <>
                     <Loader2 size={15} className="animate-spin text-blue-400" />
-                    Aguardando pagamento…
+                    Aguardando confirmação do Pix…
                   </>
                 ) : (
                   <>
