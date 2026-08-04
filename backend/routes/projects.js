@@ -434,6 +434,15 @@ router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
     );
     await syncBackendFlagToPublicSnapshots(projectId, true);
 
+    const { writeAuditLog } = await import('../services/audit.js');
+    await writeAuditLog({
+      action: 'project.backend_enable',
+      actorUid: req.user.uid,
+      actorEmail: req.user.email,
+      projectId,
+      meta: { creditsCharged },
+    });
+
     const after = await ensureUserAdmin(req.user.uid, req.user.email);
     res.json({
       ok: true,
@@ -788,6 +797,129 @@ router.get('/:projectId/data', optionalAuth, async (req, res) => {
 });
 
 /**
+ * Server-side secrets proxy — never exposes raw secrets to the browser.
+ * POST body: { url, method?, headers?, body?, inject?: string[] }
+ * Placeholders {{ENV.KEY}} in url/headers/body are replaced with project secrets.
+ * Only keys listed in inject (or all if omit + max 20) are used.
+ */
+router.post('/:projectId/secrets-proxy', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    await assertOwnerOrEditor(projectId, req.user.uid, req.user.email);
+
+    const targetUrl = String(req.body?.url || '').trim();
+    if (!/^https:\/\//i.test(targetUrl)) {
+      return res.status(400).json({ error: 'url deve ser HTTPS.' });
+    }
+    // Block obvious SSRF to metadata / localhost
+    try {
+      const u = new URL(targetUrl);
+      const host = u.hostname.toLowerCase();
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '0.0.0.0' ||
+        host.endsWith('.internal') ||
+        host === 'metadata.google.internal' ||
+        host.startsWith('169.254.')
+      ) {
+        return res.status(400).json({ error: 'Host não permitido.' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'URL inválida.' });
+    }
+
+    const snap = await db.collection('projects').doc(projectId).collection('envSecrets').get();
+    const env = {};
+    snap.docs.forEach((d) => {
+      const data = d.data() || {};
+      const key = String(data.key || d.id || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]/g, '');
+      if (key) env[key] = String(data.value ?? '');
+    });
+
+    let injectKeys = Array.isArray(req.body?.inject)
+      ? req.body.inject.map((k) => String(k).toUpperCase().replace(/[^A-Z0-9_]/g, ''))
+      : Object.keys(env).slice(0, 20);
+    injectKeys = injectKeys.filter((k) => k && env[k] != null).slice(0, 20);
+
+    const replaceEnv = (input) => {
+      if (input == null) return input;
+      if (typeof input === 'object') {
+        return JSON.parse(
+          replaceEnv(JSON.stringify(input))
+        );
+      }
+      let s = String(input);
+      for (const key of injectKeys) {
+        s = s.split(`{{ENV.${key}}}`).join(env[key]);
+        s = s.split(`{{${key}}}`).join(env[key]);
+      }
+      return s;
+    };
+
+    const method = String(req.body?.method || 'GET').toUpperCase();
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      return res.status(400).json({ error: 'method inválido.' });
+    }
+
+    const headers = {};
+    const rawHeaders = req.body?.headers && typeof req.body.headers === 'object' ? req.body.headers : {};
+    for (const [k, v] of Object.entries(rawHeaders)) {
+      if (/^(host|content-length)$/i.test(k)) continue;
+      headers[k] = replaceEnv(v);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    let upstream;
+    try {
+      upstream = await fetch(replaceEnv(targetUrl), {
+        method,
+        headers,
+        body: method === 'GET' || method === 'DELETE' ? undefined : replaceEnv(
+          typeof req.body?.body === 'string' ? req.body.body : JSON.stringify(req.body?.body ?? {})
+        ),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const text = await upstream.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      /* plain */
+    }
+
+    const { writeAuditLog } = await import('../services/audit.js');
+    await writeAuditLog({
+      action: 'project.secrets_proxy',
+      actorUid: req.user.uid,
+      actorEmail: req.user.email,
+      projectId,
+      meta: { urlHost: new URL(targetUrl).hostname, method, status: upstream.status },
+    });
+
+    res.status(200).json({
+      ok: upstream.ok,
+      status: upstream.status,
+      headers: {
+        'content-type': upstream.headers.get('content-type'),
+      },
+      body: json !== null ? json : text.slice(0, 100_000),
+    });
+  } catch (err) {
+    console.error('[projects/secrets-proxy]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha no proxy.' });
+  }
+});
+
+/**
  * Collaborators — owner only.
  */
 router.get('/:projectId/collaborators', requireAuth, async (req, res) => {
@@ -812,6 +944,14 @@ router.post('/:projectId/collaborators', requireAuth, async (req, res) => {
       email: req.body?.email,
       role: req.body?.role,
     });
+    const { writeAuditLog } = await import('../services/audit.js');
+    await writeAuditLog({
+      action: 'project.collaborator_add',
+      actorUid: req.user.uid,
+      actorEmail: req.user.email,
+      projectId,
+      meta: { email: req.body?.email, role: req.body?.role },
+    });
     res.json({ ok: true, collaborators });
   } catch (err) {
     console.error('[projects/collaborators/add]', err);
@@ -825,6 +965,14 @@ router.delete('/:projectId/collaborators/:email', requireAuth, async (req, res) 
     await assertOwner(projectId, req.user.uid);
     const { removeCollaborator } = await import('../services/collaborators.js');
     const collaborators = await removeCollaborator(projectId, decodeURIComponent(email));
+    const { writeAuditLog } = await import('../services/audit.js');
+    await writeAuditLog({
+      action: 'project.collaborator_remove',
+      actorUid: req.user.uid,
+      actorEmail: req.user.email,
+      projectId,
+      meta: { email: decodeURIComponent(email) },
+    });
     res.json({ ok: true, collaborators });
   } catch (err) {
     console.error('[projects/collaborators/delete]', err);
@@ -841,6 +989,13 @@ router.delete('/:projectId', requireAuth, async (req, res) => {
     }
     await assertOwner(projectId, req.user.uid);
     await cascadeDeleteProject(projectId);
+    const { writeAuditLog } = await import('../services/audit.js');
+    await writeAuditLog({
+      action: 'project.delete',
+      actorUid: req.user.uid,
+      actorEmail: req.user.email,
+      projectId,
+    });
     res.json({ ok: true, projectId });
   } catch (err) {
     console.error('[projects/delete]', err);

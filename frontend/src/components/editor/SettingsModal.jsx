@@ -964,9 +964,11 @@ function EnvSecretsBlock({ projectId, onToast }) {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2">
       <p className="text-[11px] text-zinc-500 leading-relaxed">
-        Injetadas no preview e no site publicado como{' '}
-        <span className="font-mono text-zinc-400">window.__GOCREATE_ENV__</span> (visíveis no
-        browser — só config client-safe). Valores mascarados na UI.
+        Injetadas no preview como{' '}
+        <span className="font-mono text-zinc-400">window.__GOCREATE_ENV__</span> (client-safe).
+        Para chaves secretas usa{' '}
+        <span className="font-mono text-zinc-400">POST /api/projects/:id/secrets-proxy</span> com{' '}
+        <span className="font-mono text-zinc-400">{'{{ENV.KEY}}'}</span> — o valor não vai ao browser.
       </p>
       {secrets.length > 0 && (
         <ul className="space-y-1">

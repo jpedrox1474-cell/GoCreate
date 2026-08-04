@@ -58,3 +58,21 @@ export async function adjustUserCredits({ idToken, uid, delta, setTo }) {
   }
   return data;
 }
+
+export async function fetchAdminMetrics(idToken) {
+  const res = await fetch(`${API_URL}/api/admin/metrics`, {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+  const data = await parseJson(res);
+  if (!res.ok) throw new Error(data?.error || 'Falha nas métricas');
+  return data?.metrics || null;
+}
+
+export async function fetchAdminAudit(idToken, limit = 30) {
+  const res = await fetch(`${API_URL}/api/admin/audit?limit=${limit}`, {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+  const data = await parseJson(res);
+  if (!res.ok) throw new Error(data?.error || 'Falha no audit');
+  return data?.logs || [];
+}

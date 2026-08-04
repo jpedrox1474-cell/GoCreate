@@ -130,6 +130,20 @@ router.post('/users/:uid/credits', async (req, res) => {
       { merge: true }
     );
 
+    const { writeAuditLog } = await import('../services/audit.js');
+    await writeAuditLog({
+      action: 'admin.credits_adjust',
+      actorUid: req.user.uid,
+      actorEmail: req.user.email,
+      targetUid: uid,
+      meta: {
+        setTo: typeof req.body?.setTo === 'number' ? req.body.setTo : null,
+        delta: req.body?.delta ?? null,
+        credits,
+        email: data.email || null,
+      },
+    });
+
     res.json({
       ok: true,
       uid,
@@ -140,6 +154,32 @@ router.post('/users/:uid/credits', async (req, res) => {
   } catch (err) {
     console.error('[admin/credits]', err);
     res.status(err.status || 500).json({ error: err.message || 'Falha ao ajustar créditos.' });
+  }
+});
+
+/** GET /api/admin/metrics */
+router.get('/metrics', async (req, res) => {
+  try {
+    assertOwnerEmail(req);
+    const { getPlatformMetrics } = await import('../services/adminMetrics.js');
+    const metrics = await getPlatformMetrics();
+    res.json({ ok: true, metrics });
+  } catch (err) {
+    console.error('[admin/metrics]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha nas métricas.' });
+  }
+});
+
+/** GET /api/admin/audit */
+router.get('/audit', async (req, res) => {
+  try {
+    assertOwnerEmail(req);
+    const { listAuditLogs } = await import('../services/audit.js');
+    const logs = await listAuditLogs({ limit: req.query.limit });
+    res.json({ ok: true, logs });
+  } catch (err) {
+    console.error('[admin/audit]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha no audit.' });
   }
 });
 

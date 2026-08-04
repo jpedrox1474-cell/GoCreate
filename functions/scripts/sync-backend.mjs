@@ -48,6 +48,8 @@ const FILES = [
   'services/projectFunctions.js',
   'services/sessions.js',
   'services/collaborators.js',
+  'services/audit.js',
+  'services/adminMetrics.js',
   'services/oauth/pkce.js',
   'services/oauth/state.js',
   'services/oauth/providers.js',

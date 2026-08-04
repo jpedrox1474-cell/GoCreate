@@ -3,7 +3,7 @@ import { Shield, Loader2, Plus, Minus, Search, ChevronLeft, ChevronRight } from 
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { isOwnerUser } from '../lib/plans';
-import { listAdminUsers, adjustUserCredits } from '../lib/adminApi';
+import { listAdminUsers, adjustUserCredits, fetchAdminMetrics, fetchAdminAudit } from '../lib/adminApi';
 import Toast from '../components/Toast';
 
 const PAGE_SIZE = 40;
@@ -27,6 +27,8 @@ export default function Admin() {
   const [pageIndex, setPageIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(false);
+  const [metrics, setMetrics] = useState(null);
+  const [audit, setAudit] = useState([]);
 
   const allowed = isOwnerUser(user);
 
@@ -36,16 +38,22 @@ export default function Admin() {
     try {
       const idToken = await user.getIdToken();
       const cursor = cursorStack[pageIndex] || null;
-      const result = await listAdminUsers({
-        idToken,
-        limit: PAGE_SIZE,
-        cursor,
-        q,
-        plan,
-      });
+      const [result, m, logs] = await Promise.all([
+        listAdminUsers({
+          idToken,
+          limit: PAGE_SIZE,
+          cursor,
+          q,
+          plan,
+        }),
+        fetchAdminMetrics(idToken).catch(() => null),
+        fetchAdminAudit(idToken, 25).catch(() => []),
+      ]);
       setUsers(result.users);
       setNextCursor(result.nextCursor);
       setHasMore(result.hasMore);
+      setMetrics(m);
+      setAudit(logs);
     } catch (err) {
       setToast({ message: err?.message || 'Falha ao carregar admin.', type: 'error' });
     } finally {
@@ -140,6 +148,29 @@ export default function Admin() {
           <p className="text-sm text-zinc-500">Utilizadores, planos e créditos (owner only)</p>
         </div>
       </div>
+
+      {metrics && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+          {[
+            { label: 'Users', value: metrics.usersTotal },
+            { label: 'Ativos 7d', value: metrics.activeUsers7d },
+            { label: 'Projetos', value: metrics.projectsTotal },
+            { label: 'Live', value: metrics.projectsLive },
+            { label: 'Pro', value: metrics.byPlan?.pro ?? 0 },
+            { label: 'Free', value: metrics.byPlan?.free ?? 0 },
+            { label: 'MRR est.', value: `R$ ${metrics.mrrEstimateBrl ?? 0}` },
+            { label: 'Créditos mês', value: metrics.creditsUsedThisMonth ?? 0 },
+          ].map((c) => (
+            <div
+              key={c.label}
+              className="rounded-xl border border-zinc-800 bg-zinc-950/50 px-3 py-2.5"
+            >
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">{c.label}</p>
+              <p className="text-lg font-semibold text-zinc-100 font-mono tabular-nums">{c.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <form
         onSubmit={applySearch}
@@ -264,6 +295,24 @@ export default function Admin() {
             </div>
           </div>
         </>
+      )}
+
+      {audit.length > 0 && (
+        <div className="mt-8 rounded-xl border border-zinc-800 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-zinc-800 bg-zinc-900/60">
+            <p className="text-xs font-semibold text-zinc-300">Auditoria recente</p>
+          </div>
+          <ul className="max-h-56 overflow-y-auto custom-scrollbar divide-y divide-zinc-800/80">
+            {audit.map((log) => (
+              <li key={log.id} className="px-4 py-2 text-[11px] text-zinc-400 font-mono">
+                <span className="text-blue-400">{log.action}</span>
+                {' · '}
+                {log.actorEmail || log.actorUid || '—'}
+                {log.projectId ? ` · ${log.projectId.slice(0, 8)}…` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {toast && (

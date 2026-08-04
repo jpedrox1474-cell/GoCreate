@@ -251,5 +251,10 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+
+    // Audit logs — Admin SDK only
+    match /auditLogs/{logId} {
+      allow read, write: if false;
+    }
   }
 }
