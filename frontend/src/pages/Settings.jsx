@@ -238,11 +238,10 @@ export default function Settings() {
 
         <section>
           <h2 className="text-sm font-semibold text-zinc-200 mb-3">Aparência</h2>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {[
               { id: 'dark', label: 'Dark' },
               { id: 'light', label: 'Light' },
-              { id: 'system', label: 'Sistema' },
             ].map((opt) => (
               <button
                 key={opt.id}

@@ -1,40 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Wallet,
-  CreditCard,
-  CircleDollarSign,
-  Landmark,
   Shield,
-  KeyRound,
-  Lock,
   Chrome,
   Github,
   Database,
-  Layers,
-  Server,
-  HardDrive,
-  Mail,
-  Send,
-  Newspaper,
-  MessageCircle,
-  Phone,
-  SendHorizontal,
-  BarChart3,
-  Activity,
-  LineChart,
   Image,
-  Cloud,
   FolderOpen,
-  ShoppingBag,
-  Map,
   MapPin,
   QrCode,
-  FileText,
-  Share2,
   Plug,
   Check,
   Loader2,
   Search,
+  Lock,
+  Server,
 } from 'lucide-react';
 import Toast from '../components/Toast';
 import ConnectIntegrationModal from '../components/integrations/ConnectIntegrationModal';
@@ -42,6 +23,7 @@ import SocialChannelsSection from '../components/integrations/SocialChannelsSect
 import {
   INTEGRATIONS_CATALOG,
   INTEGRATION_CATEGORIES,
+  BACKEND_GATED_INTEGRATION_IDS,
 } from '../lib/integrationsCatalog';
 import {
   getIntegrationsStatus,
@@ -58,46 +40,26 @@ import {
 } from '../lib/socialChannelsApi';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
-import { PREMIUM_REQUIRED_MESSAGE } from '../lib/plans';
+import { BACKEND_ENABLE_CREDIT_COST, PREMIUM_REQUIRED_MESSAGE } from '../lib/plans';
 
-const OAUTH_PROVIDERS = new Set(['github', 'stripe', 'paypal', 'mercadopago']);
+const OAUTH_PROVIDERS = new Set(['github', 'mercadopago']);
 const ICONS = {
   Wallet,
-  CreditCard,
-  CircleDollarSign,
-  Landmark,
   Shield,
-  KeyRound,
-  Lock,
   Chrome,
   Github,
   Database,
-  Layers,
-  Server,
-  HardDrive,
-  Mail,
-  Send,
-  Newspaper,
-  MessageCircle,
-  Phone,
-  SendHorizontal,
-  BarChart3,
-  Activity,
-  LineChart,
   Image,
-  Cloud,
   FolderOpen,
-  ShoppingBag,
-  Map,
   MapPin,
   QrCode,
-  FileText,
-  Share2,
   Plug,
 };
 
 function statusLabel(status, meta = {}) {
+  if (status === 'locked') return 'Bloqueado';
   if (status === 'connected') {
+    if (meta?.requiresBackend) return 'Ligado (Backend)';
     if (meta?.platformPowered || meta?.label === 'Ligado (plataforma)') {
       return 'Ligado (plataforma)';
     }
@@ -110,6 +72,7 @@ function statusLabel(status, meta = {}) {
 function statusClass(status) {
   if (status === 'connected')
     return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25';
+  if (status === 'locked') return 'bg-amber-500/10 text-amber-400 border-amber-500/25';
   if (status === 'coming_soon') return 'bg-zinc-800/80 text-zinc-500 border-zinc-700';
   return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
 }
@@ -184,16 +147,7 @@ export default function Integrations() {
 
   const cards = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const SOCIAL_SECTION_IDS = new Set([
-      'whatsapp_evolution',
-      'instagram',
-      'facebook',
-      'youtube',
-      'tiktok',
-    ]);
     return INTEGRATIONS_CATALOG.filter((item) => {
-      // Secção premium dedicada — evita cartões duplicados no grid
-      if (SOCIAL_SECTION_IDS.has(item.id)) return false;
       if (category !== 'all' && item.category !== category) return false;
       if (!q) return true;
       return (
@@ -202,15 +156,15 @@ export default function Integrations() {
         item.id.includes(q)
       );
     }).map((item) => {
-      let status = 'available';
-      if (item.connectType === 'coming_soon') status = 'coming_soon';
-      else if (statusMap[item.id]?.status === 'connected') status = 'connected';
-      if (item.connectType === 'platform' && status !== 'coming_soon') {
-        const apiStatus = statusMap[item.id]?.status;
-        if (apiStatus === 'available') status = 'available';
-        else if (apiStatus === 'connected' || !statusMap[item.id]) status = 'connected';
+      const api = statusMap[item.id];
+      let status = api?.status || 'available';
+      if (item.connectType === 'backend_gate' && !api) {
+        status = 'locked';
       }
-      return { ...item, status, meta: statusMap[item.id]?.meta || {} };
+      if (item.connectType === 'platform' && (!api || api.status === 'connected')) {
+        status = 'connected';
+      }
+      return { ...item, status, meta: api?.meta || {} };
     });
   }, [query, category, statusMap]);
 
@@ -220,30 +174,22 @@ export default function Integrations() {
   );
 
   async function handleConnectClick(item) {
-    if (item.connectType === 'coming_soon') return;
-
-    if (item.connectType === 'platform') {
-      if (item.id === 'google_oauth' || item.id === 'firebase_auth') {
-        setBusyId(item.id);
-        try {
-          const result = await connectGoogleAccount();
-          setToast({
-            message: result?.alreadyConnected
-              ? 'Login Google já activo — apps gerados usam window.GoCreateAuth.signInWithGoogle().'
-              : 'Google ligado. Nos apps gerados: window.GoCreateAuth.signInWithGoogle().',
-            type: 'success',
-          });
-          await refresh();
-        } catch (err) {
-          setToast({
-            message: err?.message || 'Falha ao abrir login Google.',
-            type: 'error',
-          });
-        } finally {
-          setBusyId(null);
-        }
+    if (item.status === 'locked' || item.connectType === 'backend_gate') {
+      if (item.status === 'connected') {
+        setToast({
+          message: `${item.name} activo via Backend Functions.`,
+          type: 'info',
+        });
         return;
       }
+      setToast({
+        message: `Ativa Backend Functions nas Configurações do projeto (−${BACKEND_ENABLE_CREDIT_COST} créditos no Free) para desbloquear Login, Firestore e Firebase.`,
+        type: 'info',
+      });
+      return;
+    }
+
+    if (item.connectType === 'platform') {
       setToast({
         message:
           item.id === 'pix'
@@ -268,9 +214,8 @@ export default function Integrations() {
       } catch (err) {
         if (err?.code === 'PREMIUM_REQUIRED' || err?.status === 403) {
           openPremiumPaywall();
-          setToast({ message: err.message || PREMIUM_REQUIRED_MESSAGE, type: 'error' });
         } else {
-          setToast({ message: err.message || 'Falha ao ligar GitHub.', type: 'error' });
+          setToast({ message: err?.message || 'Falha ao ligar GitHub.', type: 'error' });
         }
       } finally {
         setBusyId(null);
@@ -278,35 +223,17 @@ export default function Integrations() {
       return;
     }
 
-    if (
-      item.connectType === 'oauth' &&
-      (item.id === 'stripe' || item.id === 'paypal' || item.id === 'mercadopago')
-    ) {
+    if (item.connectType === 'oauth' && OAUTH_PROVIDERS.has(item.id)) {
       setBusyId(item.id);
       try {
         const token = await user.getIdToken();
         const { authUrl } = await startPlatformOAuth({ idToken: token, platform: item.id });
         const popup = openOAuthPopup(authUrl);
         await waitForOAuthMessage(item.id, popup);
-        setToast({ message: `${item.name} ligado via OAuth.`, type: 'success' });
+        setToast({ message: `${item.name} ligado.`, type: 'success' });
         await refresh();
       } catch (err) {
-        if (err?.code === 'OAUTH_NOT_CONFIGURED' || err?.status === 501) {
-          setToast({
-            message:
-              err?.details?.hint ||
-              err?.details?.note ||
-              err.message ||
-              (item.id === 'mercadopago'
-                ? 'Mercado Pago OAuth: define TENANT_MP_OAUTH_APP_ID + TENANT_MP_OAUTH_APP_SECRET no servidor, regista o redirect URI no painel MP e faz redeploy.'
-                : item.id === 'paypal'
-                  ? 'PayPal OAuth: define PAYPAL_CLIENT_ID e PAYPAL_CLIENT_SECRET no servidor e faz redeploy.'
-                  : `${item.name} OAuth ainda não configurado no servidor.`),
-            type: 'error',
-          });
-        } else {
-          setToast({ message: err.message || `Falha ao ligar ${item.name}.`, type: 'error' });
-        }
+        setToast({ message: err?.message || `Falha ao ligar ${item.name}.`, type: 'error' });
       } finally {
         setBusyId(null);
       }
@@ -317,7 +244,7 @@ export default function Integrations() {
   }
 
   async function handleModalConnect(credentials) {
-    if (!modalIntegration) return;
+    if (!modalIntegration || !user) return;
     setBusyId(modalIntegration.id);
     try {
       const token = await user.getIdToken();
@@ -330,20 +257,20 @@ export default function Integrations() {
       setModalIntegration(null);
       await refresh();
     } catch (err) {
-      throw err;
+      setToast({ message: err?.message || 'Falha ao ligar.', type: 'error' });
     } finally {
       setBusyId(null);
     }
   }
 
   async function handleModalDisconnect() {
-    if (!modalIntegration) return;
+    if (!modalIntegration || !user) return;
     setBusyId(modalIntegration.id);
     try {
       const token = await user.getIdToken();
       if (modalIntegration.id === 'github') {
         await disconnectGitHub({ idToken: token });
-      } else if (OAUTH_PROVIDERS.has(modalIntegration.id) && modalIntegration.id !== 'github') {
+      } else if (OAUTH_PROVIDERS.has(modalIntegration.id)) {
         await disconnectPlatformOAuth({ idToken: token, platform: modalIntegration.id });
       } else {
         await disconnectIntegration({ idToken: token, providerId: modalIntegration.id });
@@ -352,37 +279,39 @@ export default function Integrations() {
       setModalIntegration(null);
       await refresh();
     } catch (err) {
-      setToast({ message: err.message || 'Falha ao desligar.', type: 'error' });
+      setToast({ message: err?.message || 'Falha ao desligar.', type: 'error' });
     } finally {
       setBusyId(null);
     }
   }
 
   async function handleModalTest() {
-    if (!modalIntegration) return;
-    const token = await user.getIdToken();
-    return testIntegration({ idToken: token, providerId: modalIntegration.id });
+    if (!modalIntegration || !user) return;
+    setBusyId(modalIntegration.id);
+    try {
+      const token = await user.getIdToken();
+      await testIntegration({ idToken: token, providerId: modalIntegration.id });
+      setToast({ message: 'Ligação OK.', type: 'success' });
+    } catch (err) {
+      setToast({ message: err?.message || 'Teste falhou.', type: 'error' });
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2 flex items-center gap-1.5">
-            <Plug size={12} /> Conta
-          </p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-1">
-            Integrações
-          </h1>
-          <p className="text-sm text-zinc-500 max-w-xl">
-            Canais sociais e Pix usam credenciais da plataforma GoCreate. Stripe/PayPal abrem
-            OAuth oficial (sem colar Secret). WhatsApp gera QR; Instagram/Facebook abrem login
-            Meta. Supabase e similares continuam opcionais (BYO).
+          <h1 className="text-2xl font-bold text-zinc-100 tracking-tight mb-1">Integrações</h1>
+          <p className="text-sm text-zinc-500">
+            Só providers activos. Login / Firestore / Firebase desbloqueiam com Backend Functions (−
+            {BACKEND_ENABLE_CREDIT_COST} créditos no Free).
           </p>
         </div>
-        <div className="text-right shrink-0">
+        <div className="text-right">
+          <p className="text-[11px] uppercase tracking-wider text-zinc-600">Ligadas</p>
           <p className="text-2xl font-bold text-zinc-100 tabular-nums">{connectedCount}</p>
-          <p className="text-[11px] text-zinc-500">ligadas / {INTEGRATIONS_CATALOG.length} no catálogo</p>
         </div>
       </div>
 
@@ -393,8 +322,8 @@ export default function Integrations() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Pesquisar integração…"
-            className="w-full bg-zinc-900/60 border border-zinc-800 focus:border-blue-500/40 rounded-lg py-2.5 pl-9 pr-3 text-sm text-zinc-200 outline-none"
+            placeholder="Pesquisar…"
+            className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 pl-9 pr-3.5 text-sm text-zinc-200 outline-none"
           />
         </div>
         <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
@@ -447,8 +376,9 @@ export default function Integrations() {
           {cards.map((item) => {
             const Icon = ICONS[item.icon] || Plug;
             const busy = busyId === item.id;
-            const isSoon = item.status === 'coming_soon';
+            const isLocked = item.status === 'locked';
             const isConnected = item.status === 'connected';
+            const isBackendGate = BACKEND_GATED_INTEGRATION_IDS.has(item.id);
 
             return (
               <article
@@ -477,24 +407,24 @@ export default function Integrations() {
                 <p className="text-xs text-zinc-400 leading-relaxed flex-1 mb-4">
                   {item.description}
                 </p>
+                {isLocked ? (
+                  <p className="text-[11px] text-amber-400/90 mb-3 flex items-start gap-1.5">
+                    <Lock size={12} className="shrink-0 mt-0.5" />
+                    Ativa Backend Functions no projeto (−{BACKEND_ENABLE_CREDIT_COST} créditos Free).
+                  </p>
+                ) : null}
                 {item.meta?.login && (
                   <p className="text-[11px] text-zinc-500 mb-3">@{item.meta.login}</p>
                 )}
-                {!item.meta?.login && item.meta?.label && (
+                {!item.meta?.login && item.meta?.label && !isLocked && (
                   <p className="text-[11px] text-zinc-500 mb-3 truncate">{item.meta.label}</p>
-                )}
-                {!item.meta?.login && !item.meta?.label && item.meta?.shop && (
-                  <p className="text-[11px] text-zinc-500 mb-3 truncate">{item.meta.shop}</p>
-                )}
-                {!item.meta?.login && !item.meta?.label && item.meta?.url && (
-                  <p className="text-[11px] text-zinc-500 mb-3 truncate">{item.meta.url}</p>
                 )}
                 <button
                   type="button"
-                  disabled={isSoon || busy}
+                  disabled={busy}
                   onClick={() => {
-                    if (isConnected && item.connectType === 'api_key') {
-                      setModalIntegration(item);
+                    if (isLocked || isBackendGate) {
+                      handleConnectClick(item);
                       return;
                     }
                     if (isConnected && item.connectType === 'oauth') {
@@ -506,34 +436,40 @@ export default function Integrations() {
                   className={`w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 ${
                     isConnected
                       ? 'border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10'
-                      : isSoon
-                        ? 'border border-zinc-800 text-zinc-600 cursor-not-allowed'
+                      : isLocked
+                        ? 'border border-amber-500/30 text-amber-300 hover:bg-amber-500/10'
                         : 'bg-blue-600 hover:bg-blue-500 text-white'
                   }`}
                 >
                   {busy ? (
                     <Loader2 size={13} className="animate-spin" />
+                  ) : isLocked ? (
+                    <Server size={13} />
                   ) : isConnected ? (
                     <Check size={13} />
                   ) : (
                     <Plug size={13} />
                   )}
-                  {isSoon
-                    ? 'Em breve'
+                  {isLocked
+                    ? 'Desbloquear com Backend'
                     : isConnected
-                      ? item.connectType === 'platform'
-                        ? item.id === 'google_oauth' || item.id === 'firebase_auth'
-                          ? 'Activo'
-                          : 'Activo'
-                        : 'Gerir'
-                      : item.id === 'google_oauth' || item.id === 'firebase_auth'
-                        ? 'Entrar com Google'
-                        : item.id === 'mercadopago'
-                          ? 'Conectar com Mercado Pago'
-                          : item.connectType === 'oauth'
-                            ? 'Conectar'
-                            : 'Ligar'}
+                      ? item.connectType === 'oauth'
+                        ? 'Gerir'
+                        : 'Activo'
+                      : item.id === 'mercadopago'
+                        ? 'Conectar com Mercado Pago'
+                        : item.connectType === 'oauth'
+                          ? 'Conectar'
+                          : 'Ligar'}
                 </button>
+                {isLocked ? (
+                  <Link
+                    to="/functions"
+                    className="mt-2 text-center text-[11px] text-zinc-500 hover:text-zinc-300 underline-offset-2 hover:underline"
+                  >
+                    Ir para Funções / projeto
+                  </Link>
+                ) : null}
               </article>
             );
           })}
@@ -541,7 +477,9 @@ export default function Integrations() {
       )}
 
       {!loading && !cards.length && (
-        <p className="text-center text-sm text-zinc-500 py-16">Nenhuma integração corresponde à pesquisa.</p>
+        <p className="text-center text-sm text-zinc-500 py-16">
+          Nenhuma integração corresponde à pesquisa.
+        </p>
       )}
 
       <ConnectIntegrationModal

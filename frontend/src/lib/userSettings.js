@@ -10,6 +10,11 @@ export const SETTINGS_KEYS = {
   notifications: 'gocreate-notifications',
   bio: 'gocreate-profile-bio',
   photoURL: 'gocreate-profile-photo',
+  company: 'gocreate-profile-company',
+  phone: 'gocreate-profile-phone',
+  timezone: 'gocreate-profile-timezone',
+  website: 'gocreate-profile-website',
+  location: 'gocreate-profile-location',
   editorFontSize: 'gocreate-editor-font-size',
   codeTheme: 'gocreate-code-theme',
 };
@@ -21,6 +26,11 @@ const DEFAULTS = {
   notifications: true,
   bio: '',
   photoURL: '',
+  company: '',
+  phone: '',
+  timezone: 'America/Sao_Paulo',
+  website: '',
+  location: '',
   editorFontSize: 'md',
   codeTheme: 'dark',
 };
@@ -45,13 +55,21 @@ function writeString(key, value) {
 
 export function getUserSettings() {
   const notificationsRaw = readString(SETTINGS_KEYS.notifications, '1');
+  let theme = readString(SETTINGS_KEYS.theme, DEFAULTS.theme) || DEFAULTS.theme;
+  // Migrar "system" (quebrado) → dark
+  if (theme === 'system') theme = 'dark';
   return {
-    theme: readString(SETTINGS_KEYS.theme, DEFAULTS.theme) || DEFAULTS.theme,
+    theme,
     openaiKey: readString(SETTINGS_KEYS.openai, ''),
     anthropicKey: readString(SETTINGS_KEYS.anthropic, ''),
     notifications: notificationsRaw === '1' || notificationsRaw === 'true',
     bio: readString(SETTINGS_KEYS.bio, DEFAULTS.bio),
     photoURL: readString(SETTINGS_KEYS.photoURL, DEFAULTS.photoURL),
+    company: readString(SETTINGS_KEYS.company, DEFAULTS.company),
+    phone: readString(SETTINGS_KEYS.phone, DEFAULTS.phone),
+    timezone: readString(SETTINGS_KEYS.timezone, DEFAULTS.timezone) || DEFAULTS.timezone,
+    website: readString(SETTINGS_KEYS.website, DEFAULTS.website),
+    location: readString(SETTINGS_KEYS.location, DEFAULTS.location),
     editorFontSize:
       readString(SETTINGS_KEYS.editorFontSize, DEFAULTS.editorFontSize) || DEFAULTS.editorFontSize,
     codeTheme: readString(SETTINGS_KEYS.codeTheme, DEFAULTS.codeTheme) || DEFAULTS.codeTheme,
@@ -70,6 +88,11 @@ export function saveUserSettings(partial = {}) {
   }
   if (partial.bio !== undefined) writeString(SETTINGS_KEYS.bio, partial.bio);
   if (partial.photoURL !== undefined) writeString(SETTINGS_KEYS.photoURL, partial.photoURL.trim());
+  if (partial.company !== undefined) writeString(SETTINGS_KEYS.company, partial.company);
+  if (partial.phone !== undefined) writeString(SETTINGS_KEYS.phone, partial.phone);
+  if (partial.timezone !== undefined) writeString(SETTINGS_KEYS.timezone, partial.timezone);
+  if (partial.website !== undefined) writeString(SETTINGS_KEYS.website, partial.website);
+  if (partial.location !== undefined) writeString(SETTINGS_KEYS.location, partial.location);
   if (partial.editorFontSize != null) {
     writeString(SETTINGS_KEYS.editorFontSize, partial.editorFontSize);
   }
@@ -141,12 +164,25 @@ export function getApiKeys() {
 
 export function getProfileExtras() {
   const s = getUserSettings();
-  return { bio: s.bio, photoURL: s.photoURL };
+  return {
+    bio: s.bio,
+    photoURL: s.photoURL,
+    company: s.company,
+    phone: s.phone,
+    timezone: s.timezone,
+    website: s.website,
+    location: s.location,
+  };
 }
 
-export function saveProfileExtras({ bio, photoURL }) {
+export function saveProfileExtras(partial = {}) {
   return saveUserSettings({
-    ...(bio !== undefined ? { bio } : {}),
-    ...(photoURL !== undefined ? { photoURL } : {}),
+    ...(partial.bio !== undefined ? { bio: partial.bio } : {}),
+    ...(partial.photoURL !== undefined ? { photoURL: partial.photoURL } : {}),
+    ...(partial.company !== undefined ? { company: partial.company } : {}),
+    ...(partial.phone !== undefined ? { phone: partial.phone } : {}),
+    ...(partial.timezone !== undefined ? { timezone: partial.timezone } : {}),
+    ...(partial.website !== undefined ? { website: partial.website } : {}),
+    ...(partial.location !== undefined ? { location: partial.location } : {}),
   });
 }

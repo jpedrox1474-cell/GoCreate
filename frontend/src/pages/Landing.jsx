@@ -4,7 +4,6 @@ import {
   Mic,
   ArrowRight,
   Zap,
-  LogOut,
   Loader2,
   ChevronDown,
   LayoutTemplate,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import VideoBackground from '../components/VideoBackground';
+import UserMenu from '../components/UserMenu';
 import { useAuth } from '../context/AuthContext';
 import { PENDING_PROMPT_KEY } from '../lib/mockData';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
@@ -53,7 +53,7 @@ const MODELOS = [
  * Mic = push-to-talk: click start → click stop → texto no input.
  */
 export default function Landing() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -149,10 +149,6 @@ export default function Landing() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  async function handleLogout() {
-    await logout();
-  }
-
   async function handleMicClick() {
     if (loading) return;
     if (listening) {
@@ -244,9 +240,6 @@ export default function Landing() {
           <Link to="/integrations" className="hover:text-zinc-100 transition-colors">
             Integrações
           </Link>
-          <Link to="/automations" className="hover:text-zinc-100 transition-colors">
-            Automations
-          </Link>
         </nav>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
@@ -254,21 +247,11 @@ export default function Landing() {
             <>
               <Link
                 to="/dashboard"
-                className="px-3 py-1.5 text-[13px] font-medium transition-all text-zinc-300 hover:text-white"
+                className="px-3 py-1.5 text-[13px] font-medium transition-all text-zinc-300 hover:text-white hidden sm:inline"
               >
                 Dashboard
               </Link>
-              <button
-                type="button"
-                onClick={handleLogout}
-                title="Sair"
-                className="inline-flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-lg border transition-all bg-zinc-900/80 hover:bg-zinc-900 border-zinc-700"
-              >
-                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-[11px] font-bold text-white">
-                  {(user.email || 'U')[0].toUpperCase()}
-                </div>
-                <LogOut size={14} className="text-zinc-500" />
-              </button>
+              <UserMenu variant="header" showName={false} showChevron />
             </>
           ) : (
             <>

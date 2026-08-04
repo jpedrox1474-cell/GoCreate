@@ -4,14 +4,12 @@ import {
   LayoutDashboard,
   User,
   Settings,
-  LogOut,
   Menu,
   X,
   Plus,
   FolderKanban,
   Loader2,
   Plug,
-  Bot,
   CheckSquare,
   Trash2,
   Database,
@@ -21,10 +19,11 @@ import {
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
 import ProjectActionsMenu from '../components/ProjectActionsMenu';
+import UserMenu from '../components/UserMenu';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { isOwnerUser } from '../lib/plans';
+import { isOwnerEmail } from '../lib/plans';
 import {
   listUserProjects,
   renameProject,
@@ -37,14 +36,13 @@ const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
   { to: '/entities', label: 'Entidades', icon: Database },
   { to: '/functions', label: 'Funções', icon: Code2 },
-  { to: '/automations', label: 'Agentes IA', icon: Bot },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },
   { to: '/settings', label: 'Configurações', icon: Settings },
 ];
 
 export default function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { isLight } = useTheme();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -55,7 +53,8 @@ export default function AppLayout() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
-  const navItems = isOwnerUser(user)
+  // Admin: só allowlist de e-mails (não confiar em role/plan do cliente)
+  const navItems = isOwnerEmail(user?.email)
     ? [...NAV, { to: '/admin', label: 'Admin', icon: Shield }]
     : NAV;
 
@@ -75,11 +74,6 @@ export default function AppLayout() {
   useEffect(() => {
     refreshProjects();
   }, [refreshProjects]);
-
-  async function handleLogout() {
-    await logout();
-    navigate('/');
-  }
 
   async function handleRename(project) {
     const next = window.prompt('Novo nome do projeto', project.name);
@@ -332,36 +326,10 @@ export default function AppLayout() {
       </nav>
 
       <div className="p-3 border-t border-zinc-800 shrink-0">
-        <div className="flex items-center gap-3 px-2 py-2 mb-2">
-          {user?.photoURL ? (
-            <img
-              src={user.photoURL}
-              alt=""
-              className="w-8 h-8 rounded-full object-cover shrink-0 border border-zinc-700"
-            />
-          ) : (
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
-              {(user?.displayName || user?.email || 'U')[0].toUpperCase()}
-            </div>
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-zinc-200 truncate">
-              {user?.displayName || 'Utilizador'}
-            </p>
-            <p className="text-[11px] text-zinc-500 truncate">{user?.email}</p>
-          </div>
-        </div>
-        <div className="px-2 mb-2">
+        <UserMenu variant="sidebar" showName showChevron className="mb-2" />
+        <div className="px-2">
           <CreditsBadge className="w-full justify-center" />
         </div>
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60 transition-all"
-        >
-          <LogOut size={16} />
-          Sair
-        </button>
       </div>
     </>
   );

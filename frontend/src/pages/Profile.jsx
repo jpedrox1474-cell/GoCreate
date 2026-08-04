@@ -1,26 +1,84 @@
 import React, { useEffect, useState } from 'react';
 import { Camera, Save, Loader2, Zap, Crown } from 'lucide-react';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
+import { useTheme } from '../context/ThemeContext';
+import { db } from '../firebase';
 import Toast from '../components/Toast';
 import { getProfileExtras, saveProfileExtras } from '../lib/userSettings';
+
+const TIMEZONES = [
+  'America/Sao_Paulo',
+  'America/Manaus',
+  'America/Belem',
+  'America/Fortaleza',
+  'America/Recife',
+  'America/Bahia',
+  'America/Cuiaba',
+  'America/Campo_Grande',
+  'America/Porto_Velho',
+  'America/Rio_Branco',
+  'America/Noronha',
+  'UTC',
+  'Europe/Lisbon',
+  'America/New_York',
+];
 
 export default function Profile() {
   const { user, updateUserProfile } = useAuth();
   const { credits, plan, openPricing, lowCredits, unlimited } = useCredits();
+  const { preference, setTheme } = useTheme();
   const [name, setName] = useState(user?.displayName || '');
   const [email] = useState(user?.email || '');
   const [bio, setBio] = useState('');
+  const [company, setCompany] = useState('');
+  const [phone, setPhone] = useState('');
+  const [timezone, setTimezone] = useState('America/Sao_Paulo');
+  const [website, setWebsite] = useState('');
+  const [location, setLocation] = useState('');
   const [photoURL, setPhotoURL] = useState(user?.photoURL || '');
   const [showPhotoField, setShowPhotoField] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    const extras = getProfileExtras();
-    setName(user?.displayName || '');
-    setPhotoURL(extras.photoURL || user?.photoURL || '');
-    setBio(extras.bio || '');
+    let cancelled = false;
+    async function load() {
+      const extras = getProfileExtras();
+      setName(user?.displayName || '');
+      setPhotoURL(extras.photoURL || user?.photoURL || '');
+      setBio(extras.bio || '');
+      setCompany(extras.company || '');
+      setPhone(extras.phone || '');
+      setTimezone(extras.timezone || 'America/Sao_Paulo');
+      setWebsite(extras.website || '');
+      setLocation(extras.location || '');
+
+      if (!user?.uid) return;
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (cancelled || !snap.exists()) return;
+        const d = snap.data() || {};
+        const profile = d.profile || {};
+        setBio(profile.bio ?? d.bio ?? extras.bio ?? '');
+        setCompany(profile.company ?? d.company ?? extras.company ?? '');
+        setPhone(profile.phone ?? d.phone ?? extras.phone ?? '');
+        setTimezone(profile.timezone ?? d.timezone ?? extras.timezone ?? 'America/Sao_Paulo');
+        setWebsite(profile.website ?? d.website ?? extras.website ?? '');
+        setLocation(profile.location ?? d.location ?? extras.location ?? '');
+        if (d.photoURL || profile.photoURL) {
+          setPhotoURL(d.photoURL || profile.photoURL || extras.photoURL || user?.photoURL || '');
+        }
+        if (d.displayName) setName(d.displayName);
+      } catch (err) {
+        console.warn('[Profile] load firestore:', err);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   async function handleSave(e) {
@@ -33,7 +91,37 @@ export default function Profile() {
         displayName: trimmedName || null,
         photoURL: trimmedPhoto || null,
       });
-      saveProfileExtras({ bio: bio.trim(), photoURL: trimmedPhoto });
+
+      const profilePayload = {
+        bio: bio.trim(),
+        company: company.trim(),
+        phone: phone.trim(),
+        timezone: timezone || 'America/Sao_Paulo',
+        website: website.trim(),
+        location: location.trim(),
+      };
+
+      saveProfileExtras({ ...profilePayload, photoURL: trimmedPhoto });
+
+      if (user?.uid) {
+        await setDoc(
+          doc(db, 'users', user.uid),
+          {
+            displayName: trimmedName || null,
+            photoURL: trimmedPhoto || null,
+            profile: profilePayload,
+            bio: profilePayload.bio,
+            company: profilePayload.company,
+            phone: profilePayload.phone,
+            timezone: profilePayload.timezone,
+            website: profilePayload.website,
+            location: profilePayload.location,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+
       setToast({ message: 'Perfil atualizado.', type: 'success' });
     } catch (err) {
       console.error('[Profile] save:', err);
@@ -47,6 +135,7 @@ export default function Profile() {
   }
 
   const avatarSrc = photoURL || user?.photoURL;
+  const themePref = preference === 'light' ? 'light' : 'dark';
 
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-2xl mx-auto">
@@ -123,36 +212,120 @@ export default function Profile() {
           </div>
         )}
 
-        <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">Nome</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Nome</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">E-mail</label>
+            <input
+              type="email"
+              value={email}
+              disabled
+              className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg py-2.5 px-3.5 text-sm text-zinc-500 outline-none cursor-not-allowed"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Empresa</label>
+            <input
+              type="text"
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              placeholder="A tua empresa"
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Telefone</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+55 11 99999-9999"
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Fuso horário</label>
+            <select
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Localização</label>
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="São Paulo, BR"
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Website</label>
+            <input
+              type="url"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+              placeholder="https://…"
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Bio</label>
+            <textarea
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              rows={3}
+              placeholder="Conta um pouco sobre ti…"
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all resize-none"
+            />
+          </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">E-mail</label>
-          <input
-            type="email"
-            value={email}
-            disabled
-            className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg py-2.5 px-3.5 text-sm text-zinc-500 outline-none cursor-not-allowed"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">Bio</label>
-          <textarea
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            rows={3}
-            placeholder="Conta um pouco sobre ti…"
-            className="w-full bg-zinc-900 border border-zinc-800 focus:border-blue-500/50 rounded-lg py-2.5 px-3.5 text-sm text-zinc-200 outline-none transition-all resize-none"
-          />
-        </div>
+        <section>
+          <h2 className="text-sm font-semibold text-zinc-200 mb-3">Aparência</h2>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { id: 'dark', label: 'Dark' },
+              { id: 'light', label: 'Light' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setTheme(opt.id)}
+                className={`px-3 py-2.5 text-sm font-medium rounded-lg border transition-all ${
+                  themePref === opt.id
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-400'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </section>
 
         <button
           type="submit"

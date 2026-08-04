@@ -12,7 +12,6 @@ import Editor from './pages/Editor';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Integrations from './pages/Integrations';
-import Automations from './pages/Automations';
 import Entities from './pages/Entities';
 import Admin from './pages/Admin';
 import BackendFunctions from './pages/BackendFunctions';
@@ -144,7 +143,7 @@ export default function App() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/integrations" element={<Integrations />} />
-          <Route path="/automations" element={<Automations />} />
+          <Route path="/automations" element={<Navigate to="/dashboard" replace />} />
           <Route path="/entities" element={<Entities />} />
           <Route path="/database" element={<Entities />} />
           <Route path="/functions" element={<BackendFunctions />} />

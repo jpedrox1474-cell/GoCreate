@@ -1,11 +1,12 @@
 import { SETTINGS_KEYS, getUserSettings, saveUserSettings } from './userSettings';
 
-export const THEME_OPTIONS = ['dark', 'light', 'system'];
+export const THEME_OPTIONS = ['dark', 'light'];
 export const THEME_STORAGE_KEY = SETTINGS_KEYS.theme;
 export const THEME_CHANGE_EVENT = 'gocreate-theme-change';
 
 export function getThemePreference() {
   const raw = getUserSettings().theme;
+  if (raw === 'system') return 'dark';
   return THEME_OPTIONS.includes(raw) ? raw : 'dark';
 }
 
@@ -15,12 +16,6 @@ export function getTheme() {
 }
 
 export function resolveTheme(preference = getThemePreference()) {
-  if (preference === 'system') {
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-    }
-    return 'dark';
-  }
   return preference === 'light' ? 'light' : 'dark';
 }
 
@@ -60,22 +55,9 @@ export function initTheme() {
   return preference;
 }
 
-/** Escuta prefers-color-scheme quando preference === system. */
-export function subscribeSystemTheme(onChange) {
-  if (typeof window === 'undefined' || !window.matchMedia) return () => {};
-  const mq = window.matchMedia('(prefers-color-scheme: dark)');
-  const handler = () => {
-    if (getThemePreference() === 'system') {
-      const resolved = applyTheme('system');
-      onChange?.(resolved);
-    }
-  };
-  if (mq.addEventListener) mq.addEventListener('change', handler);
-  else mq.addListener(handler);
-  return () => {
-    if (mq.removeEventListener) mq.removeEventListener('change', handler);
-    else mq.removeListener(handler);
-  };
+/** No-op: tema System removido (só Dark/Light). */
+export function subscribeSystemTheme() {
+  return () => {};
 }
 
 /**

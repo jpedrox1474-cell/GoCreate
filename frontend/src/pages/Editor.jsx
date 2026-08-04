@@ -28,6 +28,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import Toast from '../components/Toast';
 import CreditsBadge from '../components/CreditsBadge';
+import UserMenu from '../components/UserMenu';
 import Logo from '../components/Logo';
 import WorkspacePanel from '../components/editor/WorkspacePanel';
 import HistoryDrawer from '../components/editor/HistoryDrawer';
@@ -1392,17 +1393,7 @@ export default function Editor() {
 
         <div className="flex items-center gap-1.5 sm:gap-2">
           <CreditsBadge />
-          {user?.photoURL ? (
-            <img
-              src={user.photoURL}
-              alt=""
-              className="hidden sm:block w-7 h-7 rounded-full object-cover border border-zinc-700"
-            />
-          ) : (
-            <div className="hidden sm:flex w-7 h-7 rounded-full bg-blue-600 items-center justify-center text-[10px] font-bold text-white">
-              {(user?.displayName || user?.email || 'U')[0].toUpperCase()}
-            </div>
-          )}
+          <UserMenu variant="header" showName={false} className="hidden sm:block" />
           <button
             type="button"
             onClick={handleSaveProject}

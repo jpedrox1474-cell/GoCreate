@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Shield, Loader2, Plus, Minus, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { isOwnerUser } from '../lib/plans';
+import { isOwnerEmail } from '../lib/plans';
 import { listAdminUsers, adjustUserCredits, fetchAdminMetrics, fetchAdminAudit } from '../lib/adminApi';
 import Toast from '../components/Toast';
 
@@ -30,7 +30,8 @@ export default function Admin() {
   const [metrics, setMetrics] = useState(null);
   const [audit, setAudit] = useState([]);
 
-  const allowed = isOwnerUser(user);
+  // Só allowlist de e-mails — não confiar em role/plan do cliente
+  const allowed = isOwnerEmail(user?.email);
 
   const refresh = useCallback(async () => {
     if (!user || !allowed) return;

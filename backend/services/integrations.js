@@ -23,6 +23,7 @@ import { isStripeConfigured } from './stripe.js';
 import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js';
 import { oauthConfigured } from './oauth/providers.js';
 import { isMetaConfigured } from './meta.js';
+import { BACKEND_ENABLE_CREDIT_COST } from '../lib/owner.js';
 
 function isPayPalPlatformConfigured() {
   return Boolean(
@@ -87,17 +88,35 @@ export const SOCIAL_CHANNEL_PROVIDERS = new Set([
   'tiktok',
 ]);
 
-/** Providers “sempre ligados” via plataforma GoCreate (quando env configurado). */
+/** Providers sempre disponíveis via plataforma (não dependem de Backend Functions). */
 export const PLATFORM_PROVIDERS = new Set([
-  'firebase_auth',
-  'google_oauth',
-  'firebase_firestore',
-  'firebase_storage',
   'cloudinary',
   'viacep',
   'pix',
   // mercadopago → OAuth Connect (seller); billing plataforma continua via env
 ]);
+
+/**
+ * Login / Firestore / Firebase — só “connected” depois de ativar Backend Functions
+ * num projeto do utilizador (custa BACKEND_ENABLE_CREDIT_COST no Free).
+ */
+export const BACKEND_GATED_PROVIDERS = new Set([
+  'firebase_auth',
+  'google_oauth',
+  'firebase_firestore',
+  'firebase_storage',
+]);
+
+async function userHasBackendEnabledProject(uid) {
+  try {
+    // Sem índice composto: filtra ownerId e verifica backendEnabled em memória.
+    const snap = await db.collection('projects').where('ownerId', '==', uid).limit(40).get();
+    return snap.docs.some((d) => Boolean(d.data()?.backendEnabled));
+  } catch (err) {
+    console.warn('[integrations] backendEnabled check:', err?.message);
+    return false;
+  }
+}
 
 function secretsRef(uid, providerId) {
   return db.collection('users').doc(uid).collection('secrets').doc(`integrations_${providerId}`);
@@ -298,6 +317,7 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
   const userData = userSnap.exists ? userSnap.data() : {};
   const integrationsMeta = userData?.integrations || {};
   const github = githubStatus || userData?.github || {};
+  const backendUnlocked = await userHasBackendEnabledProject(uid);
 
   const providers = {};
 
@@ -307,7 +327,24 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
       id,
       status: 'connected',
       source: 'platform',
-      meta: { connected: true },
+      meta: { connected: true, label: 'Ligado (plataforma)' },
+    };
+  }
+
+  for (const id of BACKEND_GATED_PROVIDERS) {
+    providers[id] = {
+      id,
+      status: backendUnlocked ? 'connected' : 'locked',
+      source: 'backend',
+      meta: {
+        connected: backendUnlocked,
+        requiresBackend: true,
+        backendEnabled: backendUnlocked,
+        creditCost: BACKEND_ENABLE_CREDIT_COST,
+        label: backendUnlocked
+          ? 'Ligado (Backend Functions)'
+          : 'Bloqueado — ativa Backend Functions no projeto',
+      },
     };
   }
 
@@ -1598,6 +1635,7 @@ export async function resolvePublishedProjectOwner(projectId) {
 export default {
   CONNECTABLE_PROVIDERS,
   PLATFORM_PROVIDERS,
+  BACKEND_GATED_PROVIDERS,
   saveIntegrationConnection,
   clearIntegrationConnection,
   getStoredCredentials,

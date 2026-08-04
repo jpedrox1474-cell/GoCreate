@@ -665,11 +665,10 @@ async function handleSave(e) {
 
           <div>
             <label className="block text-xs text-zinc-500 mb-1.5">Tema da app</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {[
                 { id: 'dark', label: 'Dark' },
                 { id: 'light', label: 'Light' },
-                { id: 'system', label: 'Sistema' },
               ].map((opt) => (
                 <button
                   key={opt.id}
