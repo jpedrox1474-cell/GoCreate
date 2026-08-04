@@ -37,7 +37,7 @@ const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
   { to: '/entities', label: 'Entidades', icon: Database },
   { to: '/functions', label: 'Funções', icon: Code2 },
-  { to: '/automations', label: 'Automations', icon: Bot },
+  { to: '/automations', label: 'Agentes IA', icon: Bot },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },
   { to: '/settings', label: 'Configurações', icon: Settings },

@@ -181,14 +181,21 @@ export default function Automations() {
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-8">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400/90 mb-2 flex items-center gap-1.5">
-            <Bot size={12} /> Background agents
+            <Bot size={12} /> Agentes IA
           </p>
           <h1 className="text-2xl sm:text-3xl font-bold text-zinc-100 tracking-tight mb-1">
-            Automations
+            Agentes IA
           </h1>
           <p className="text-sm text-zinc-500 max-w-xl">
-            Background AI agents that monitor, test, and hunt bugs while you build — like an
-            autonomous co-pilot for every project.
+            Templates de agentes (bug hunt, security, docs). Para HTTP, eventos de entidade e cron
+            reais, usa{' '}
+            <Link
+              to={projectId ? `/functions?projectId=${projectId}` : '/functions'}
+              className="text-blue-400 hover:text-blue-300 font-medium"
+            >
+              Funções Backend
+            </Link>
+            .
           </p>
         </div>
 

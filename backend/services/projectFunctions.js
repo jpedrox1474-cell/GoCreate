@@ -166,6 +166,7 @@ export async function deleteProjectFunction(projectId, nameOrId) {
 
 async function loadEnvMap(projectId) {
   const env = {};
+  const { secretValueFromDoc } = await import('./secretsCrypto.js');
   const snap = await db.collection('projects').doc(projectId).collection('envSecrets').get();
   snap.docs.forEach((d) => {
     const data = d.data() || {};
@@ -173,7 +174,12 @@ async function loadEnvMap(projectId) {
       .trim()
       .toUpperCase()
       .replace(/[^A-Z0-9_]/g, '');
-    if (key && data.value != null) env[key] = String(data.value);
+    try {
+      const value = secretValueFromDoc(data);
+      if (key && value != null) env[key] = value;
+    } catch {
+      /* skip */
+    }
   });
   return env;
 }

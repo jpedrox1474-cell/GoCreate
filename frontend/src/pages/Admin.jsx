@@ -150,7 +150,8 @@ export default function Admin() {
       </div>
 
       {metrics && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
           {[
             { label: 'Users', value: metrics.usersTotal },
             { label: 'Ativos 7d', value: metrics.activeUsers7d },
@@ -169,7 +170,12 @@ export default function Admin() {
               <p className="text-lg font-semibold text-zinc-100 font-mono tabular-nums">{c.value}</p>
             </div>
           ))}
-        </div>
+          </div>
+          <p className="text-[10px] text-zinc-600 mb-6">
+            MRR via {metrics.mrrSource === 'subscriptions_30d' ? 'subs 30d' : `assentos Pro × R$ ${metrics.proSeatPriceBrl}`}
+            {metrics.usersSampled ? ' · amostra ≤500 users' : ''}
+          </p>
+        </>
       )}
 
       <form

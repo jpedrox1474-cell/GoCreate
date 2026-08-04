@@ -308,6 +308,7 @@ router.get('/:projectId/runtime', async (req, res) => {
     // Values are visible in the browser — use only for client-safe config.
     const env = {};
     try {
+      const { secretValueFromDoc } = await import('../services/secretsCrypto.js');
       const secretSnap = await db
         .collection('projects')
         .doc(projectId)
@@ -319,9 +320,11 @@ router.get('/:projectId/runtime', async (req, res) => {
           .trim()
           .toUpperCase()
           .replace(/[^A-Z0-9_]/g, '');
-        const value = data.value;
-        if (key && value != null && value !== '') {
-          env[key] = String(value);
+        try {
+          const value = secretValueFromDoc(data);
+          if (key && value !== '') env[key] = value;
+        } catch {
+          /* skip bad cipher */
         }
       });
     } catch (envErr) {
@@ -652,14 +655,21 @@ router.get('/:projectId/env-secrets', requireAuth, async (req, res) => {
   try {
     const { projectId } = req.params;
     await assertOwnerOrEditor(projectId, req.user.uid, req.user.email);
+    const { secretValueFromDoc, maskSecret } = await import('../services/secretsCrypto.js');
     const snap = await db.collection('projects').doc(projectId).collection('envSecrets').get();
     const secrets = snap.docs.map((d) => {
       const data = d.data() || {};
-      const val = String(data.value || '');
+      let val = '';
+      try {
+        val = secretValueFromDoc(data);
+      } catch {
+        val = '';
+      }
       return {
         id: d.id,
         key: data.key || d.id,
-        masked: val ? `${'*'.repeat(Math.min(8, val.length))}${val.slice(-4)}` : '',
+        masked: maskSecret(val),
+        encrypted: String(data.value || '').startsWith('enc:v1:'),
         updatedAt: data.updatedAt || null,
       };
     });
@@ -682,6 +692,8 @@ router.put('/:projectId/env-secrets/:key', requireAuth, async (req, res) => {
     if (!safeKey) return res.status(400).json({ error: 'Chave inválida.' });
     const value = String(req.body?.value ?? '');
     if (!value) return res.status(400).json({ error: 'value é obrigatório.' });
+    const { encryptSecret, maskSecret } = await import('../services/secretsCrypto.js');
+    const stored = encryptSecret(value);
     await db
       .collection('projects')
       .doc(projectId)
@@ -690,7 +702,7 @@ router.put('/:projectId/env-secrets/:key', requireAuth, async (req, res) => {
       .set(
         {
           key: safeKey,
-          value,
+          value: stored,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -698,7 +710,8 @@ router.put('/:projectId/env-secrets/:key', requireAuth, async (req, res) => {
     res.json({
       ok: true,
       key: safeKey,
-      masked: `${'*'.repeat(Math.min(8, value.length))}${value.slice(-4)}`,
+      masked: maskSecret(value),
+      encrypted: true,
     });
   } catch (err) {
     console.error('[projects/env-secrets/put]', err);
@@ -830,6 +843,7 @@ router.post('/:projectId/secrets-proxy', requireAuth, async (req, res) => {
     }
 
     const snap = await db.collection('projects').doc(projectId).collection('envSecrets').get();
+    const { secretValueFromDoc } = await import('../services/secretsCrypto.js');
     const env = {};
     snap.docs.forEach((d) => {
       const data = d.data() || {};
@@ -837,7 +851,12 @@ router.post('/:projectId/secrets-proxy', requireAuth, async (req, res) => {
         .trim()
         .toUpperCase()
         .replace(/[^A-Z0-9_]/g, '');
-      if (key) env[key] = String(data.value ?? '');
+      try {
+        const value = secretValueFromDoc(data);
+        if (key) env[key] = value;
+      } catch {
+        /* skip */
+      }
     });
 
     let injectKeys = Array.isArray(req.body?.inject)

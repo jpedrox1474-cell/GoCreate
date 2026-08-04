@@ -50,6 +50,7 @@ const FILES = [
   'services/collaborators.js',
   'services/audit.js',
   'services/adminMetrics.js',
+  'services/secretsCrypto.js',
   'services/oauth/pkce.js',
   'services/oauth/state.js',
   'services/oauth/providers.js',

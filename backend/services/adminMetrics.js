@@ -1,24 +1,19 @@
 // Admin platform metrics (lightweight aggregates).
 
 import { db } from '../config/firebaseAdmin.js';
+import { BILLING_PRODUCTS } from './mercadopago.js';
 
 export async function getPlatformMetrics() {
-  const [usersSnap, projectsSnap, pubSnap, txSnap, auditSnap] = await Promise.all([
+  const [usersSnap, projectsSnap, pubSnap, txSnap] = await Promise.all([
     db.collection('users').limit(500).get(),
     db.collection('projects').limit(500).get(),
     db.collection('publicProjects').limit(300).get(),
     db
       .collection('transactions')
       .where('status', '==', 'completed')
-      .limit(200)
+      .limit(300)
       .get()
       .catch(() => ({ docs: [], size: 0, empty: true })),
-    db
-      .collection('auditLogs')
-      .orderBy('createdAt', 'desc')
-      .limit(1)
-      .get()
-      .catch(() => ({ docs: [], empty: true })),
   ]);
 
   const users = usersSnap.docs.map((d) => d.data() || {});
@@ -46,15 +41,29 @@ export async function getPlatformMetrics() {
     else draftProjects += 1;
   }
 
-  let mrrEstimate = 0;
-  // Rough: Pro ~ R$49 (match Pricing if different — display as estimate)
-  mrrEstimate = byPlan.pro * 49;
+  const proPrice = Number(BILLING_PRODUCTS?.pro?.amount) || 49;
+  // Seat-based MRR from active Pro plans (sampled users)
+  let mrrFromSeats = byPlan.pro * proPrice;
 
   let revenueCompleted = 0;
+  let subscriptionRevenue30d = 0;
+  const monthAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   for (const d of txSnap.docs || []) {
     const t = d.data() || {};
-    if (typeof t.amount === 'number') revenueCompleted += t.amount;
+    const amount = typeof t.amount === 'number' ? t.amount : 0;
+    revenueCompleted += amount;
+    const created = t.createdAt?.toMillis?.() || t.updatedAt?.toMillis?.() || 0;
+    if (
+      created >= monthAgo &&
+      (t.type === 'subscription' || t.plan === 'pro' || t.productId === 'pro')
+    ) {
+      subscriptionRevenue30d += amount;
+    }
   }
+
+  // Prefer trailing 30d subscription cash if available; else seat estimate
+  const mrrEstimateBrl =
+    subscriptionRevenue30d > 0 ? Math.round(subscriptionRevenue30d) : mrrFromSeats;
 
   return {
     usersTotal: usersSnap.size,
@@ -67,9 +76,11 @@ export async function getPlatformMetrics() {
     projectsLive: liveProjects,
     projectsDraft: draftProjects,
     publicSnapshots: pubSnap.size,
-    mrrEstimateBrl: mrrEstimate,
+    mrrEstimateBrl,
+    mrrSource: subscriptionRevenue30d > 0 ? 'subscriptions_30d' : 'pro_seats',
+    proSeatPriceBrl: proPrice,
     revenueCompletedBrl: revenueCompleted,
-    auditReady: !auditSnap.empty,
+    subscriptionRevenue30dBrl: subscriptionRevenue30d,
     generatedAt: new Date().toISOString(),
   };
 }
