@@ -1,26 +1,49 @@
 {
-  "hosting": {
-    "site": "gocreate-app",
-    "public": "frontend/dist",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "/api/**",
-        "function": {
-          "functionId": "gocreateApi",
-          "region": "southamerica-east1"
+  "hosting": [
+    {
+      "target": "app",
+      "public": "frontend/dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api/**",
+          "function": {
+            "functionId": "gocreateApi",
+            "region": "southamerica-east1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
         }
-      },
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  },
+      ]
+    },
+    {
+      "target": "legacy",
+      "public": "hosting-legacy-redirect",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "redirects": [
+        {
+          "source": "/",
+          "destination": "https://gocreate-app.web.app/",
+          "type": 301
+        },
+        {
+          "source": "/:path*",
+          "destination": "https://gocreate-app.web.app/:path",
+          "type": 301
+        }
+      ]
+    }
+  ],
   "functions": [
     {
       "source": "functions",
