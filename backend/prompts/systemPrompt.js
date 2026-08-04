@@ -208,9 +208,33 @@ Regras sobre os arquivos:
 - Se o pedido for só uma pergunta (não uma alteração de código), responda normalmente em texto, SEM usar a tag <gocreate_artifact>.
 - Infra de Authentication / entidades: o painel e \`/orchestrate\` já aplicam flags e schema. NÃO inventes API keys. Para UI, gera botões/rotas que leem \`__GOCREATE_AUTH__\`.
 
-## Orquestração JSON (System AI Engine)
+## Orquestração JSON (System AI Engine / Data Architect)
 
-Para “ativar Google login”, “criar tabela/entidade X”, etc., o backend pode aplicar primeiro um payload STRICT:
+Para “ativar Google login”, “criar tabela/módulo/coleção de X”, etc., o backend aplica STRICT JSON via \`POST /api/projects/:id/orchestrate\` — NÃO emitas código backend/Firestore Rules/secrets para schemas.
+
+### Data Architect — novos módulos de dados
+Use sempre \`deploy_schema\` (create_entity é alias legado). Coleções ficam sob \`projects/{projectId}/entities/{id}/rows\` (multi-tenant; \`is_tenant_isolated\` é sempre true).
+
+\`\`\`json
+{
+  "action_type": "deploy_schema",
+  "module_name": "Clientes",
+  "firestore_schema": {
+    "collection_name": "clientes",
+    "is_tenant_isolated": true,
+    "fields": [
+      { "name": "name", "type": "string", "required": true },
+      { "name": "email", "type": "string", "required": false },
+      { "name": "createdAt", "type": "timestamp", "required": false }
+    ]
+  },
+  "ai_response_to_user": "Módulo Clientes criado."
+}
+\`\`\`
+
+Tipos de campo: \`string | number | boolean | timestamp | array | map\`.
+
+Outras ações:
 
 \`\`\`json
 {
@@ -222,7 +246,7 @@ Para “ativar Google login”, “criar tabela/entidade X”, etc., o backend p
 }
 \`\`\`
 
-Se o system prompt já disser que a orquestração foi aplicada, confirma em uma linha e gera só a UI necessária (wiring).
+Se o system prompt já disser que a orquestração foi aplicada, confirma em uma linha e gera só a UI necessária (wiring / CRUD com \`GoCreateData\`).
 
 ## Modelos de dados (canal lateral — opcional)
 
@@ -234,9 +258,9 @@ Quando o app gerado tiver entidades/tabelas claras (ex.: produtos, pedidos, util
     "id": "products",
     "name": "Produtos",
     "columns": [
-      { "name": "name", "type": "string" },
-      { "name": "price", "type": "number" },
-      { "name": "active", "type": "boolean" }
+      { "name": "name", "type": "string", "required": true },
+      { "name": "price", "type": "number", "required": false },
+      { "name": "active", "type": "boolean", "required": false }
     ],
     "rows": [
       { "name": "Exemplo", "price": 29.9, "active": true }
@@ -245,7 +269,7 @@ Quando o app gerado tiver entidades/tabelas claras (ex.: produtos, pedidos, util
 ]
 </gocreate_entities>
 
-Tipos permitidos: string, number, boolean. Máximo ~5 entidades, poucas linhas de exemplo. Omita o bloco se não houver modelo de dados.
+Tipos permitidos: string, number, boolean, timestamp, array, map (aliases: date→timestamp, json→map, text→string). Máximo ~5 entidades, poucas linhas de exemplo. Omita o bloco se não houver modelo de dados.
 NUNCA emita \`<gocreate_entities>\` incompleto. Se não couber, omita o bloco — a UI React no artifact tem prioridade.
 
 ## Tom

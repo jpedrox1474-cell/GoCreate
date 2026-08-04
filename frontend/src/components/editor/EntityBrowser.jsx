@@ -426,6 +426,24 @@ export default function EntityBrowser({
                     </option>
                   ))}
                 </select>
+                <label
+                  className="flex items-center gap-1 text-[10px] text-zinc-500 cursor-pointer select-none"
+                  title="Campo obrigatório"
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(col.required)}
+                    onChange={(e) => {
+                      setDraftCols((prev) =>
+                        prev.map((c, i) =>
+                          i === idx ? { ...c, required: e.target.checked } : c
+                        )
+                      );
+                    }}
+                    className="rounded border-zinc-700 bg-zinc-900"
+                  />
+                  req
+                </label>
                 <button
                   type="button"
                   onClick={() => setDraftCols((prev) => prev.filter((_, i) => i !== idx))}
@@ -458,7 +476,7 @@ export default function EntityBrowser({
               onClick={() =>
                 setDraftCols((prev) => [
                   ...prev,
-                  { name: `field_${prev.length + 1}`, type: 'string', order: prev.length },
+                  { name: `field_${prev.length + 1}`, type: 'string', required: false, order: prev.length },
                 ])
               }
               className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"

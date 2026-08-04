@@ -19,28 +19,40 @@ import { LAST_PROJECT_KEY } from './automations';
 
 export { LAST_PROJECT_KEY };
 
-/** Tipos de campo suportados no schema builder. */
+/** Tipos de campo suportados no schema builder (Data Architect + legado). */
 export const FIELD_TYPES = [
   { id: 'string', label: 'Texto' },
   { id: 'text', label: 'Texto longo' },
   { id: 'number', label: 'Número' },
   { id: 'boolean', label: 'Booleano' },
+  { id: 'timestamp', label: 'Timestamp' },
   { id: 'date', label: 'Data' },
   { id: 'email', label: 'E-mail' },
   { id: 'url', label: 'URL' },
-  { id: 'json', label: 'JSON' },
+  { id: 'array', label: 'Array' },
+  { id: 'map', label: 'Mapa / JSON' },
+  { id: 'json', label: 'JSON (legado)' },
 ];
 
 export const ALLOWED_FIELD_TYPES = new Set(FIELD_TYPES.map((t) => t.id));
+
+/** Ingress aliases from Data Architect / older schemas. */
+const INGRESS_TYPE_ALIASES = {
+  date: 'timestamp',
+  json: 'map',
+};
 
 export const TYPE_COLORS = {
   string: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
   text: 'text-sky-300 bg-sky-500/10 border-sky-500/20',
   number: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
   boolean: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  timestamp: 'text-violet-400 bg-violet-500/10 border-violet-500/20',
   date: 'text-violet-400 bg-violet-500/10 border-violet-500/20',
   email: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20',
   url: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
+  array: 'text-fuchsia-400 bg-fuchsia-500/10 border-fuchsia-500/20',
+  map: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
   json: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
 };
 
@@ -101,14 +113,25 @@ function slugify(id) {
 export function normalizeColumn(col, index = 0) {
   if (!col) return null;
   if (typeof col === 'string') {
-    return { name: col, type: 'string', order: index };
+    return { name: col, type: 'string', required: false, order: index };
   }
   const name = String(col.name || col.key || '').trim();
   if (!name) return null;
-  const type = ALLOWED_FIELD_TYPES.has(col.type) ? col.type : 'string';
+  const rawType = String(col.type || 'string').toLowerCase();
+  // Prefer exact UI type; only alias when not already a known FIELD_TYPES id
+  let type = rawType;
+  if (!ALLOWED_FIELD_TYPES.has(type) && INGRESS_TYPE_ALIASES[type]) {
+    type = INGRESS_TYPE_ALIASES[type];
+  }
+  if (!ALLOWED_FIELD_TYPES.has(type)) type = 'string';
   return {
     name,
     type,
+    required: col.required === true || col.required === 'true',
+    label:
+      typeof col.label === 'string' && col.label.trim()
+        ? col.label.trim().slice(0, 80)
+        : undefined,
     order: typeof col.order === 'number' ? col.order : index,
   };
 }
@@ -209,12 +232,24 @@ export async function upsertEntity(projectId, entity, { rows } = {}) {
   const id = slugify(entity.id || entity.name);
   const ref = doc(db, 'projects', projectId, 'entities', id);
   const columns = normalizeColumns(entity.columns || []);
+  const formFields =
+    Array.isArray(entity.formFields) && entity.formFields.length
+      ? entity.formFields
+      : columns.map((c, i) => ({
+          name: c.name,
+          type: c.type,
+          required: Boolean(c.required),
+          label: c.label || c.name,
+          order: i,
+        }));
   await setDoc(
     ref,
     {
       id,
       name: entity.name || id,
       columns,
+      formFields,
+      is_tenant_isolated: true,
       source: entity.source || 'manual',
       permissions: entity.permissions || { read: 'public', write: 'public' },
       updatedAt: serverTimestamp(),
@@ -236,9 +271,19 @@ export async function upsertEntity(projectId, entity, { rows } = {}) {
 
 export async function updateEntitySchema(projectId, entityId, { name, columns } = {}) {
   if (!projectId || !entityId) throw new Error('Entidade inválida.');
-  const patch = { updatedAt: serverTimestamp() };
+  const patch = { updatedAt: serverTimestamp(), is_tenant_isolated: true };
   if (name != null) patch.name = String(name).trim() || entityId;
-  if (columns != null) patch.columns = normalizeColumns(columns);
+  if (columns != null) {
+    const cols = normalizeColumns(columns);
+    patch.columns = cols;
+    patch.formFields = cols.map((c, i) => ({
+      name: c.name,
+      type: c.type,
+      required: Boolean(c.required),
+      label: c.label || c.name,
+      order: i,
+    }));
+  }
   await updateDoc(doc(db, 'projects', projectId, 'entities', entityId), patch);
 }
 
@@ -538,6 +583,8 @@ export function coerceCellValue(raw, type) {
   if (raw === '' || raw == null) {
     if (type === 'boolean') return false;
     if (type === 'number') return 0;
+    if (type === 'array') return [];
+    if (type === 'map' || type === 'json') return {};
     return '';
   }
   if (type === 'number') {
@@ -548,13 +595,28 @@ export function coerceCellValue(raw, type) {
     if (typeof raw === 'boolean') return raw;
     return raw === true || raw === 'true' || raw === '1' || raw === 'sim';
   }
-  if (type === 'json') {
-    if (typeof raw === 'object') return raw;
+  if (type === 'array') {
+    if (Array.isArray(raw)) return raw;
+    try {
+      const parsed = JSON.parse(String(raw));
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return String(raw)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+  if (type === 'map' || type === 'json') {
+    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) return raw;
     try {
       return JSON.parse(String(raw));
     } catch {
       return String(raw);
     }
+  }
+  if (type === 'timestamp' || type === 'date') {
+    return String(raw);
   }
   return String(raw);
 }

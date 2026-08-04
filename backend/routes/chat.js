@@ -162,12 +162,20 @@ ${orchestrateResult.wiringPrompt}
 `;
           }
           if (orchestrateResult?.ai_response_to_user) {
+            const isSchema =
+              (orchestrateResult.applied || []).includes('deploy_schema') ||
+              (orchestrateResult.applied || []).includes('entities');
             systemPrompt += `
 
-## Resultado da orquestração (já aplicado no backend — NÃO inventes API keys)
+## Resultado da orquestração (já aplicado no backend — NÃO inventes API keys nem schemas Firestore)
 - ${orchestrateResult.ai_response_to_user}
 - applied: ${(orchestrateResult.applied || []).join(', ')}
-- Responde em UMA linha curta confirmando; se houver wiring de UI auth, gera o artefacto React com o botão Google.
+${
+  isSchema
+    ? `- Schema persistido em projects/{projectId}/entities (isolado por tenant). Use window.GoCreateData para CRUD.
+- Responde em UMA linha curta confirmando o módulo criado; gera UI de listagem/formulário se o user pediu app.`
+    : `- Responde em UMA linha curta confirmando; se houver wiring de UI auth, gera o artefacto React com o botão Google.`
+}
 `;
           }
         }

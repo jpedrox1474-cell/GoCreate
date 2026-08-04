@@ -9,10 +9,19 @@ const ALLOWED_TYPES = new Set([
   'number',
   'boolean',
   'date',
+  'timestamp',
   'email',
   'url',
   'json',
+  'array',
+  'map',
 ]);
+
+const TYPE_ALIASES = {
+  date: 'timestamp',
+  json: 'map',
+  text: 'string',
+};
 
 function slugify(id) {
   return String(id || 'entity')
@@ -22,25 +31,60 @@ function slugify(id) {
     .slice(0, 64) || 'entity';
 }
 
+function mapColumnType(rawType) {
+  const t = String(rawType || 'string').toLowerCase().trim();
+  if (TYPE_ALIASES[t]) return TYPE_ALIASES[t];
+  return ALLOWED_TYPES.has(t) ? t : 'string';
+}
+
+function normalizeColumn(c, index = 0) {
+  if (!c) return null;
+  if (typeof c === 'string') {
+    return { name: c, type: 'string', required: false, order: index };
+  }
+  const colName = String(c.name || c.key || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_]/g, '');
+  if (!colName) return null;
+  return {
+    name: colName,
+    type: mapColumnType(c.type),
+    required: c.required === true || c.required === 'true',
+    label:
+      typeof c.label === 'string' && c.label.trim()
+        ? c.label.trim().slice(0, 80)
+        : undefined,
+    order: typeof c.order === 'number' ? c.order : index,
+  };
+}
+
 function normalizeEntity(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const id = slugify(raw.id || raw.name || raw.table);
   const name = String(raw.name || raw.id || id);
   const columns = Array.isArray(raw.columns)
-    ? raw.columns
-        .map((c) => {
-          if (!c) return null;
-          if (typeof c === 'string') return { name: c, type: 'string' };
-          const colName = String(c.name || c.key || '').trim();
-          if (!colName) return null;
-          const type = ALLOWED_TYPES.has(c.type) ? c.type : 'string';
-          return { name: colName, type };
-        })
-        .filter(Boolean)
+    ? raw.columns.map((c, i) => normalizeColumn(c, i)).filter(Boolean)
     : [];
   if (!columns.length) return null;
   const rows = Array.isArray(raw.rows) ? raw.rows.slice(0, 50) : [];
-  return { id, name, columns, rows };
+  const formFields = Array.isArray(raw.formFields)
+    ? raw.formFields
+    : columns.map((c, i) => ({
+        name: c.name,
+        type: c.type,
+        required: Boolean(c.required),
+        label: c.label || c.name,
+        order: i,
+      }));
+  return {
+    id,
+    name,
+    columns,
+    formFields,
+    is_tenant_isolated: raw.is_tenant_isolated !== false,
+    source: raw.source || 'ai',
+    rows,
+  };
 }
 
 /**
@@ -68,23 +112,41 @@ export async function upsertProjectEntities(projectId, entities) {
   let count = 0;
 
   for (const ent of entities) {
-    const ref = db.collection('projects').doc(projectId).collection('entities').doc(ent.id);
+    const normalized = normalizeEntity(ent) || ent;
+    if (!normalized?.id || !normalized?.columns?.length) continue;
+    const ref = db
+      .collection('projects')
+      .doc(projectId)
+      .collection('entities')
+      .doc(normalized.id);
+    const formFields =
+      Array.isArray(normalized.formFields) && normalized.formFields.length
+        ? normalized.formFields
+        : (normalized.columns || []).map((c, i) => ({
+            name: c.name,
+            type: c.type,
+            required: Boolean(c.required),
+            label: c.label || c.name,
+            order: i,
+          }));
     batch.set(
       ref,
       {
-        id: ent.id,
-        name: ent.name,
-        columns: ent.columns,
+        id: normalized.id,
+        name: normalized.name,
+        columns: normalized.columns,
+        formFields,
+        is_tenant_isolated: true,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        source: 'ai',
+        source: normalized.source || 'ai',
       },
       { merge: true }
     );
     count += 1;
 
-    if (ent.rows?.length) {
-      for (let i = 0; i < ent.rows.length; i++) {
-        const row = ent.rows[i];
+    if (normalized.rows?.length) {
+      for (let i = 0; i < normalized.rows.length; i++) {
+        const row = normalized.rows[i];
         if (!row || typeof row !== 'object') continue;
         const rowRef = ref.collection('rows').doc(`seed_${i}`);
         batch.set(

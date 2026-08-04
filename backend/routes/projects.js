@@ -439,7 +439,8 @@ router.put('/:projectId/auth', requireAuth, async (req, res) => {
 
 /**
  * POST /api/projects/:projectId/orchestrate — apply STRICT JSON action payloads.
- * Whitelisted firestore paths only (project.auth, entities schema).
+ * Whitelisted paths only (project.auth, entities schema).
+ * Data Architect: action_type deploy_schema | create_entity (alias).
  */
 router.post('/:projectId/orchestrate', requireAuth, async (req, res) => {
   try {
