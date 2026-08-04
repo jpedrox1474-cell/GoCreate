@@ -36,6 +36,8 @@ export default function SettingsModal({
   projectId,
   onProjectUpdated,
   onToast,
+  readOnly = false,
+  canManageCollaborators = true,
 }) {
   const { preference, setTheme } = useTheme();
   const { user } = useAuth();
@@ -194,8 +196,12 @@ export default function SettingsModal({
     }
   }
 
-  async function handleSave(e) {
+async function handleSave(e) {
     e.preventDefault();
+    if (readOnly) {
+      onToast?.({ message: 'Sem permissão para guardar (só leitura).', type: 'error' });
+      return;
+    }
     setSaving(true);
     setSlugHint('');
     try {
@@ -456,7 +462,11 @@ export default function SettingsModal({
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
             Colaboradores (GoCreate)
           </p>
-          <CollaboratorsBlock projectId={projectId} onToast={onToast} />
+          {canManageCollaborators ? (
+            <CollaboratorsBlock projectId={projectId} onToast={onToast} />
+          ) : (
+            <p className="text-[11px] text-zinc-500">Só o dono gere colaboradores.</p>
+          )}
         </section>
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">
@@ -713,7 +723,7 @@ export default function SettingsModal({
 
         <button
           type="submit"
-          disabled={saving || !name.trim()}
+          disabled={saving || !name.trim() || readOnly}
           className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-600 rounded-lg transition-all"
         >
           {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}

@@ -40,6 +40,25 @@ async function assertProjectOwner(projectId, uid) {
   return { projectRef, project };
 }
 
+async function assertProjectOwnerOrEditor(projectId, uid, email) {
+  const { resolveProjectRole, canEditProject } = await import('../services/collaborators.js');
+  const projectRef = db.collection('projects').doc(projectId);
+  const projectSnap = await projectRef.get();
+  if (!projectSnap.exists) {
+    const err = new Error('Projeto não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  const project = projectSnap.data() || {};
+  const role = resolveProjectRole(project, email, uid);
+  if (!canEditProject(role)) {
+    const err = new Error('Sem permissão de edição neste projeto.');
+    err.status = 403;
+    throw err;
+  }
+  return { projectRef, project };
+}
+
 /**
  * Claim slug in projectSlugs; release previous if owned by same project.
  * @returns {Promise<string>} normalized slug
@@ -104,7 +123,11 @@ async function publishHandler(req, res) {
       return res.status(400).json({ error: 'Nenhum ficheiro para publicar.' });
     }
 
-    const { projectRef, project } = await assertProjectOwner(projectId, req.user.uid);
+    const { projectRef, project } = await assertProjectOwnerOrEditor(
+      projectId,
+      req.user.uid,
+      req.user.email
+    );
 
     // Plan snapshot for badge (Free → showBadge)
     let plan = req.userPlan || 'free';
@@ -426,7 +449,11 @@ router.post('/rollback', requireAuth, async (req, res) => {
     if (!projectId || !historyId) {
       return res.status(400).json({ error: 'projectId e historyId são obrigatórios.' });
     }
-    const { projectRef, project } = await assertProjectOwner(projectId, req.user.uid);
+    const { projectRef, project } = await assertProjectOwnerOrEditor(
+      projectId,
+      req.user.uid,
+      req.user.email
+    );
     const histRef = projectRef.collection('deployHistory').doc(historyId);
     const histSnap = await histRef.get();
     if (!histSnap.exists) {

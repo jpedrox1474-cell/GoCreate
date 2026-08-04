@@ -49,6 +49,13 @@ import {
 } from '../lib/artifactParser';
 import { seedDetectedEntities } from '../lib/entities';
 import { canEditProjectCode } from '../lib/plans';
+import {
+  resolveClientProjectRole,
+  canEditProject,
+  canViewProject,
+  canManageProject,
+} from '../lib/projectAccess';
+import { listSharedProjects } from '../lib/meApi';
 import { saveCheckpoint, undoLastCheckpoint, getLatestCheckpoint } from '../lib/checkpoints';
 import {
   getProjectById,
@@ -264,10 +271,15 @@ export default function Editor() {
   }, []);
 
   const project = projectMeta || getProjectById(routeId || 'new');
-  const canEditCode = canEditProjectCode(user);
+  const projectRole = resolveClientProjectRole(projectMeta, user);
+  const isReadOnly = projectMeta ? projectRole === 'viewer' : false;
+  const canMutateProject = projectMeta ? canEditProject(projectRole) : true;
+  const isProjectOwner = projectMeta ? canManageProject(projectRole) : true;
+  const canEditCode = canEditProjectCode(user) && canMutateProject && !isReadOnly;
   const showQuickActions =
     !isGenerating &&
     !projectLoading &&
+    !isReadOnly &&
     messages.length <= 1 &&
     !streamingText &&
     !pendingUserText;
@@ -441,7 +453,18 @@ export default function Editor() {
         const id = routeId;
         const meta = await getProject(id);
         if (cancelled) return;
-        setProjectMeta(meta || getProjectById(id));
+        if (!meta) {
+          setToast({ message: 'Projeto não encontrado.', type: 'error' });
+          navigate('/dashboard', { replace: true });
+          return;
+        }
+        const role = resolveClientProjectRole(meta, user);
+        if (!canViewProject(role)) {
+          setToast({ message: 'Sem permissão para abrir este projeto.', type: 'error' });
+          navigate('/dashboard', { replace: true });
+          return;
+        }
+        setProjectMeta(meta);
         setFirestoreId(id);
         rememberLastProjectId(id);
         localCodeEditsRef.current = {};
@@ -458,9 +481,17 @@ export default function Editor() {
         setCanUndo(false);
         pendingCheckpointRef.current = null;
 
-        listUserProjects(user.uid)
-          .then((list) => {
-            if (!cancelled) setHistoryProjects(list);
+        Promise.all([
+          listUserProjects(user.uid),
+          user.getIdToken ? listSharedProjects(await user.getIdToken()).catch(() => []) : Promise.resolve([]),
+        ])
+          .then(([owned, shared]) => {
+            if (cancelled) return;
+            const ids = new Set(owned.map((p) => p.id));
+            setHistoryProjects([
+              ...owned,
+              ...shared.filter((p) => !ids.has(p.id)).map((p) => ({ ...p, sharedRole: p.role })),
+            ]);
           })
           .catch(() => {});
 
@@ -602,6 +633,13 @@ export default function Editor() {
   const sendMessageText = useCallback(
     async (userText, { askFix = false, isContinue = false } = {}) => {
       if (!userText?.trim() || isGenerating || !user) return;
+      if (projectMeta && !canEditProject(resolveClientProjectRole(projectMeta, user))) {
+        setToast({
+          message: 'Modo visualizador — sem permissão para gerar ou alterar.',
+          type: 'error',
+        });
+        return;
+      }
       const trimmed = userText.trim();
       const currentAttachment = attachmentRef.current;
       setInput('');
@@ -1368,7 +1406,8 @@ export default function Editor() {
           <button
             type="button"
             onClick={handleSaveProject}
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all"
+            disabled={isReadOnly}
+            className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all disabled:opacity-40"
           >
             <Save size={14} />
             Salvar
@@ -1384,20 +1423,27 @@ export default function Editor() {
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
-            className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all"
-            title="Configurações"
+            disabled={isReadOnly && !isProjectOwner}
+            className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all disabled:opacity-40"
+            title={isReadOnly ? 'Só leitura' : 'Configurações'}
           >
             <Settings size={16} />
           </button>
           <div className="w-px h-4 bg-zinc-800 mx-0.5 hidden sm:block" />
-          <button
-            type="button"
-            onClick={() => setDeployOpen(true)}
-            className="flex items-center gap-2 px-3 sm:px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-all shadow-md shadow-blue-900/20"
-          >
-            <Play size={14} className="fill-white" />
-            Deploy
-          </button>
+          {isReadOnly ? (
+            <span className="px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide bg-zinc-800 text-zinc-400 border border-zinc-700">
+              Visualizador
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setDeployOpen(true)}
+              className="flex items-center gap-2 px-3 sm:px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-all shadow-md shadow-blue-900/20"
+            >
+              <Play size={14} className="fill-white" />
+              Deploy
+            </button>
+          )}
         </div>
       </header>
 
@@ -1705,10 +1751,12 @@ export default function Editor() {
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  disabled={isGenerating || projectLoading}
+                  disabled={isGenerating || projectLoading || isReadOnly}
                   placeholder={
                     projectLoading
                       ? 'A carregar…'
+                      : isReadOnly
+                        ? 'Modo visualizador — só leitura'
                       : isGenerating
                         ? 'A gerar…'
                         : 'Pede alterações, novas secções…'
@@ -1890,6 +1938,8 @@ export default function Editor() {
         projectId={firestoreId}
         onProjectUpdated={handleProjectUpdated}
         onToast={setToast}
+        readOnly={!isProjectOwner && isReadOnly}
+        canManageCollaborators={isProjectOwner}
       />
 
       <Toast

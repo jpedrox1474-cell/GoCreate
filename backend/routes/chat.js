@@ -40,6 +40,25 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
     });
   }
 
+  // ACL: viewers cannot mutate via AI
+  try {
+    const { resolveProjectRole, canEditProject } = await import('../services/collaborators.js');
+    const snap = await db.collection('projects').doc(projectId).get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Projeto não encontrado.' });
+    }
+    const role = resolveProjectRole(snap.data() || {}, req.user.email, req.user.uid);
+    if (!canEditProject(role)) {
+      return res.status(403).json({
+        error: 'Sem permissão para gerar neste projeto (modo visualizador).',
+        code: 'PROJECT_READ_ONLY',
+      });
+    }
+  } catch (aclErr) {
+    console.error('[chat] ACL', aclErr);
+    return res.status(aclErr.status || 500).json({ error: aclErr.message || 'Falha de permissão.' });
+  }
+
   // Configura SSE (mesmo contrato que o frontend espera)
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

@@ -15,15 +15,22 @@ import {
 
 const router = Router();
 
-async function assertOwner(projectId, uid) {
+async function assertOwner(projectId, uid, email = null) {
   const snap = await db.collection('projects').doc(projectId).get();
   if (!snap.exists) {
-    const err = new Error('Projeto não encontrado.');
+    const err = new Error('Função / projeto não encontrado.');
     err.status = 404;
     throw err;
   }
   const data = snap.data() || {};
   if (data.ownerId !== uid) {
+    // Allow editors for function CRUD/run
+    if (email) {
+      const { resolveProjectRole, canEditProject } = await import('../services/collaborators.js');
+      if (canEditProject(resolveProjectRole(data, email, uid))) {
+        return data;
+      }
+    }
     const err = new Error('Sem permissão neste projeto.');
     err.status = 403;
     throw err;
@@ -62,7 +69,7 @@ router.post('/cron/tick', optionalAuth, async (req, res) => {
     }
     const projectId = req.body?.projectId || req.query?.projectId || null;
     if (isOwner && !isSecret && projectId) {
-      await assertOwner(projectId, req.user.uid);
+      await assertOwner(projectId, req.user.uid, req.user.email);
     }
     const results = await runDueCronFunctions({
       projectId: projectId || null,
@@ -113,7 +120,7 @@ router.post('/invoke/:projectId/:name', optionalAuth, async (req, res) => {
 router.get('/:projectId', requireAuth, async (req, res) => {
   try {
     const { projectId } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwner(projectId, req.user.uid, req.user.email);
     const functions = await listProjectFunctions(projectId);
     res.json({ ok: true, functions });
   } catch (err) {
@@ -126,7 +133,7 @@ router.get('/:projectId', requireAuth, async (req, res) => {
 router.get('/:projectId/:name/logs', requireAuth, async (req, res) => {
   try {
     const { projectId, name } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwner(projectId, req.user.uid, req.user.email);
     const logs = await listFunctionLogs(projectId, name, req.query.limit);
     res.json({ ok: true, logs });
   } catch (err) {
@@ -139,7 +146,7 @@ router.get('/:projectId/:name/logs', requireAuth, async (req, res) => {
 router.post('/:projectId/:name/run', requireAuth, async (req, res) => {
   try {
     const { projectId, name } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwner(projectId, req.user.uid, req.user.email);
     await assertBackend(projectId);
     const out = await runProjectFunction({
       projectId,
@@ -163,7 +170,7 @@ router.post('/:projectId/:name/run', requireAuth, async (req, res) => {
 router.get('/:projectId/:name', requireAuth, async (req, res) => {
   try {
     const { projectId, name } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwner(projectId, req.user.uid, req.user.email);
     const fn = await getProjectFunction(projectId, name);
     if (!fn) return res.status(404).json({ error: 'Função não encontrada.' });
     res.json({ ok: true, function: fn });
@@ -177,7 +184,7 @@ router.get('/:projectId/:name', requireAuth, async (req, res) => {
 router.put('/:projectId/:name', requireAuth, async (req, res) => {
   try {
     const { projectId, name } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwner(projectId, req.user.uid, req.user.email);
     await assertBackend(projectId);
     const fn = await upsertProjectFunction(projectId, {
       ...req.body,
@@ -194,7 +201,7 @@ router.put('/:projectId/:name', requireAuth, async (req, res) => {
 router.delete('/:projectId/:name', requireAuth, async (req, res) => {
   try {
     const { projectId, name } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwner(projectId, req.user.uid, req.user.email);
     await deleteProjectFunction(projectId, name);
     res.json({ ok: true });
   } catch (err) {

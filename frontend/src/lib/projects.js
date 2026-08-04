@@ -97,6 +97,20 @@ export function mapProjectDoc(d) {
     backendEnabled: Boolean(data.backendEnabled),
     ownerId: data.ownerId,
     ownerEmail: data.ownerEmail || null,
+    collaborators: Array.isArray(data.collaborators)
+      ? data.collaborators.map((c) => ({
+          email: String(c.email || '')
+            .trim()
+            .toLowerCase(),
+          role: c.role === 'viewer' ? 'viewer' : 'editor',
+        }))
+      : [],
+    collaboratorEmails: Array.isArray(data.collaboratorEmails)
+      ? data.collaboratorEmails.map((e) => String(e || '').trim().toLowerCase())
+      : [],
+    collaboratorEditorEmails: Array.isArray(data.collaboratorEditorEmails)
+      ? data.collaboratorEditorEmails.map((e) => String(e || '').trim().toLowerCase())
+      : [],
     authAccess,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt || data.createdAt,

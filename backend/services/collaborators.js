@@ -46,6 +46,9 @@ export async function setCollaborators(projectId, collaborators) {
     {
       collaborators: cleaned,
       collaboratorEmails: cleaned.map((c) => c.email),
+      collaboratorEditorEmails: cleaned
+        .filter((c) => c.role === 'editor')
+        .map((c) => c.email),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }

@@ -78,42 +78,100 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      // Owner can read/update/delete their project doc (create checks request.resource).
-      allow read, update, delete: if isSignedIn()
+      function projectData() {
+        return get(/databases/$(database)/documents/projects/$(projectId)).data;
+      }
+
+      function authEmail() {
+        return request.auth != null && request.auth.token.email != null
+          ? request.auth.token.email
+          : '';
+      }
+
+      function isProjectOwner() {
+        return isSignedIn()
+          && projectData().ownerId == request.auth.uid;
+      }
+
+      function isProjectEditor() {
+        return isSignedIn()
+          && (
+            isProjectOwner()
+            || (
+              'collaboratorEditorEmails' in projectData()
+              && authEmail() in projectData().collaboratorEditorEmails
+            )
+          );
+      }
+
+      function isProjectMember() {
+        return isSignedIn()
+          && (
+            isProjectOwner()
+            || (
+              'collaboratorEmails' in projectData()
+              && authEmail() in projectData().collaboratorEmails
+            )
+          );
+      }
+
+      // Owner + collaborators can read; write = owner or editor
+      allow read: if isSignedIn()
+        && (
+          resource.data.ownerId == request.auth.uid
+          || (
+            'collaboratorEmails' in resource.data
+            && authEmail() in resource.data.collaboratorEmails
+          )
+        );
+      allow update: if isSignedIn()
+        && (
+          resource.data.ownerId == request.auth.uid
+          || (
+            'collaboratorEditorEmails' in resource.data
+            && authEmail() in resource.data.collaboratorEditorEmails
+          )
+        )
+        && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['ownerId', 'collaborators', 'collaboratorEmails', 'collaboratorEditorEmails']);
+      // Collaborators list only via Admin SDK / owner API — owners may still update other fields via client
+      allow update: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+      allow delete: if isSignedIn()
         && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn()
         && request.auth.uid == request.resource.data.ownerId;
 
-      function isProjectOwner() {
-        return isSignedIn()
-          && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId
-            == request.auth.uid;
-      }
-
       match /messages/{messageId} {
-        allow read, write: if isProjectOwner();
+        allow read: if isProjectMember();
+        allow write: if isProjectEditor();
       }
 
       match /automations/{automationId} {
-        allow read, write: if isProjectOwner();
+        allow read: if isProjectMember();
+        allow write: if isProjectEditor();
       }
 
       match /automationRuns/{runId} {
-        allow read, write: if isProjectOwner();
+        allow read: if isProjectMember();
+        allow write: if isProjectEditor();
       }
 
       // Schema / mock DB entities (Base44-style)
       match /entities/{entityId} {
-        allow read, write: if isProjectOwner();
+        allow read: if isProjectMember();
+        allow write: if isProjectEditor();
 
         match /rows/{rowId} {
-          allow read, write: if isProjectOwner();
+          allow read: if isProjectMember();
+          allow write: if isProjectEditor();
         }
       }
 
       // Chat AI checkpoints (undo last turn)
       match /checkpoints/{checkpointId} {
-        allow read, write: if isProjectOwner();
+        allow read: if isProjectMember();
+        allow write: if isProjectEditor();
       }
 
       // API keys — hashes; writes only via Admin SDK
@@ -127,9 +185,16 @@ service cloud.firestore {
         allow write: if false;
       }
 
-      // Project env secrets — Admin SDK only
+      // Env secrets — Admin SDK only
       match /envSecrets/{secretId} {
         allow read, write: if false;
+      }
+
+      match /backendFunctions/{fnId} {
+        allow read, write: if false;
+        match /logs/{logId} {
+          allow read, write: if false;
+        }
       }
     }
 
@@ -186,7 +251,5 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
-
-    // Project serverless function logs are nested under backendFunctions (Admin SDK)
   }
 }
