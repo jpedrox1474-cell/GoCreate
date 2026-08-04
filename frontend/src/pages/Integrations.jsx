@@ -40,7 +40,7 @@ import {
 } from '../lib/socialChannelsApi';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
-import { BACKEND_ENABLE_CREDIT_COST, PREMIUM_REQUIRED_MESSAGE } from '../lib/plans';
+import { BACKEND_ENABLE_CREDIT_COST } from '../lib/plans';
 
 const OAUTH_PROVIDERS = new Set(['github', 'mercadopago']);
 const ICONS = {
