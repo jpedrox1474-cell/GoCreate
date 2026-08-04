@@ -19,22 +19,47 @@ function assertOwnerEmail(req) {
 
 router.use(requireAuth);
 
+/**
+ * GET /api/admin/users
+ * Query: limit (1–100), cursor (doc id), q (email substring), plan (free|pro|…)
+ */
 router.get('/users', async (req, res) => {
   try {
     assertOwnerEmail(req);
     await ensureUserAdmin(req.user.uid, req.user.email);
 
     const lim = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
-    let docs = [];
+    const q = String(req.query.q || '')
+      .trim()
+      .toLowerCase();
+    const planFilter = String(req.query.plan || '')
+      .trim()
+      .toLowerCase();
+    const cursor = String(req.query.cursor || '').trim();
+
+    // Fetch a wider page when filtering client-side (no email index).
+    const fetchLimit = q || planFilter ? Math.min(500, lim * 8) : lim;
+
+    let query = db.collection('users');
+    let usedOrder = true;
     try {
-      const snap = await db.collection('users').orderBy('lastLoginAt', 'desc').limit(lim).get();
-      docs = snap.docs;
+      query = query.orderBy('lastLoginAt', 'desc');
+      if (cursor) {
+        const cursorSnap = await db.collection('users').doc(cursor).get();
+        if (cursorSnap.exists) {
+          query = query.startAfter(cursorSnap);
+        }
+      }
+      query = query.limit(fetchLimit);
     } catch {
-      const snap = await db.collection('users').limit(lim).get();
-      docs = snap.docs;
+      usedOrder = false;
+      query = db.collection('users').limit(fetchLimit);
     }
 
-    const users = docs.map((d) => {
+    const snap = await query.get();
+    let docs = snap.docs;
+
+    let users = docs.map((d) => {
       const data = d.data() || {};
       return {
         uid: d.id,
@@ -46,7 +71,27 @@ router.get('/users', async (req, res) => {
         createdAt: data.createdAt || null,
       };
     });
-    res.json({ ok: true, users });
+
+    if (q) {
+      users = users.filter((u) => String(u.email || '').toLowerCase().includes(q));
+    }
+    if (planFilter && planFilter !== 'all') {
+      users = users.filter((u) => String(u.plan || 'free').toLowerCase() === planFilter);
+    }
+
+    const page = users.slice(0, lim);
+    const lastDoc = docs[docs.length - 1];
+    const nextCursor =
+      !q && !planFilter && usedOrder && docs.length >= lim && lastDoc ? lastDoc.id : null;
+    const hasMore = Boolean(nextCursor) || (q || planFilter ? users.length > lim : false);
+
+    res.json({
+      ok: true,
+      users: page,
+      nextCursor,
+      hasMore,
+      filtered: Boolean(q || planFilter),
+    });
   } catch (err) {
     console.error('[admin/users]', err);
     res.status(err.status || 500).json({ error: err.message || 'Falha ao listar utilizadores.' });

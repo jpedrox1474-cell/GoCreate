@@ -3,10 +3,11 @@ import {
   SandpackProvider,
   SandpackPreview,
   SandpackLayout,
+  SandpackConsole,
   useLoadingOverlayState,
   useErrorMessage,
 } from '@codesandbox/sandpack-react';
-import { AlertTriangle, Wand2, Loader2, LayoutTemplate } from 'lucide-react';
+import { AlertTriangle, Wand2, Loader2, LayoutTemplate, Terminal } from 'lucide-react';
 import {
   toSandpackFiles,
   resolveSandpackDependencies,
@@ -134,26 +135,54 @@ function IncompleteBanner({ visible, onContinue }) {
 }
 
 function PreviewInner({ isGenerating, onAskFix, publicMode, generationIncomplete, onContinue }) {
+  const [consoleOpen, setConsoleOpen] = useState(false);
+
   return (
     <div
-      className={`relative h-full w-full [&_.sp-overlay]:!opacity-0 [&_.sp-overlay]:!pointer-events-none ${
+      className={`relative h-full w-full flex flex-col [&_.sp-overlay]:!opacity-0 [&_.sp-overlay]:!pointer-events-none ${
         publicMode
           ? '[&_.sp-navigator]:!hidden [&_.sp-preview-actions]:!hidden [&_.sp-button]:!hidden'
           : ''
       }`}
     >
-      <SandpackLayout style={{ height: '100%', border: 'none', background: 'transparent' }}>
-        <SandpackPreview
-          showNavigator={!publicMode}
-          showOpenInCodeSandbox={false}
-          showRefreshButton={!publicMode}
-          showSandpackErrorOverlay={false}
-          style={{ height: '100%', flex: 1 }}
-        />
-      </SandpackLayout>
-      <IncompleteBanner visible={Boolean(generationIncomplete)} onContinue={onContinue} />
-      <CompilingOverlay externalLoading={Boolean(isGenerating)} publicMode={publicMode} />
-      <RuntimeErrorOverlay onAskFix={onAskFix} hidden={Boolean(isGenerating)} />
+      <div className="flex-1 min-h-0 relative">
+        <SandpackLayout style={{ height: '100%', border: 'none', background: 'transparent' }}>
+          <SandpackPreview
+            showNavigator={!publicMode}
+            showOpenInCodeSandbox={false}
+            showRefreshButton={!publicMode}
+            showSandpackErrorOverlay={false}
+            style={{ height: '100%', flex: 1 }}
+          />
+        </SandpackLayout>
+        <IncompleteBanner visible={Boolean(generationIncomplete)} onContinue={onContinue} />
+        <CompilingOverlay externalLoading={Boolean(isGenerating)} publicMode={publicMode} />
+        <RuntimeErrorOverlay onAskFix={onAskFix} hidden={Boolean(isGenerating)} />
+      </div>
+
+      {!publicMode && (
+        <div className="shrink-0 border-t border-zinc-800 bg-zinc-950">
+          <button
+            type="button"
+            onClick={() => setConsoleOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60 transition-colors"
+          >
+            <Terminal size={12} />
+            Console
+            <span className="text-zinc-600 ml-auto">{consoleOpen ? '▼' : '▲'}</span>
+          </button>
+          {consoleOpen && (
+            <div className="h-36 border-t border-zinc-800/80 [&_.sp-console]:!bg-zinc-950 [&_.sp-console]:!h-full">
+              <SandpackConsole
+                showHeader={false}
+                showSyntaxError
+                maxMessageCount={80}
+                style={{ height: '100%' }}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -237,6 +266,7 @@ export default function PreviewPane({
   projectId = null,
   backendEnabled = false,
   authAccess = null,
+  runtimeEnv = null,
   entitiesOnly = false,
   generationIncomplete = false,
   onRequestUi = null,
@@ -244,6 +274,31 @@ export default function PreviewPane({
 }) {
   // Sandpack iframe OAuth → parent Google popup on authorized domain
   useEffect(() => installPreviewAuthBridge(), []);
+
+  const [fetchedEnv, setFetchedEnv] = useState(null);
+
+  useEffect(() => {
+    if (!projectId || (runtimeEnv && typeof runtimeEnv === 'object')) {
+      setFetchedEnv(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/runtime`);
+        if (!res.ok) return;
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled && json?.env && typeof json.env === 'object') {
+          setFetchedEnv(json.env);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, runtimeEnv]);
 
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const hasFiles = Boolean(sandpackFiles && Object.keys(sandpackFiles).length);
@@ -253,15 +308,21 @@ export default function PreviewPane({
     [sandpackFiles, files]
   );
 
+  const effectiveEnv = useMemo(() => {
+    if (runtimeEnv && typeof runtimeEnv === 'object') return runtimeEnv;
+    return fetchedEnv && typeof fetchedEnv === 'object' ? fetchedEnv : {};
+  }, [runtimeEnv, fetchedEnv]);
+
   const sandpackKey = useMemo(() => {
     if (!sandpackFiles) return 'empty';
     const depsKey = Object.keys(dependencies).sort().join(',');
     const beKey = backendEnabled ? 'be1' : 'be0';
-    return `${depsKey}::${projectId || ''}::${beKey}::${Object.entries(sandpackFiles)
+    const envKey = Object.keys(effectiveEnv).sort().join(',');
+    return `${depsKey}::${projectId || ''}::${beKey}::${envKey}::${Object.entries(sandpackFiles)
       .map(([path, entry]) => `${path}:${(entry?.code || '').length}:${(entry?.code || '').slice(0, 48)}`)
       .sort()
       .join('|')}`;
-  }, [sandpackFiles, dependencies, projectId, backendEnabled]);
+  }, [sandpackFiles, dependencies, projectId, backendEnabled, effectiveEnv]);
 
   const apiBase =
     typeof window !== 'undefined'
@@ -293,8 +354,9 @@ export default function PreviewPane({
           }
         : null
     );
-    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};window.__GOCREATE_AUTH_ACCESS__=${access};`;
-  }, [projectId, apiBase, backendEnabled, authAccess]);
+    const envJson = JSON.stringify(effectiveEnv || {});
+    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};window.__GOCREATE_AUTH_ACCESS__=${access};window.__GOCREATE_ENV__=${envJson};try{window.process=window.process||{};window.process.env=Object.assign({},window.process.env||{},${envJson});}catch(e){}`;
+  }, [projectId, apiBase, backendEnabled, authAccess, effectiveEnv]);
 
   const shellClass = publicMode
     ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'

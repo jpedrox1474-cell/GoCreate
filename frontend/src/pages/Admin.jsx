@@ -1,10 +1,18 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Shield, Loader2, Plus, Minus } from 'lucide-react';
+import { Shield, Loader2, Plus, Minus, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { isOwnerUser } from '../lib/plans';
 import { listAdminUsers, adjustUserCredits } from '../lib/adminApi';
 import Toast from '../components/Toast';
+
+const PAGE_SIZE = 40;
+const PLAN_OPTIONS = [
+  { value: 'all', label: 'Todos os planos' },
+  { value: 'free', label: 'Free' },
+  { value: 'pro', label: 'Pro' },
+  { value: 'enterprise_master', label: 'Enterprise' },
+];
 
 export default function Admin() {
   const { user } = useAuth();
@@ -12,6 +20,13 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [busyUid, setBusyUid] = useState(null);
   const [toast, setToast] = useState(null);
+  const [q, setQ] = useState('');
+  const [qDraft, setQDraft] = useState('');
+  const [plan, setPlan] = useState('all');
+  const [cursorStack, setCursorStack] = useState([null]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
 
   const allowed = isOwnerUser(user);
 
@@ -20,14 +35,23 @@ export default function Admin() {
     setLoading(true);
     try {
       const idToken = await user.getIdToken();
-      const list = await listAdminUsers({ idToken, limit: 80 });
-      setUsers(list);
+      const cursor = cursorStack[pageIndex] || null;
+      const result = await listAdminUsers({
+        idToken,
+        limit: PAGE_SIZE,
+        cursor,
+        q,
+        plan,
+      });
+      setUsers(result.users);
+      setNextCursor(result.nextCursor);
+      setHasMore(result.hasMore);
     } catch (err) {
       setToast({ message: err?.message || 'Falha ao carregar admin.', type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [user, allowed]);
+  }, [user, allowed, cursorStack, pageIndex, q, plan]);
 
   useEffect(() => {
     refresh();
@@ -35,6 +59,34 @@ export default function Admin() {
 
   if (!allowed) {
     return <Navigate to="/dashboard" replace />;
+  }
+
+  function applySearch(e) {
+    e?.preventDefault?.();
+    setQ(qDraft.trim());
+    setCursorStack([null]);
+    setPageIndex(0);
+  }
+
+  function onPlanChange(value) {
+    setPlan(value);
+    setCursorStack([null]);
+    setPageIndex(0);
+  }
+
+  function goPrev() {
+    if (pageIndex <= 0) return;
+    setPageIndex((i) => i - 1);
+  }
+
+  function goNext() {
+    if (!hasMore || !nextCursor) return;
+    setCursorStack((stack) => {
+      const next = stack.slice(0, pageIndex + 1);
+      next.push(nextCursor);
+      return next;
+    });
+    setPageIndex((i) => i + 1);
   }
 
   async function bumpCredits(uid, delta) {
@@ -89,70 +141,129 @@ export default function Admin() {
         </div>
       </div>
 
+      <form
+        onSubmit={applySearch}
+        className="flex flex-col sm:flex-row gap-2 mb-4"
+      >
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <input
+            value={qDraft}
+            onChange={(e) => setQDraft(e.target.value)}
+            placeholder="Filtrar por e-mail…"
+            className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 outline-none focus:border-blue-600"
+          />
+        </div>
+        <select
+          value={plan}
+          onChange={(e) => onPlanChange(e.target.value)}
+          className="px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-sm text-zinc-300 outline-none focus:border-blue-600"
+        >
+          {PLAN_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-semibold text-white"
+        >
+          Filtrar
+        </button>
+      </form>
+
       {loading ? (
         <div className="flex items-center gap-2 text-zinc-500 text-sm py-12 justify-center">
           <Loader2 size={16} className="animate-spin" /> A carregar…
         </div>
       ) : (
-        <div className="rounded-xl border border-zinc-800 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-900/80 text-[11px] uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="text-left font-medium px-4 py-2.5">Email</th>
-                <th className="text-left font-medium px-3 py-2.5">Plano</th>
-                <th className="text-left font-medium px-3 py-2.5">Role</th>
-                <th className="text-right font-medium px-3 py-2.5">Créditos</th>
-                <th className="text-right font-medium px-4 py-2.5">Ajustar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.uid} className="border-t border-zinc-800/80 hover:bg-zinc-900/40">
-                  <td className="px-4 py-2.5 text-zinc-200">
-                    <div className="truncate max-w-[240px]">{u.email || u.uid}</div>
-                    <div className="text-[10px] text-zinc-600 font-mono truncate">{u.uid}</div>
-                  </td>
-                  <td className="px-3 py-2.5 text-zinc-400">{u.plan}</td>
-                  <td className="px-3 py-2.5 text-zinc-400">{u.role}</td>
-                  <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{u.credits}</td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        disabled={busyUid === u.uid}
-                        onClick={() => void bumpCredits(u.uid, -10)}
-                        className="p-1.5 rounded-md border border-zinc-800 text-zinc-400 hover:text-red-300 hover:border-red-500/40 disabled:opacity-40"
-                        title="-10"
-                      >
-                        <Minus size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busyUid === u.uid}
-                        onClick={() => void bumpCredits(u.uid, 10)}
-                        className="p-1.5 rounded-md border border-zinc-800 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 disabled:opacity-40"
-                        title="+10"
-                      >
-                        <Plus size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busyUid === u.uid}
-                        onClick={() => void setCreditsPrompt(u.uid, u.credits)}
-                        className="px-2 py-1 rounded-md text-[10px] border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
-                      >
-                        Definir
-                      </button>
-                    </div>
-                  </td>
+        <>
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-900/80 text-[11px] uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="text-left font-medium px-4 py-2.5">Email</th>
+                  <th className="text-left font-medium px-3 py-2.5">Plano</th>
+                  <th className="text-left font-medium px-3 py-2.5">Role</th>
+                  <th className="text-right font-medium px-3 py-2.5">Créditos</th>
+                  <th className="text-right font-medium px-4 py-2.5">Ajustar</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {!users.length && (
-            <p className="text-center text-sm text-zinc-500 py-10">Nenhum utilizador encontrado.</p>
-          )}
-        </div>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.uid} className="border-t border-zinc-800/80 hover:bg-zinc-900/40">
+                    <td className="px-4 py-2.5 text-zinc-200">
+                      <div className="truncate max-w-[240px]">{u.email || u.uid}</div>
+                      <div className="text-[10px] text-zinc-600 font-mono truncate">{u.uid}</div>
+                    </td>
+                    <td className="px-3 py-2.5 text-zinc-400">{u.plan}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{u.role}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{u.credits}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          disabled={busyUid === u.uid}
+                          onClick={() => void bumpCredits(u.uid, -10)}
+                          className="p-1.5 rounded-md border border-zinc-800 text-zinc-400 hover:text-red-300 hover:border-red-500/40 disabled:opacity-40"
+                          title="-10"
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyUid === u.uid}
+                          onClick={() => void bumpCredits(u.uid, 10)}
+                          className="p-1.5 rounded-md border border-zinc-800 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 disabled:opacity-40"
+                          title="+10"
+                        >
+                          <Plus size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyUid === u.uid}
+                          onClick={() => void setCreditsPrompt(u.uid, u.credits)}
+                          className="px-2 py-1 rounded-md text-[10px] border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+                        >
+                          Definir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!users.length && (
+              <p className="text-center text-sm text-zinc-500 py-10">Nenhum utilizador encontrado.</p>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between mt-3 text-xs text-zinc-500">
+            <span>
+              Página {pageIndex + 1}
+              {q ? ` · filtro “${q}”` : ''}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={pageIndex <= 0 || loading}
+                onClick={goPrev}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 disabled:opacity-40"
+              >
+                <ChevronLeft size={14} /> Anterior
+              </button>
+              <button
+                type="button"
+                disabled={!hasMore || !nextCursor || loading}
+                onClick={goNext}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 disabled:opacity-40"
+              >
+                Seguinte <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
       {toast && (

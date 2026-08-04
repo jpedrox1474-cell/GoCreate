@@ -175,5 +175,11 @@ service cloud.firestore {
       allow delete: if isSignedIn()
         && resource.data.ownerId == request.auth.uid;
     }
+
+    // Custom domains — writes via Admin SDK (/api/deploy/custom-domain)
+    match /customDomains/{host} {
+      allow read: if true;
+      allow write: if false;
+    }
   }
 }

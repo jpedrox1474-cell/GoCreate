@@ -91,6 +91,9 @@ export default function PublicPreview() {
     ownerEmail: liveRuntime?.ownerEmail || publication?.ownerEmail || null,
   };
 
+  const runtimeEnv =
+    liveRuntime?.env && typeof liveRuntime.env === 'object' ? liveRuntime.env : null;
+
   if (loading) {
     return (
       <div className="h-screen w-full flex items-center justify-center bg-white dark:bg-zinc-950">
@@ -128,6 +131,7 @@ export default function PublicPreview() {
         projectId={runtimeProjectId}
         backendEnabled={backendEnabled}
         authAccess={authAccess}
+        runtimeEnv={runtimeEnv}
       />
 
       {showBadge && (

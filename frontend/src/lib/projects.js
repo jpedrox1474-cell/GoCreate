@@ -89,6 +89,7 @@ export function mapProjectDoc(d) {
     thumbnail,
     thumbnailUrl: data.thumbnailUrl || data.thumbnail || null,
     customDomain: data.customDomain || '',
+    customDomainVerified: Boolean(data.customDomainVerified),
     publishedUrl: data.publishedUrl || null,
     publishedEnv: data.publishedEnv || null,
     slug: data.slug || null,

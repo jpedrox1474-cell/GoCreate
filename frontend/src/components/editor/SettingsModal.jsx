@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { updateProjectSettings, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
-import { checkSlugAvailability, updateProjectSlug } from '../../lib/deployApi';
+import { checkSlugAvailability, updateProjectSlug, updateCustomDomain, verifyCustomDomain, getCustomDomainStatus } from '../../lib/deployApi';
 import { enableProjectBackend } from '../../lib/projectsApi';
 import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../../lib/userSettings';
 import { useTheme } from '../../context/ThemeContext';
@@ -57,12 +57,17 @@ export default function SettingsModal({
     () => project?.authAccess?.invitedEmails || []
   );
   const [inviteDraft, setInviteDraft] = useState('');
+  const [domainDns, setDomainDns] = useState(null);
+  const [domainVerified, setDomainVerified] = useState(Boolean(project?.customDomainVerified));
+  const [domainBusy, setDomainBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setName(project?.name || '');
     setDescription(project?.description || '');
     setCustomDomain(project?.customDomain || '');
+    setDomainVerified(Boolean(project?.customDomainVerified));
+    setDomainDns(null);
     setSlug(project?.slug || projectId || '');
     setSlugHint('');
     setBackendEnabled(Boolean(project?.backendEnabled));
@@ -81,6 +86,7 @@ export default function SettingsModal({
     project?.name,
     project?.description,
     project?.customDomain,
+    project?.customDomainVerified,
     project?.slug,
     project?.backendEnabled,
     project?.authAccess?.mode,
@@ -111,6 +117,47 @@ export default function SettingsModal({
 
   function removeInviteEmail(email) {
     setInvitedEmails((prev) => prev.filter((e) => e !== email));
+  }
+
+  useEffect(() => {
+    if (!open || !projectId || !user || !project?.customDomain) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const status = await getCustomDomainStatus({ idToken, projectId });
+        if (cancelled) return;
+        setDomainVerified(Boolean(status.verified));
+        setDomainDns(status.dns || null);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectId, user, project?.customDomain]);
+
+  async function handleVerifyDomain() {
+    if (!user || !projectId || domainBusy) return;
+    setDomainBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const result = await verifyCustomDomain({ idToken, projectId });
+      setDomainVerified(true);
+      onToast?.({
+        message: result.hostingNote || 'Domínio verificado via TXT.',
+        type: 'success',
+      });
+      onProjectUpdated?.({
+        ...project,
+        customDomainVerified: true,
+      });
+    } catch (err) {
+      onToast?.({ message: err?.message || 'DNS ainda pendente.', type: 'error' });
+    } finally {
+      setDomainBusy(false);
+    }
   }
 
   async function handleEnableBackend() {
@@ -212,6 +259,21 @@ export default function SettingsModal({
             ownerEmail,
           });
         }
+        if (domainChanged && user?.getIdToken) {
+          const idToken = await user.getIdToken();
+          const domainResult = await updateCustomDomain({
+            idToken,
+            projectId,
+            host: trimmedDomain,
+          });
+          if (domainResult.cleared) {
+            setDomainDns(null);
+            setDomainVerified(false);
+          } else {
+            setDomainDns(domainResult.dns || null);
+            setDomainVerified(Boolean(domainResult.verified));
+          }
+        }
       }
 
       saveUserSettings({ theme, notifications });
@@ -224,6 +286,7 @@ export default function SettingsModal({
         name: trimmedName || project?.name,
         description: trimmedDesc,
         customDomain: trimmedDomain,
+        customDomainVerified: domainChanged ? Boolean(domainDns && domainVerified) : domainVerified,
         slug: nextSlug || project?.slug || null,
         publishedUrl: nextPublishedUrl || project?.publishedUrl || null,
         backendEnabled,
@@ -327,8 +390,43 @@ export default function SettingsModal({
               className="w-full bg-zinc-950 border border-zinc-800 focus:border-blue-600 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none transition-all disabled:opacity-50 font-mono"
             />
             <p className="mt-1 text-[10px] text-zinc-600">
-              Opcional. Configuração DNS é feita no painel de deploy.
+              Guarda as settings para mapear o domínio. Depois cria TXT + CNAME e clica Verificar.
             </p>
+            {customDomain.trim() && (
+              <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2.5 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-zinc-300">
+                    Estado:{' '}
+                    <span className={domainVerified ? 'text-emerald-400' : 'text-amber-400'}>
+                      {domainVerified ? 'Verificado' : 'Pendente DNS'}
+                    </span>
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!projectId || domainBusy}
+                    onClick={() => void handleVerifyDomain()}
+                    className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 disabled:opacity-40 inline-flex items-center gap-1"
+                  >
+                    {domainBusy ? <Loader2 size={11} className="animate-spin" /> : null}
+                    Verificar DNS
+                  </button>
+                </div>
+                {domainDns?.records?.length ? (
+                  <ul className="space-y-1.5">
+                    {domainDns.records.map((r) => (
+                      <li key={`${r.type}-${r.value}`} className="text-[10px] text-zinc-500 font-mono break-all">
+                        <span className="text-zinc-400">{r.type}</span> → {r.value}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[10px] text-zinc-600">
+                    TXT: gocreate-verify=… · CNAME → gocreate.web.app · depois Add custom domain no
+                    Firebase Hosting (site gocreate).
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div>
@@ -714,7 +812,9 @@ function EnvSecretsBlock({ projectId, onToast }) {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2">
       <p className="text-[11px] text-zinc-500 leading-relaxed">
-        Variáveis de ambiente do projeto (valores mascarados na UI). Não entram no git.
+        Injetadas no preview e no site publicado como{' '}
+        <span className="font-mono text-zinc-400">window.__GOCREATE_ENV__</span> (visíveis no
+        browser — só config client-safe). Valores mascarados na UI.
       </p>
       {secrets.length > 0 && (
         <ul className="space-y-1">

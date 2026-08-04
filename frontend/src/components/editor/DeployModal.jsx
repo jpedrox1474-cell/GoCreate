@@ -381,6 +381,31 @@ export default function DeployModal({
               Backend ativo — apps publicados podem guardar dados.
             </p>
           )}
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 space-y-1.5">
+            <p className="text-[11px] font-medium text-zinc-300 inline-flex items-center gap-1.5">
+              <Globe size={12} className="text-blue-400" />
+              Domínio personalizado
+            </p>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              Em Settings do projeto: define o hostname, cria TXT{' '}
+              <span className="font-mono text-zinc-400">gocreate-verify=…</span> + CNAME →{' '}
+              <span className="font-mono text-zinc-400">gocreate.web.app</span>, verifica DNS, e
+              adiciona o domínio no Firebase Hosting (site gocreate).
+            </p>
+            {typeof onOpenSettings === 'function' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose?.();
+                  onOpenSettings();
+                }}
+                className="text-[11px] font-semibold text-blue-400 hover:text-blue-300"
+              >
+                Abrir Settings → Domínio →
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {phase === 'idle' && (

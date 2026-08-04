@@ -279,10 +279,38 @@ router.get('/:projectId/runtime', async (req, res) => {
       return res.status(400).json({ error: 'projectId é obrigatório.' });
     }
     const { data: project } = await loadProjectOrThrow(projectId);
+
+    // Inject project env secrets into published SPA runtime (Base44-style).
+    // Values are visible in the browser — use only for client-safe config.
+    const env = {};
+    try {
+      const secretSnap = await db
+        .collection('projects')
+        .doc(projectId)
+        .collection('envSecrets')
+        .get();
+      secretSnap.docs.forEach((d) => {
+        const data = d.data() || {};
+        const key = String(data.key || d.id || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9_]/g, '');
+        const value = data.value;
+        if (key && value != null && value !== '') {
+          env[key] = String(value);
+        }
+      });
+    } catch (envErr) {
+      console.warn('[projects/runtime] envSecrets:', envErr?.message);
+    }
+
     res.json({
       ok: true,
       projectId,
       backendEnabled: Boolean(project.backendEnabled),
+      env,
+      customDomain: project.customDomain || '',
+      customDomainVerified: Boolean(project.customDomainVerified),
       ...publicAuthAccessPayload(project),
     });
   } catch (err) {

@@ -108,4 +108,68 @@ export async function rollbackDeploy({ idToken, projectId, historyId }) {
   return data;
 }
 
+export async function updateCustomDomain({ idToken, projectId, host }) {
+  const res = await fetch(`${API_URL}/api/deploy/custom-domain`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projectId, host: host || '' }),
+  });
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = data?.code;
+    throw err;
+  }
+  return data;
+}
+
+export async function getCustomDomainStatus({ idToken, projectId }) {
+  const res = await fetch(
+    `${API_URL}/api/deploy/custom-domain/${encodeURIComponent(projectId)}`,
+    { headers: { Authorization: `Bearer ${idToken}` } }
+  );
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export async function verifyCustomDomain({ idToken, projectId }) {
+  const res = await fetch(`${API_URL}/api/deploy/custom-domain/verify`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projectId }),
+  });
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    err.details = data?.details;
+    throw err;
+  }
+  return data;
+}
+
+export async function resolveCustomHost(host) {
+  const q = new URLSearchParams({ host: String(host || '') });
+  const res = await fetch(`${API_URL}/api/deploy/resolve-host?${q}`);
+  const data = await parseJson(res);
+  if (!res.ok) {
+    const err = new Error(data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
 export default publishViaApi;

@@ -12,6 +12,14 @@ import {
   resolveProjectPublicKey,
   buildPublishUrl,
 } from '../services/projectSlug.js';
+import {
+  claimCustomDomain,
+  clearCustomDomain,
+  resolveCustomDomain,
+  verifyCustomDomainDns,
+  domainDnsInstructions,
+  PLATFORM_HOSTS,
+} from '../services/customDomains.js';
 
 const router = Router();
 
@@ -163,6 +171,8 @@ async function publishHandler(req, res) {
       // Free / no paid plan → badge "Feito com GoCreate" (signup). Pro/Owner pode esconder.
       showBadge: !isProLike,
       backendEnabled: Boolean(project.backendEnabled),
+      customDomain: project.customDomain || '',
+      customDomainVerified: Boolean(project.customDomainVerified),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -480,5 +490,114 @@ router.post('/rollback', requireAuth, async (req, res) => {
 
 /** POST /api/deploy/publish — Free e Pro; Free mantém showBadge. */
 router.post('/publish', requireAuth, publishHandler);
+
+/** GET /api/deploy/resolve-host?host= — public: map custom domain → project */
+router.get('/resolve-host', async (req, res) => {
+  try {
+    const host = String(req.query.host || req.headers['x-forwarded-host'] || '').split(',')[0];
+    const mapped = await resolveCustomDomain(host);
+    if (!mapped?.projectId) {
+      return res.status(404).json({ error: 'Domínio não mapeado.', host });
+    }
+    const projectSnap = await db.collection('projects').doc(mapped.projectId).get();
+    const project = projectSnap.exists ? projectSnap.data() || {} : {};
+    const publicKey = resolveProjectPublicKey(project, mapped.projectId);
+    res.json({
+      ok: true,
+      host: mapped.host,
+      projectId: mapped.projectId,
+      slug: publicKey,
+      verified: mapped.verified,
+      path: `/p/${publicKey}`,
+    });
+  } catch (err) {
+    console.error('[deploy/resolve-host]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao resolver domínio.' });
+  }
+});
+
+/** PUT /api/deploy/custom-domain — claim/clear domain for project */
+router.put('/custom-domain', requireAuth, async (req, res) => {
+  try {
+    const { projectId, host } = req.body || {};
+    if (!projectId) return res.status(400).json({ error: 'projectId é obrigatório.' });
+    await assertProjectOwner(projectId, req.user.uid);
+
+    const trimmed = String(host || '').trim();
+    if (!trimmed) {
+      await clearCustomDomain({ projectId });
+      return res.json({ ok: true, cleared: true });
+    }
+
+    const result = await claimCustomDomain({
+      projectId,
+      ownerId: req.user.uid,
+      host: trimmed,
+    });
+    res.json({
+      ok: true,
+      ...result,
+      dns: domainDnsInstructions({
+        host: result.host,
+        verificationToken: result.verificationToken,
+      }),
+    });
+  } catch (err) {
+    console.error('[deploy/custom-domain]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha ao guardar domínio.',
+      code: err.code,
+    });
+  }
+});
+
+/** GET /api/deploy/custom-domain/:projectId — status + DNS instructions */
+router.get('/custom-domain/:projectId', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { project } = await assertProjectOwner(projectId, req.user.uid);
+    const host = String(project.customDomain || '').trim().toLowerCase();
+    if (!host) {
+      return res.json({
+        ok: true,
+        host: null,
+        verified: false,
+        platformHosts: [...PLATFORM_HOSTS],
+      });
+    }
+    const token = String(project.customDomainToken || '').trim();
+    res.json({
+      ok: true,
+      host,
+      verified: Boolean(project.customDomainVerified),
+      verificationToken: token || null,
+      dns: token
+        ? domainDnsInstructions({ host, verificationToken: token })
+        : null,
+      cnameTarget: 'gocreate.web.app',
+    });
+  } catch (err) {
+    console.error('[deploy/custom-domain/get]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao ler domínio.' });
+  }
+});
+
+/** POST /api/deploy/custom-domain/verify — check TXT DNS */
+router.post('/custom-domain/verify', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.body || {};
+    if (!projectId) return res.status(400).json({ error: 'projectId é obrigatório.' });
+    await assertProjectOwner(projectId, req.user.uid);
+    const result = await verifyCustomDomainDns({ projectId });
+    res.json(result);
+  } catch (err) {
+    console.error('[deploy/custom-domain/verify]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Verificação DNS falhou.',
+      code: err.code,
+      details: err.details,
+    });
+  }
+});
 
 export default router;

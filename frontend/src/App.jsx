@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
@@ -16,6 +16,14 @@ import Automations from './pages/Automations';
 import Entities from './pages/Entities';
 import Admin from './pages/Admin';
 import PublicPreview from './pages/PublicPreview';
+import { resolveCustomHost } from './lib/deployApi';
+
+const PLATFORM_HOSTS = new Set([
+  'gocreate.web.app',
+  'gocreate.firebaseapp.com',
+  'localhost',
+  '127.0.0.1',
+]);
 
 function NeutralSpinner() {
   return (
@@ -23,6 +31,49 @@ function NeutralSpinner() {
       <Loader2 size={28} className="text-zinc-400 animate-spin" aria-label="A carregar" />
     </div>
   );
+}
+
+/** If visitor opens a mapped custom domain, redirect to /p/{slug}. */
+function CustomDomainRedirect({ children }) {
+  const location = useLocation();
+  const [state, setState] = useState({ loading: true, path: null });
+
+  useEffect(() => {
+    const host = (typeof window !== 'undefined' ? window.location.hostname : '').toLowerCase();
+    if (
+      !host ||
+      PLATFORM_HOSTS.has(host) ||
+      host.endsWith('.web.app') ||
+      host.endsWith('.firebaseapp.com')
+    ) {
+      setState({ loading: false, path: null });
+      return undefined;
+    }
+    if (location.pathname.startsWith('/p/')) {
+      setState({ loading: false, path: null });
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const mapped = await resolveCustomHost(host);
+        if (!cancelled && mapped?.path) {
+          setState({ loading: false, path: mapped.path });
+          return;
+        }
+      } catch {
+        /* not mapped */
+      }
+      if (!cancelled) setState({ loading: false, path: null });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.pathname]);
+
+  if (state.loading) return <NeutralSpinner />;
+  if (state.path) return <Navigate to={state.path} replace />;
+  return children;
 }
 
 function PublicOnly({ children }) {
@@ -57,57 +108,59 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route
-        path="/login"
-        element={
-          <PublicOnly>
-            <Login />
-          </PublicOnly>
-        }
-      />
-      <Route
-        path="/register"
-        element={
-          <PublicOnly>
-            <Register />
-          </PublicOnly>
-        }
-      />
+    <CustomDomainRedirect>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route
+          path="/login"
+          element={
+            <PublicOnly>
+              <Login />
+            </PublicOnly>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <PublicOnly>
+              <Register />
+            </PublicOnly>
+          }
+        />
 
-      <Route
-        element={
-          <ProtectedRoute>
-            <AppLayout />
-          </ProtectedRoute>
-        }
-      >
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/integrations" element={<Integrations />} />
-        <Route path="/automations" element={<Automations />} />
-        <Route path="/entities" element={<Entities />} />
-        <Route path="/database" element={<Entities />} />
-        <Route path="/admin" element={<Admin />} />
-      </Route>
+        <Route
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/integrations" element={<Integrations />} />
+          <Route path="/automations" element={<Automations />} />
+          <Route path="/entities" element={<Entities />} />
+          <Route path="/database" element={<Entities />} />
+          <Route path="/admin" element={<Admin />} />
+        </Route>
 
-      <Route
-        path="/editor/:projectId"
-        element={
-          <ProtectedRoute>
-            <Editor />
-          </ProtectedRoute>
-        }
-      />
+        <Route
+          path="/editor/:projectId"
+          element={
+            <ProtectedRoute>
+              <Editor />
+            </ProtectedRoute>
+          }
+        />
 
-      {/* Public share links — no auth required */}
-      <Route path="/p/:projectId/preview" element={<PublicPreview />} />
-      <Route path="/p/:projectId" element={<PublicPreview />} />
+        {/* Public share links — no auth required */}
+        <Route path="/p/:projectId/preview" element={<PublicPreview />} />
+        <Route path="/p/:projectId" element={<PublicPreview />} />
 
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </CustomDomainRedirect>
   );
 }
 
