@@ -52,6 +52,7 @@ export async function streamChat({
   attachmentUrl = null,
   attachmentResourceType = null,
   attachmentMimeType = null,
+  wiringPrompt = null,
   idToken,
   onChunk,
   onHeartbeat,
@@ -78,6 +79,7 @@ export async function streamChat({
       attachmentUrl,
       attachmentResourceType,
       attachmentMimeType,
+      ...(wiringPrompt ? { wiringPrompt: String(wiringPrompt).slice(0, 2000) } : {}),
     }),
     signal,
   });

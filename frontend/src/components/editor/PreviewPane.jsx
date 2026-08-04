@@ -265,6 +265,7 @@ export default function PreviewPane({
   publicMode = false,
   projectId = null,
   backendEnabled = false,
+  projectAuth = null,
   authAccess = null,
   runtimeEnv = null,
   entitiesOnly = false,
@@ -317,12 +318,13 @@ export default function PreviewPane({
     if (!sandpackFiles) return 'empty';
     const depsKey = Object.keys(dependencies).sort().join(',');
     const beKey = backendEnabled ? 'be1' : 'be0';
+    const authKey = `${projectAuth?.googleEnabled ? 'g1' : 'g0'}:${projectAuth?.googleMode || 'd'}`;
     const envKey = Object.keys(effectiveEnv).sort().join(',');
-    return `${depsKey}::${projectId || ''}::${beKey}::${envKey}::${Object.entries(sandpackFiles)
+    return `${depsKey}::${projectId || ''}::${beKey}::${authKey}::${envKey}::${Object.entries(sandpackFiles)
       .map(([path, entry]) => `${path}:${(entry?.code || '').length}:${(entry?.code || '').slice(0, 48)}`)
       .sort()
       .join('|')}`;
-  }, [sandpackFiles, dependencies, projectId, backendEnabled, effectiveEnv]);
+  }, [sandpackFiles, dependencies, projectId, backendEnabled, projectAuth, effectiveEnv]);
 
   const apiBase =
     typeof window !== 'undefined'
@@ -354,9 +356,18 @@ export default function PreviewPane({
           }
         : null
     );
+    const googleEnabled = Boolean(projectAuth?.googleEnabled);
+    const googleMode = projectAuth?.googleMode === 'custom' ? 'custom' : 'default';
+    const googleAuthEnabled = Boolean(backendEnabled) && googleEnabled;
+    const authFlags = JSON.stringify({
+      googleEnabled,
+      googleMode,
+      emailPasswordEnabled: Boolean(projectAuth?.emailPasswordEnabled),
+      googleAuthEnabled,
+    });
     const envJson = JSON.stringify(effectiveEnv || {});
-    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};window.__GOCREATE_AUTH_ACCESS__=${access};window.__GOCREATE_ENV__=${envJson};try{window.process=window.process||{};window.process.env=Object.assign({},window.process.env||{},${envJson});}catch(e){}`;
-  }, [projectId, apiBase, backendEnabled, authAccess, effectiveEnv]);
+    return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};window.__GOCREATE_AUTH_ACCESS__=${access};window.__GOCREATE_AUTH__=${authFlags};window.__GOCREATE_ENV__=${envJson};try{window.process=window.process||{};window.process.env=Object.assign({},window.process.env||{},${envJson});}catch(e){}`;
+  }, [projectId, apiBase, backendEnabled, authAccess, projectAuth, effectiveEnv]);
 
   const shellClass = publicMode
     ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'

@@ -40,6 +40,8 @@ const FILES = [
   'services/entities.js',
   'services/projectApiKeys.js',
   'services/authAccess.js',
+  'services/projectAuth.js',
+  'services/orchestrate.js',
   'services/evolution.js',
   'services/meta.js',
   'services/suggestIntegrations.js',

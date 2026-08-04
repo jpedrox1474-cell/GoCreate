@@ -20,6 +20,7 @@ export default function WorkspacePanel({
   onRequestUi = null,
   projectId = null,
   backendEnabled = false,
+  projectAuth = null,
   authAccess = null,
   canEditCode = false,
   onChangeFile = null,
@@ -130,6 +131,7 @@ export default function WorkspacePanel({
               onRequestUi={onRequestUi}
               projectId={projectId}
               backendEnabled={backendEnabled}
+              projectAuth={projectAuth}
               authAccess={authAccess}
             />
           </div>

@@ -194,6 +194,9 @@ async function publishHandler(req, res) {
       // Free / no paid plan → badge "Feito com GoCreate" (signup). Pro/Owner pode esconder.
       showBadge: !isProLike,
       backendEnabled: Boolean(project.backendEnabled),
+      auth: project.auth || { googleEnabled: false, googleMode: 'default', emailPasswordEnabled: false },
+      googleAuthEnabled:
+        Boolean(project.backendEnabled) && Boolean(project.auth?.googleEnabled),
       customDomain: project.customDomain || '',
       customDomainVerified: Boolean(project.customDomainVerified),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

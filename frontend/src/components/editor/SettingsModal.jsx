@@ -12,11 +12,17 @@ import {
   Shield,
   X,
   Plus,
+  KeyRound,
+  LayoutTemplate,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
 import { updateProjectSettings, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
 import { checkSlugAvailability, updateProjectSlug, updateCustomDomain, verifyCustomDomain, getCustomDomainStatus } from '../../lib/deployApi';
-import { enableProjectBackend } from '../../lib/projectsApi';
+import {
+  enableProjectBackend,
+  updateProjectAuth,
+  AUTH_WIRING_PROMPT_DEFAULT,
+} from '../../lib/projectsApi';
 import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../../lib/userSettings';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -36,6 +42,7 @@ export default function SettingsModal({
   projectId,
   onProjectUpdated,
   onToast,
+  onAddAuthToPages,
   readOnly = false,
   canManageCollaborators = true,
 }) {
@@ -62,6 +69,17 @@ export default function SettingsModal({
   const [domainDns, setDomainDns] = useState(null);
   const [domainVerified, setDomainVerified] = useState(Boolean(project?.customDomainVerified));
   const [domainBusy, setDomainBusy] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(Boolean(project?.auth?.googleEnabled));
+  const [googleMode, setGoogleMode] = useState(
+    project?.auth?.googleMode === 'custom' ? 'custom' : 'default'
+  );
+  const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(
+    Boolean(project?.auth?.emailPasswordEnabled)
+  );
+  const [googleClientId, setGoogleClientId] = useState('');
+  const [googleClientSecret, setGoogleClientSecret] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [wiringBusy, setWiringBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -80,6 +98,11 @@ export default function SettingsModal({
         : []
     );
     setInviteDraft('');
+    setGoogleEnabled(Boolean(project?.auth?.googleEnabled));
+    setGoogleMode(project?.auth?.googleMode === 'custom' ? 'custom' : 'default');
+    setEmailPasswordEnabled(Boolean(project?.auth?.emailPasswordEnabled));
+    setGoogleClientId('');
+    setGoogleClientSecret('');
     const s = getUserSettings();
     setThemeLocal(s.theme || preference);
     setNotifications(s.notifications);
@@ -93,6 +116,9 @@ export default function SettingsModal({
     project?.backendEnabled,
     project?.authAccess?.mode,
     project?.authAccess?.invitedEmails,
+    project?.auth?.googleEnabled,
+    project?.auth?.googleMode,
+    project?.auth?.emailPasswordEnabled,
     projectId,
     preference,
   ]);
@@ -193,6 +219,90 @@ export default function SettingsModal({
       onToast?.({ message: err?.message || 'Não foi possível ativar o Backend.', type: 'error' });
     } finally {
       setBackendBusy(false);
+    }
+  }
+
+  async function handleSaveAuth() {
+    if (!projectId || !user?.getIdToken || readOnly) return false;
+    if (googleEnabled && !backendEnabled) {
+      onToast?.({
+        message: 'Ativa Backend Functions antes de ligar Google Auth.',
+        type: 'error',
+      });
+      return false;
+    }
+    if (googleEnabled && googleMode === 'custom' && !googleClientId.trim()) {
+      // Allow keep-existing if already custom
+      if (project?.auth?.googleMode !== 'custom') {
+        onToast?.({ message: 'Custom OAuth requer Google Client ID.', type: 'error' });
+        return false;
+      }
+    }
+    setAuthBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const body = {
+        googleEnabled,
+        googleMode,
+        emailPasswordEnabled,
+        keepExistingCredentials: googleMode === 'custom' && !googleClientId.trim(),
+      };
+      if (googleClientId.trim()) body.googleClientId = googleClientId.trim();
+      if (googleClientSecret.trim()) body.googleClientSecret = googleClientSecret.trim();
+      const result = await updateProjectAuth({ projectId, idToken, ...body });
+      const nextAuth = result.auth || {
+        googleEnabled,
+        googleMode,
+        emailPasswordEnabled,
+      };
+      onProjectUpdated?.({ ...project, auth: nextAuth, backendEnabled });
+      setGoogleClientId('');
+      setGoogleClientSecret('');
+      onToast?.({ message: 'Authentication guardada.', type: 'success' });
+      return true;
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha ao guardar Authentication.', type: 'error' });
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleAddAuthToPages() {
+    if (!projectId || !googleEnabled || !backendEnabled) {
+      onToast?.({
+        message: 'Ativa Backend + Google Auth antes de adicionar às páginas.',
+        type: 'error',
+      });
+      return;
+    }
+    setWiringBusy(true);
+    try {
+      const needsSave =
+        !project?.auth?.googleEnabled ||
+        project?.auth?.googleMode !== googleMode ||
+        Boolean(project?.auth?.emailPasswordEnabled) !== emailPasswordEnabled ||
+        Boolean(googleClientId.trim()) ||
+        Boolean(googleClientSecret.trim());
+      if (needsSave) {
+        const ok = await handleSaveAuth();
+        if (!ok) return;
+      }
+      const prompt =
+        AUTH_WIRING_PROMPT_DEFAULT +
+        (googleMode === 'custom'
+          ? ' Modo Custom OAuth (Client ID em secrets; nunca Client Secret no código).'
+          : ' Modo Default GoCreate OAuth.');
+      onClose?.();
+      onAddAuthToPages?.(prompt);
+      onToast?.({
+        message: 'A ligar Google Login nas páginas via IA…',
+        type: 'success',
+      });
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha ao iniciar wiring.', type: 'error' });
+    } finally {
+      setWiringBusy(false);
     }
   }
 
@@ -467,6 +577,194 @@ async function handleSave(e) {
           ) : (
             <p className="text-[11px] text-zinc-500">Só o dono gere colaboradores.</p>
           )}
+        </section>
+
+        <section className="space-y-2 pt-1 border-t border-zinc-800/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
+            Authentication
+          </p>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-md bg-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                <KeyRound size={14} className="text-violet-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-zinc-200">Login no app gerado</p>
+                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  Estilo Base44: ativa Google no painel, depois “Adicionar às páginas” para a IA
+                  ligar o botão nas rotas Login/Register. Requer Backend Functions.
+                </p>
+              </div>
+            </div>
+
+            {!backendEnabled ? (
+              <p className="text-[11px] text-amber-400/90 leading-relaxed">
+                Backend desligado — Login/Register não aparecem como ligados até ativares Funções
+                de Backend abaixo.
+              </p>
+            ) : googleEnabled ? (
+              <div className="inline-flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                <CheckCircle2 size={14} />
+                Google Auth ativo ({googleMode === 'custom' ? 'Custom OAuth' : 'GoCreate OAuth'})
+              </div>
+            ) : (
+              <p className="text-[11px] text-zinc-600">Google Auth desligado neste projeto.</p>
+            )}
+
+            <label className="flex items-center justify-between gap-4 p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 cursor-pointer">
+              <div>
+                <p className="text-xs font-medium text-zinc-200">Google Authentication</p>
+                <p className="text-[10px] text-zinc-500">Sign in with Google via GoCreateAuth</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={googleEnabled}
+                disabled={!projectId || readOnly}
+                onClick={() => {
+                  if (!backendEnabled && !googleEnabled) {
+                    onToast?.({
+                      message: 'Ativa Backend Functions primeiro.',
+                      type: 'error',
+                    });
+                    return;
+                  }
+                  setGoogleEnabled((v) => !v);
+                }}
+                className={`relative w-10 h-6 rounded-full transition-all shrink-0 disabled:opacity-40 ${
+                  googleEnabled ? 'bg-violet-600' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-all ${
+                    googleEnabled ? 'translate-x-4' : ''
+                  }`}
+                />
+              </button>
+            </label>
+
+            <label className="flex items-center justify-between gap-4 p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 cursor-pointer">
+              <div>
+                <p className="text-xs font-medium text-zinc-200">Email / Password</p>
+                <p className="text-[10px] text-zinc-500">Flag para UI gerada (parcial)</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={emailPasswordEnabled}
+                disabled={!projectId || readOnly}
+                onClick={() => setEmailPasswordEnabled((v) => !v)}
+                className={`relative w-10 h-6 rounded-full transition-all shrink-0 disabled:opacity-40 ${
+                  emailPasswordEnabled ? 'bg-violet-600' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-all ${
+                    emailPasswordEnabled ? 'translate-x-4' : ''
+                  }`}
+                />
+              </button>
+            </label>
+
+            {googleEnabled ? (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Modo OAuth
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={!projectId || readOnly}
+                    onClick={() => setGoogleMode('default')}
+                    className={`text-left px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 ${
+                      googleMode === 'default'
+                        ? 'bg-violet-600/15 border-violet-500/40 text-violet-300'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <p className="text-xs font-semibold">Default GoCreate OAuth</p>
+                    <p className="text-[10px] opacity-80 mt-0.5">
+                      Rápido — consentimento no domínio GoCreate / Firebase
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!projectId || readOnly}
+                    onClick={() => setGoogleMode('custom')}
+                    className={`text-left px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 ${
+                      googleMode === 'custom'
+                        ? 'bg-violet-600/15 border-violet-500/40 text-violet-300'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <p className="text-xs font-semibold">Custom OAuth</p>
+                    <p className="text-[10px] opacity-80 mt-0.5">
+                      Cola Client ID + Secret (encriptados; nunca no código)
+                    </p>
+                  </button>
+                </div>
+
+                {googleMode === 'custom' ? (
+                  <div className="space-y-2 pt-1">
+                    <input
+                      type="text"
+                      value={googleClientId}
+                      onChange={(e) => setGoogleClientId(e.target.value)}
+                      disabled={readOnly}
+                      placeholder="Google Client ID"
+                      className="w-full bg-zinc-950 border border-zinc-800 focus:border-violet-500 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none font-mono disabled:opacity-50"
+                      autoComplete="off"
+                    />
+                    <input
+                      type="password"
+                      value={googleClientSecret}
+                      onChange={(e) => setGoogleClientSecret(e.target.value)}
+                      disabled={readOnly}
+                      placeholder="Google Client Secret"
+                      className="w-full bg-zinc-950 border border-zinc-800 focus:border-violet-500 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none font-mono disabled:opacity-50"
+                      autoComplete="new-password"
+                    />
+                    <p className="text-[10px] text-zinc-600">
+                      Guardados em envSecrets (AES). O Secret nunca entra no Sandpack nem no
+                      runtime do browser.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                disabled={!projectId || authBusy || readOnly}
+                onClick={() => void handleSaveAuth()}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-800 disabled:text-zinc-600 rounded-lg transition-all"
+              >
+                {authBusy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Guardar Authentication
+              </button>
+              <button
+                type="button"
+                disabled={
+                  !projectId ||
+                  !googleEnabled ||
+                  !backendEnabled ||
+                  wiringBusy ||
+                  readOnly ||
+                  !onAddAuthToPages
+                }
+                onClick={() => void handleAddAuthToPages()}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-violet-200 bg-violet-600/20 border border-violet-500/30 hover:bg-violet-600/30 disabled:opacity-40 rounded-lg transition-all"
+              >
+                {wiringBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <LayoutTemplate size={14} />
+                )}
+                Adicionar às páginas
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">

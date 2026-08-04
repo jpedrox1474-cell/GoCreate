@@ -117,3 +117,51 @@ export async function getProjectBackendStatus({ projectId, idToken }) {
   }
   return data;
 }
+
+/**
+ * Update project Authentication flags (+ optional custom OAuth credentials).
+ * Client Secret is stored encrypted server-side — never returned in plaintext.
+ */
+export async function updateProjectAuth({ projectId, idToken, ...body }) {
+  const res = await fetch(apiUrl(`/${encodeURIComponent(projectId)}/auth`), {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `Falha ao guardar auth (${res.status})`);
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Apply STRICT JSON orchestration payload (auth flags, create_entity, …).
+ */
+export async function orchestrateProject({ projectId, idToken, payload }) {
+  const res = await fetch(apiUrl(`/${encodeURIComponent(projectId)}/orchestrate`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `Falha na orquestração (${res.status})`);
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
+  }
+  return data;
+}
+
+export const AUTH_WIRING_PROMPT_DEFAULT =
+  'O utilizador ativou Google Login. Conecta o provedor de autenticação nas rotas e adiciona o botão Sign in with Google na tela de Login/Register usando GoCreateAuth / flags do projeto (window.__GOCREATE_AUTH__). NÃO inventes Client Secret.';

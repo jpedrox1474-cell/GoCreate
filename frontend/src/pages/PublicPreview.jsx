@@ -91,6 +91,17 @@ export default function PublicPreview() {
     ownerEmail: liveRuntime?.ownerEmail || publication?.ownerEmail || null,
   };
 
+  const projectAuth =
+    liveRuntime?.auth && typeof liveRuntime.auth === 'object'
+      ? liveRuntime.auth
+      : publication?.auth && typeof publication.auth === 'object'
+        ? publication.auth
+        : {
+            googleEnabled: Boolean(liveRuntime?.googleAuthEnabled || publication?.googleAuthEnabled),
+            googleMode: 'default',
+            emailPasswordEnabled: false,
+          };
+
   const runtimeEnv =
     liveRuntime?.env && typeof liveRuntime.env === 'object' ? liveRuntime.env : null;
 
@@ -130,6 +141,7 @@ export default function PublicPreview() {
         publicMode
         projectId={runtimeProjectId}
         backendEnabled={backendEnabled}
+        projectAuth={projectAuth}
         authAccess={authAccess}
         runtimeEnv={runtimeEnv}
       />

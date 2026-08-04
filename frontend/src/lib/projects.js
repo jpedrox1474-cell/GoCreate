@@ -112,6 +112,11 @@ export function mapProjectDoc(d) {
       ? data.collaboratorEditorEmails.map((e) => String(e || '').trim().toLowerCase())
       : [],
     authAccess,
+    auth: {
+      googleEnabled: Boolean(data.auth?.googleEnabled),
+      googleMode: data.auth?.googleMode === 'custom' ? 'custom' : 'default',
+      emailPasswordEnabled: Boolean(data.auth?.emailPasswordEnabled),
+    },
     createdAt: data.createdAt,
     updatedAt: data.updatedAt || data.createdAt,
     updatedAtLabel: formatRelativeTime(data.updatedAt || data.createdAt),
@@ -146,6 +151,7 @@ export async function createProject(uid, { name = 'Novo Projeto', description = 
     ownerId: uid,
     ownerEmail: email,
     authAccess: { mode: 'owner_only', invitedEmails: [] },
+    auth: { googleEnabled: false, googleMode: 'default', emailPasswordEnabled: false },
     name,
     description: description || 'Projeto criado com GoCreate',
     status: 'draft',

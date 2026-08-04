@@ -105,24 +105,84 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
       console.warn('[api/chat] integrations addon:', intErr?.message);
     }
 
-    // Estado Backend Functions deste projeto — força GoCreateData quando ativo
+    // Estado Backend + Auth deste projeto
     try {
       const projectSnap = await db.collection('projects').doc(projectId).get();
       if (projectSnap.exists) {
-        const be = Boolean(projectSnap.data()?.backendEnabled);
+        const pdata = projectSnap.data() || {};
+        const be = Boolean(pdata.backendEnabled);
+        const { normalizeProjectAuth, publicProjectAuthPayload } = await import(
+          '../services/projectAuth.js'
+        );
+        const auth = normalizeProjectAuth(pdata.auth);
+        const authPublic = publicProjectAuthPayload(pdata);
+
         systemPrompt += `
 
 ## Estado deste projeto GoCreate
 - backendEnabled: ${be ? 'true' : 'false'}
+- auth.googleEnabled: ${auth.googleEnabled ? 'true' : 'false'}
+- auth.googleMode: ${auth.googleMode}
+- googleAuthEnabled (backend+flag): ${authPublic.googleAuthEnabled ? 'true' : 'false'}
 ${
   be
     ? `- Backend JÁ está ativo. Qualquer lista/CRUD/formulário DEVE usar window.GoCreateData (create/list/update/remove). NÃO uses useState/localStorage como base de dados.`
     : `- Backend ainda desligado. Para persistência real, o utilizador deve ativar Funções de Backend. Podes gerar código com GoCreateData (mostra CTA se BACKEND_REQUIRED); useState só como rascunho UI se a API falhar com BACKEND_REQUIRED.`
 }
+${
+  authPublic.googleAuthEnabled
+    ? `- Google Auth ATIVO: mostra botão "Continuar com Google" via window.GoCreateAuth; respeita window.__GOCREATE_AUTH__.googleAuthEnabled.`
+    : `- Google Auth OFF ou Backend off: NÃO mostres Login/Register Google como "ligado". Se o user pedir login Google, indica Configurações → Authentication (ou usa o motor de orquestração).`
+}
 `;
       }
     } catch (beErr) {
-      console.warn('[api/chat] backendEnabled hint:', beErr?.message);
+      console.warn('[api/chat] project state hint:', beErr?.message);
+    }
+
+    // Intent → orchestrate JSON (auth / entities) before free-form codegen
+    try {
+      const { detectOrchestrateIntent, applyOrchestrate } = await import(
+        '../services/orchestrate.js'
+      );
+      const intent = detectOrchestrateIntent(lastUserText);
+      if (intent) {
+        const projectSnap = await db.collection('projects').doc(projectId).get();
+        if (projectSnap.exists) {
+          const orchestrateResult = await applyOrchestrate(
+            projectId,
+            projectSnap.data() || {},
+            intent
+          );
+          if (orchestrateResult?.wiringPrompt) {
+            systemPrompt += `
+
+## Auth wiring (pedido do utilizador / orquestração)
+${orchestrateResult.wiringPrompt}
+`;
+          }
+          if (orchestrateResult?.ai_response_to_user) {
+            systemPrompt += `
+
+## Resultado da orquestração (já aplicado no backend — NÃO inventes API keys)
+- ${orchestrateResult.ai_response_to_user}
+- applied: ${(orchestrateResult.applied || []).join(', ')}
+- Responde em UMA linha curta confirmando; se houver wiring de UI auth, gera o artefacto React com o botão Google.
+`;
+          }
+        }
+      }
+    } catch (orchErr) {
+      console.warn('[api/chat] orchestrate intent:', orchErr?.message);
+    }
+
+    // Explicit wiring flag from "Add to pages" button
+    if (req.body?.wiringPrompt && typeof req.body.wiringPrompt === 'string') {
+      systemPrompt += `
+
+## Auth wiring (pedido do utilizador)
+${String(req.body.wiringPrompt).slice(0, 2000)}
+`;
     }
 
     const result = await streamGeminiChat({

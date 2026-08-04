@@ -12,6 +12,8 @@
  *   window.__GOCREATE_PROJECT_ID__      — project id (scoped auth)
  *   window.__GOCREATE_API_BASE__        — API origin for auth-check
  *   window.__GOCREATE_AUTH_ACCESS__     — optional cached { mode, invitedEmails, ownerEmail, ownerId }
+ *   window.__GOCREATE_AUTH__            — { googleEnabled, googleMode, googleAuthEnabled, emailPasswordEnabled }
+ *   window.__GOCREATE_BACKEND_ENABLED__ — backend functions unlocked
  */
 (function (global) {
   if (global.GoCreateAuth) return;
@@ -105,6 +107,8 @@
         'Login Google indisponível neste preview. Abre o app no GoCreate (preview ou URL publicado).',
       BRIDGE_ERROR: 'Não foi possível autenticar com Google. Tenta novamente.',
       AUTH_ACCESS_DENIED: AUTH_DENIED,
+      GOOGLE_AUTH_DISABLED:
+        'Google Login está desativado neste projeto. Ativa Authentication + Backend nas Configurações do GoCreate.',
     };
     var message = map[code] || (err && err.message) || 'Erro ao autenticar com Google.';
     if (message === AUTH_DENIED || /Sem permissão para aceder/i.test(String(message))) {
@@ -339,8 +343,39 @@
     return user;
   }
 
+  function isGoogleAuthEnabled() {
+    var flags = global.__GOCREATE_AUTH__;
+    if (flags && typeof flags === 'object' && flags.googleAuthEnabled === false) {
+      return false;
+    }
+    if (flags && typeof flags === 'object' && flags.googleEnabled === false) {
+      return false;
+    }
+    // If flags missing (legacy apps), allow Google when backend not explicitly off
+    if (global.__GOCREATE_BACKEND_ENABLED__ === false && flags && flags.googleEnabled !== true) {
+      return false;
+    }
+    return true;
+  }
+
+  function googleDisabledError() {
+    var err = new Error(
+      'Google Login está desativado neste projeto. Ativa Authentication + Backend nas Configurações do GoCreate.'
+    );
+    err.code = 'GOOGLE_AUTH_DISABLED';
+    return err;
+  }
+
   global.GoCreateAuth = {
+    isGoogleEnabled: isGoogleAuthEnabled,
+    getAuthFlags: function () {
+      var flags = global.__GOCREATE_AUTH__;
+      return flags && typeof flags === 'object' ? flags : null;
+    },
     signInWithGoogle: function () {
+      if (!isGoogleAuthEnabled()) {
+        return Promise.reject(googleDisabledError());
+      }
       if (isInIframe()) {
         return signInViaParentBridge().catch(function (err) {
           throw friendlyAuthError(err);
@@ -417,6 +452,6 @@
     },
     /** @deprecated internal */
     _isInIframe: isInIframe,
-    version: '1.2.0',
+    version: '1.3.0',
   };
 })(typeof window !== 'undefined' ? window : globalThis);

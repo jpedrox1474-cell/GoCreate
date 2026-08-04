@@ -150,13 +150,16 @@ ${
 ### Login Google / Firebase Auth (plataforma)
 - Ligado via GoCreate (Firebase Google provider) — SEM Client Secret do utilizador.
 - SEMPRE use \`window.GoCreateAuth.signInWithGoogle()\`, \`onAuthStateChanged\`, \`signOut\`, \`getCurrentUser\`.
+- Respeita \`window.__GOCREATE_AUTH__.googleAuthEnabled\` — se false, não mostres o botão como ligado.
 - Em preview Sandpack (iframe), GoCreateAuth faz bridge para a janela pai — NÃO uses Firebase Auth npm / signInWithPopup no iframe.
 - Erros: mostra mensagem amigável em PT (err.message do bridge).
-- NÃO peça nem invente OAuth Client ID/Secret; NÃO embuta firebaseConfig manualmente.`);
+- NÃO peça nem invente OAuth Client ID/Secret; NÃO embuta firebaseConfig manualmente.
+- Auth/entidades: preferir painel Authentication + orquestração JSON no backend.`);
   } else {
     lines.push(`
 ### Login Google / Firebase Auth
-- Mesmo sem BYO: a plataforma injeta \`window.GoCreateAuth\` — use-o para qualquer “login com Google” (bridge iframe → parent).`);
+- Mesmo sem BYO: a plataforma injeta \`window.GoCreateAuth\` — use-o para qualquer “login com Google” (bridge iframe → parent).
+- Só mostre como ligado se \`window.__GOCREATE_AUTH__.googleAuthEnabled\` for true (Backend + flag do projeto).`);
   }
 
   if (userIntegrations.stripe?.connected) {

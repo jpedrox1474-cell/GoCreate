@@ -632,7 +632,7 @@ export default function Editor() {
   }, []);
 
   const sendMessageText = useCallback(
-    async (userText, { askFix = false, isContinue = false } = {}) => {
+    async (userText, { askFix = false, isContinue = false, wiringPrompt = null } = {}) => {
       if (!userText?.trim() || isGenerating || !user) return;
       if (projectMeta && !canEditProject(resolveClientProjectRole(projectMeta, user))) {
         setToast({
@@ -728,6 +728,7 @@ export default function Editor() {
           attachmentUrl: currentAttachment?.url || null,
           attachmentResourceType: currentAttachment?.resourceType || null,
           attachmentMimeType: currentAttachment?.mimeType || null,
+          wiringPrompt: wiringPrompt || null,
           idToken,
           signal: controller.signal,
           onSuggestedIntegrations: (ids) => {
@@ -1877,6 +1878,7 @@ export default function Editor() {
           onRequestUi={handleRequestUi}
           projectId={firestoreId}
           backendEnabled={Boolean(projectMeta?.backendEnabled)}
+          projectAuth={projectMeta?.auth || null}
           authAccess={{
             mode: projectMeta?.authAccess?.mode === 'invited' ? 'invited' : 'owner_only',
             invitedEmails: Array.isArray(projectMeta?.authAccess?.invitedEmails)
@@ -1929,6 +1931,9 @@ export default function Editor() {
         projectId={firestoreId}
         onProjectUpdated={handleProjectUpdated}
         onToast={setToast}
+        onAddAuthToPages={(prompt) => {
+          void sendMessageTextRef.current?.(prompt, { wiringPrompt: prompt });
+        }}
         readOnly={!isProjectOwner && isReadOnly}
         canManageCollaborators={isProjectOwner}
       />

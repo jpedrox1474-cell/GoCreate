@@ -20,6 +20,16 @@ import {
   publicAuthAccessPayload,
 } from '../services/authAccess.js';
 import {
+  mergeProjectAuth,
+  normalizeProjectAuth,
+  publicProjectAuthPayload,
+  buildAuthWiringPrompt,
+  isClientSafeEnvSecretKey,
+  GOOGLE_OAUTH_CLIENT_ID_KEY,
+  GOOGLE_OAUTH_CLIENT_SECRET_KEY,
+} from '../services/projectAuth.js';
+import { applyOrchestrate } from '../services/orchestrate.js';
+import {
   createProjectApiKey,
   listProjectApiKeys,
   revokeProjectApiKey,
@@ -293,6 +303,160 @@ router.put('/:projectId/auth-access', requireAuth, async (req, res) => {
 });
 
 /**
+ * GET /api/projects/:projectId/auth — project auth feature flags (owner/editor).
+ */
+router.get('/:projectId/auth', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { project } = await assertOwnerOrEditor(projectId, req.user.uid, req.user.email);
+    const auth = normalizeProjectAuth(project.auth);
+    const payload = publicProjectAuthPayload(project);
+    res.json({
+      ok: true,
+      auth,
+      backendEnabled: Boolean(project.backendEnabled),
+      ...payload,
+      wiringPrompt: auth.googleEnabled
+        ? buildAuthWiringPrompt({ googleMode: auth.googleMode })
+        : null,
+    });
+  } catch (err) {
+    console.error('[projects/auth/get]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao ler auth.' });
+  }
+});
+
+/**
+ * PUT /api/projects/:projectId/auth — update Google/Email auth flags (+ optional custom OAuth secrets).
+ * Body: { googleEnabled?, googleMode?, emailPasswordEnabled?, googleClientId?, googleClientSecret? }
+ * Secrets go to envSecrets (encrypted). Client Secret is never returned or injected into SPA runtime.
+ */
+router.put('/:projectId/auth', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { snap, project } = await assertOwnerOrEditor(projectId, req.user.uid, req.user.email);
+
+    const nextAuth = mergeProjectAuth(project.auth, {
+      googleEnabled: req.body?.googleEnabled,
+      googleMode: req.body?.googleMode,
+      emailPasswordEnabled: req.body?.emailPasswordEnabled,
+    });
+
+    // Custom mode requires Client ID (secret optional until custom OAuth runtime ships)
+    if (nextAuth.googleEnabled && nextAuth.googleMode === 'custom') {
+      const clientId = String(
+        req.body?.googleClientId || req.body?.clientId || ''
+      ).trim();
+      // Allow saving mode without re-pasting if secret already stored — check existing
+      if (!clientId && !req.body?.keepExistingCredentials) {
+        const existingId = await snap.ref
+          .collection('envSecrets')
+          .doc(GOOGLE_OAUTH_CLIENT_ID_KEY)
+          .get();
+        if (!existingId.exists) {
+          return res.status(400).json({
+            error: 'Custom OAuth requer Google Client ID.',
+            code: 'CUSTOM_OAUTH_CLIENT_ID_REQUIRED',
+          });
+        }
+      }
+    }
+
+    await snap.ref.set(
+      {
+        auth: nextAuth,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    const { encryptSecret, maskSecret } = await import('../services/secretsCrypto.js');
+    const secretsStored = [];
+
+    const clientId = String(req.body?.googleClientId || req.body?.clientId || '').trim();
+    const clientSecret = String(
+      req.body?.googleClientSecret || req.body?.clientSecret || ''
+    ).trim();
+
+    if (clientId) {
+      await snap.ref.collection('envSecrets').doc(GOOGLE_OAUTH_CLIENT_ID_KEY).set(
+        {
+          key: GOOGLE_OAUTH_CLIENT_ID_KEY,
+          value: encryptSecret(clientId),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      secretsStored.push({ key: GOOGLE_OAUTH_CLIENT_ID_KEY, masked: maskSecret(clientId) });
+    }
+    if (clientSecret) {
+      await snap.ref.collection('envSecrets').doc(GOOGLE_OAUTH_CLIENT_SECRET_KEY).set(
+        {
+          key: GOOGLE_OAUTH_CLIENT_SECRET_KEY,
+          value: encryptSecret(clientSecret),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      secretsStored.push({
+        key: GOOGLE_OAUTH_CLIENT_SECRET_KEY,
+        masked: maskSecret(clientSecret),
+      });
+    }
+
+    const authPayload = publicProjectAuthPayload({ ...project, auth: nextAuth });
+    for (const pubId of [projectId, `${projectId}_preview`]) {
+      const ref = db.collection('publicProjects').doc(pubId);
+      const pubSnap = await ref.get();
+      if (pubSnap.exists) {
+        await ref.set(
+          {
+            auth: authPayload.auth,
+            googleAuthEnabled: authPayload.googleAuthEnabled,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    res.json({
+      ok: true,
+      auth: nextAuth,
+      backendEnabled: Boolean(project.backendEnabled),
+      ...authPayload,
+      secretsStored,
+      wiringPrompt:
+        nextAuth.googleEnabled && Boolean(project.backendEnabled)
+          ? buildAuthWiringPrompt({ googleMode: nextAuth.googleMode })
+          : null,
+    });
+  } catch (err) {
+    console.error('[projects/auth/put]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao guardar auth.' });
+  }
+});
+
+/**
+ * POST /api/projects/:projectId/orchestrate — apply STRICT JSON action payloads.
+ * Whitelisted firestore paths only (project.auth, entities schema).
+ */
+router.post('/:projectId/orchestrate', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { project } = await assertOwnerOrEditor(projectId, req.user.uid, req.user.email);
+    const result = await applyOrchestrate(projectId, project, req.body || {});
+    res.json(result);
+  } catch (err) {
+    console.error('[projects/orchestrate]', err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Falha na orquestração.',
+      code: err.code || 'ORCHESTRATE_ERROR',
+    });
+  }
+});
+
+/**
  * GET /api/projects/:projectId/runtime — public hint for published / preview apps.
  * Returns live projects.backendEnabled (not the possibly-stale publicProjects snapshot).
  */
@@ -305,7 +469,7 @@ router.get('/:projectId/runtime', async (req, res) => {
     const { data: project } = await loadProjectOrThrow(projectId);
 
     // Inject project env secrets into published SPA runtime (Base44-style).
-    // Values are visible in the browser — use only for client-safe config.
+    // Values are visible in the browser — NEVER inject *_SECRET / Client Secret.
     const env = {};
     try {
       const { secretValueFromDoc } = await import('../services/secretsCrypto.js');
@@ -320,6 +484,7 @@ router.get('/:projectId/runtime', async (req, res) => {
           .trim()
           .toUpperCase()
           .replace(/[^A-Z0-9_]/g, '');
+        if (!isClientSafeEnvSecretKey(key)) return;
         try {
           const value = secretValueFromDoc(data);
           if (key && value !== '') env[key] = value;
@@ -331,6 +496,8 @@ router.get('/:projectId/runtime', async (req, res) => {
       console.warn('[projects/runtime] envSecrets:', envErr?.message);
     }
 
+    const authPayload = publicProjectAuthPayload(project);
+
     res.json({
       ok: true,
       projectId,
@@ -339,6 +506,7 @@ router.get('/:projectId/runtime', async (req, res) => {
       customDomain: project.customDomain || '',
       customDomainVerified: Boolean(project.customDomainVerified),
       ...publicAuthAccessPayload(project),
+      ...authPayload,
     });
   } catch (err) {
     console.error('[projects/runtime]', err);
