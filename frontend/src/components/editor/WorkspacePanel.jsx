@@ -1,5 +1,5 @@
 import React from 'react';
-import { Monitor, Code, Layout, Smartphone, Database } from 'lucide-react';
+import { Monitor, Code, Layout, Smartphone, Database, ExternalLink } from 'lucide-react';
 import PreviewPane from './PreviewPane';
 import CodeEditor from './CodeEditor';
 import EntitiesPanel from './EntitiesPanel';
@@ -23,7 +23,16 @@ export default function WorkspacePanel({
   authAccess = null,
   canEditCode = false,
   onChangeFile = null,
+  onSaveFile = null,
+  onRevertFile = null,
+  codeBaselines = null,
+  dirtyCodeFiles = null,
 }) {
+  function openPreviewTab() {
+    if (!projectId) return;
+    window.open(`/p/${projectId}/preview`, '_blank', 'noopener,noreferrer');
+  }
+
   return (
     <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 h-full overflow-hidden">
       <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-zinc-800 gap-2 shrink-0">
@@ -88,6 +97,15 @@ export default function WorkspacePanel({
             >
               <Smartphone size={14} />
             </button>
+            <button
+              type="button"
+              onClick={openPreviewTab}
+              disabled={!projectId}
+              className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 transition-all disabled:opacity-40"
+              title="Abrir preview numa nova aba"
+            >
+              <ExternalLink size={14} />
+            </button>
           </div>
         )}
       </div>
@@ -119,13 +137,17 @@ export default function WorkspacePanel({
             <EntitiesPanel projectId={projectId} files={files} />
           </div>
         ) : (
-          <div className="w-full h-full min-h-0 overflow-y-auto custom-scrollbar">
+          <div className="w-full h-full min-h-0 overflow-hidden">
             <CodeEditor
               files={files}
               activeFile={activeFile}
               onSelectFile={setActiveFile}
               canEdit={canEditCode}
               onChangeFile={onChangeFile}
+              onSaveFile={onSaveFile}
+              onRevertFile={onRevertFile}
+              baselines={codeBaselines}
+              dirtyFiles={dirtyCodeFiles}
             />
           </div>
         )}

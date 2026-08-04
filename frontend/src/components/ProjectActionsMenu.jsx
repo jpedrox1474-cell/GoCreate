@@ -7,16 +7,18 @@ import {
   Copy,
   Trash2,
   CheckSquare,
+  Archive,
 } from 'lucide-react';
 
 /**
- * Three-dots project menu — Selecionar / Abrir / Renomear / Duplicar / Eliminar.
+ * Three-dots project menu — Selecionar / Abrir / Renomear / Duplicar / Arquivar / Eliminar.
  */
 export default function ProjectActionsMenu({
   project,
   onOpen,
   onRename,
   onDuplicate,
+  onArchive,
   onDelete,
   onSelect,
   disabled = false,
@@ -42,7 +44,7 @@ export default function ProjectActionsMenu({
       let left = align === 'left' ? r.left : r.right - menuW;
       left = Math.max(pad, Math.min(left, window.innerWidth - menuW - pad));
       let top = r.bottom + 4;
-      const approxH = 200;
+      const approxH = 240;
       if (top + approxH > window.innerHeight - pad) {
         top = Math.max(pad, r.top - approxH - 4);
       }
@@ -110,6 +112,15 @@ export default function ProjectActionsMenu({
       onClick: () => {
         setOpen(false);
         onDuplicate(project);
+      },
+    },
+    onArchive && {
+      key: 'archive',
+      label: project?.status === 'archived' ? 'Restaurar' : 'Arquivar',
+      icon: Archive,
+      onClick: () => {
+        setOpen(false);
+        onArchive(project);
       },
     },
     onDelete && {

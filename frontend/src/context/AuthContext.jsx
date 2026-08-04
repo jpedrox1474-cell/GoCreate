@@ -9,6 +9,7 @@ import {
   linkWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -201,6 +202,22 @@ export function AuthProvider({ children }) {
     }
   }
 
+  async function resetPassword(email) {
+    setAuthError(null);
+    const trimmed = String(email || '').trim();
+    if (!trimmed) {
+      const err = new Error('Indica o e-mail.');
+      setAuthError('Indica o e-mail para recuperar a password.');
+      throw err;
+    }
+    try {
+      await sendPasswordResetEmail(auth, trimmed);
+    } catch (err) {
+      setAuthError(translateError(err.code));
+      throw err;
+    }
+  }
+
   async function logout() {
     await signOut(auth);
   }
@@ -237,6 +254,7 @@ export function AuthProvider({ children }) {
     loginWithGithub,
     loginWithEmail,
     registerWithEmail,
+    resetPassword,
     logout,
     updateUserProfile,
   };

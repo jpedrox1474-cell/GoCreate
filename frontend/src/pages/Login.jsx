@@ -8,7 +8,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
 export default function Login() {
-  const { user, loginWithGoogle, loginWithGithub, loginWithEmail, authError } = useAuth();
+  const { user, loginWithGoogle, loginWithGithub, loginWithEmail, resetPassword, authError } =
+    useAuth();
   const { isLight } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
@@ -18,6 +19,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [touched, setTouched] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
@@ -67,6 +69,30 @@ export default function Login() {
       // authError no contexto
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    if (resetting || submitting) return;
+    setTouched((t) => ({ ...t, email: true }));
+    if (!emailValid) {
+      setToast({ message: 'Indica um e-mail válido para recuperar a password.', type: 'error' });
+      return;
+    }
+    setResetting(true);
+    try {
+      await resetPassword(email.trim());
+      setToast({
+        message: 'Enviámos um link de recuperação para o teu e-mail.',
+        type: 'success',
+      });
+    } catch {
+      setToast({
+        message: authError || 'Não foi possível enviar o e-mail de recuperação.',
+        type: 'error',
+      });
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -178,6 +204,16 @@ export default function Login() {
               {showPasswordError && (
                 <p className="mt-1 text-xs text-red-500">A senha precisa de pelo menos 6 caracteres.</p>
               )}
+              <div className="mt-1.5 text-right">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={resetting || submitting}
+                  className="text-[11px] font-medium text-zinc-500 hover:text-zinc-800 transition-colors disabled:opacity-50"
+                >
+                  {resetting ? 'A enviar…' : 'Esqueci a password'}
+                </button>
+              </div>
             </div>
 
             {authError && (

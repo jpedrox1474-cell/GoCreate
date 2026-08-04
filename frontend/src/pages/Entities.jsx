@@ -7,10 +7,10 @@ import {
   Sparkles,
   Plus,
   ChevronRight,
-  ArrowLeft,
   ScanSearch,
 } from 'lucide-react';
 import Toast from '../components/Toast';
+import EntityBrowser from '../components/editor/EntityBrowser';
 import { useAuth } from '../context/AuthContext';
 import { listUserProjects, getPublishedProject } from '../lib/projects';
 import {
@@ -21,31 +21,8 @@ import {
   seedDetectedEntities,
   getRememberedProjectId,
   rememberLastProjectId,
+  upsertEntity,
 } from '../lib/entities';
-
-const TYPE_COLORS = {
-  string: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
-  number: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  boolean: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-};
-
-function TypeBadge({ type }) {
-  const t = TYPE_COLORS[type] ? type : 'string';
-  return (
-    <span
-      className={`inline-flex px-1.5 py-0.5 rounded border text-[10px] font-semibold uppercase tracking-wide ${TYPE_COLORS[t]}`}
-    >
-      {t}
-    </span>
-  );
-}
-
-function cellValue(v) {
-  if (v === null || v === undefined) return '—';
-  if (typeof v === 'boolean') return v ? 'true' : 'false';
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
-}
 
 export default function Entities() {
   const { user } = useAuth();
@@ -69,13 +46,13 @@ export default function Entities() {
     if (!user?.uid) return;
     try {
       const list = await listUserProjects(user.uid);
-      setProjects(list);
+      setProjects(list.filter((p) => p.status !== 'archived'));
       const fromQuery = searchParams.get('projectId');
       const remembered = getRememberedProjectId();
       const pick =
         (fromQuery && list.find((p) => p.id === fromQuery)?.id) ||
         (remembered && list.find((p) => p.id === remembered)?.id) ||
-        list[0]?.id ||
+        list.find((p) => p.status !== 'archived')?.id ||
         null;
       setProjectId(pick);
       if (pick) rememberLastProjectId(pick);
@@ -104,6 +81,23 @@ export default function Entities() {
     }
   }, []);
 
+  const refreshRows = useCallback(async () => {
+    if (!projectId || !selectedId) {
+      setRows([]);
+      return;
+    }
+    setRowsLoading(true);
+    try {
+      const list = await listEntityRows(projectId, selectedId);
+      setRows(list);
+    } catch (err) {
+      console.error('[Entities] rows:', err);
+      setRows([]);
+    } finally {
+      setRowsLoading(false);
+    }
+  }, [projectId, selectedId]);
+
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
@@ -113,27 +107,8 @@ export default function Entities() {
   }, [projectId, refreshEntities]);
 
   useEffect(() => {
-    if (!projectId || !selectedId) {
-      setRows([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setRowsLoading(true);
-      try {
-        const list = await listEntityRows(projectId, selectedId);
-        if (!cancelled) setRows(list);
-      } catch (err) {
-        console.error('[Entities] rows:', err);
-        if (!cancelled) setRows([]);
-      } finally {
-        if (!cancelled) setRowsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, selectedId]);
+    refreshRows();
+  }, [refreshRows]);
 
   function handleProjectChange(id) {
     setProjectId(id);
@@ -186,7 +161,34 @@ export default function Entities() {
     }
   }
 
-  const columns = selected?.columns || [];
+  async function handleCreateEmpty() {
+    if (!projectId || busy) return;
+    const name = window.prompt('Nome da entidade', 'NovaEntidade');
+    if (!name?.trim()) return;
+    setBusy('create');
+    try {
+      const id = await upsertEntity(projectId, {
+        name: name.trim(),
+        columns: [
+          { name: 'name', type: 'string' },
+          { name: 'createdAt', type: 'date' },
+        ],
+        source: 'manual',
+      });
+      await refreshEntities(projectId);
+      setSelectedId(id);
+      setToast({ message: 'Entidade criada.', type: 'success' });
+    } catch (err) {
+      setToast({ message: err?.message || 'Falha ao criar.', type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleBrowserRefresh() {
+    await refreshEntities(projectId);
+    await refreshRows();
+  }
 
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto">
@@ -199,7 +201,7 @@ export default function Entities() {
             Entidades
           </h1>
           <p className="text-sm text-zinc-500 max-w-xl">
-            Tabelas e dados do projeto — schema da IA, detecção no código ou templates de demo.
+            Schema builder, browser editável, import/export CSV e JSON.
           </p>
         </div>
         <div className="shrink-0">
@@ -230,80 +232,15 @@ export default function Entities() {
           <p className="text-sm text-zinc-400">Cria um projeto primeiro para gerir entidades.</p>
         </div>
       ) : selected ? (
-        <div className="space-y-4">
-          <button
-            type="button"
-            onClick={() => setSelectedId(null)}
-            className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-200 transition-colors"
-          >
-            <ArrowLeft size={14} /> Voltar às entidades
-          </button>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-9 h-9 rounded-lg bg-blue-600/15 border border-blue-500/20 flex items-center justify-center">
-              <Table2 size={16} className="text-blue-400" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-zinc-100">{selected.name || selected.id}</h2>
-              <p className="text-[11px] text-zinc-500 font-mono">{selected.id}</p>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/80">
-            <table className="w-full text-sm text-left">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                  {columns.map((col) => (
-                    <th
-                      key={col.name}
-                      className="px-4 py-3 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap"
-                    >
-                      <span className="inline-flex items-center gap-2">
-                        {col.name}
-                        <TypeBadge type={col.type} />
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rowsLoading ? (
-                  <tr>
-                    <td colSpan={Math.max(columns.length, 1)} className="px-4 py-8 text-center text-zinc-500">
-                      <Loader2 size={16} className="inline animate-spin mr-2" />
-                      A carregar linhas…
-                    </td>
-                  </tr>
-                ) : !rows.length ? (
-                  <tr>
-                    <td
-                      colSpan={Math.max(columns.length, 1)}
-                      className="px-4 py-8 text-center text-zinc-500 text-xs"
-                    >
-                      Sem linhas. A IA pode emitir dados mock na próxima geração, ou usa templates.
-                    </td>
-                  </tr>
-                ) : (
-                  rows.map((row, idx) => (
-                    <tr
-                      key={row.id || idx}
-                      className="border-b border-zinc-800/80 hover:bg-zinc-900/40 transition-colors"
-                    >
-                      {columns.map((col) => (
-                        <td
-                          key={col.name}
-                          className="px-4 py-2.5 text-zinc-300 font-mono text-xs whitespace-nowrap max-w-[240px] truncate"
-                          title={cellValue(row[col.name])}
-                        >
-                          {cellValue(row[col.name])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <EntityBrowser
+          projectId={projectId}
+          entity={selected}
+          rows={rows}
+          rowsLoading={rowsLoading}
+          onRefresh={handleBrowserRefresh}
+          onBack={() => setSelectedId(null)}
+          onToast={setToast}
+        />
       ) : !entities.length ? (
         <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/30 px-6 py-14 text-center space-y-5">
           <div className="mx-auto w-12 h-12 rounded-xl bg-zinc-800/80 flex items-center justify-center">
@@ -312,11 +249,19 @@ export default function Entities() {
           <div>
             <h2 className="text-base font-semibold text-zinc-200 mb-1">Nenhuma entidade ainda</h2>
             <p className="text-sm text-zinc-500 max-w-md mx-auto">
-              Gera um app com modelos de dados no chat (a IA grava o esquema), detecta a partir do
-              código publicado, ou adiciona templates de demonstração.
+              Cria manualmente, gera a partir do código publicado, ou adiciona templates de demonstração.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={handleCreateEmpty}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-all disabled:opacity-50"
+            >
+              {busy === 'create' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              Nova entidade
+            </button>
             <button
               type="button"
               disabled={!!busy}
@@ -334,20 +279,28 @@ export default function Entities() {
               type="button"
               disabled={!!busy}
               onClick={handleSeedTemplates}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-700 text-zinc-200 hover:bg-zinc-800/80 transition-all disabled:opacity-50"
             >
               {busy === 'templates' ? (
                 <Loader2 size={14} className="animate-spin" />
               ) : (
-                <Plus size={14} />
+                <Sparkles size={14} />
               )}
-              Adicionar templates
+              Templates
             </button>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2 justify-end">
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={handleCreateEmpty}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+            >
+              <Plus size={12} /> Nova
+            </button>
             <button
               type="button"
               disabled={!!busy}

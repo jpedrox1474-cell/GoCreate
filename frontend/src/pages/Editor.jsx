@@ -163,7 +163,10 @@ export default function Editor() {
   const lastRawRef = useRef('');
   const sendMessageTextRef = useRef(null);
   const localCodeEditsRef = useRef({});
+  const codeBaselinesRef = useRef({});
   const codeSaveTimerRef = useRef(null);
+  const [codeBaselines, setCodeBaselines] = useState({});
+  const [dirtyCodeFiles, setDirtyCodeFiles] = useState(() => new Set());
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -255,6 +258,17 @@ export default function Editor() {
 
   const mergeGeneratedFiles = useCallback((incoming) => {
     if (!incoming || !Object.keys(incoming).length) return;
+    // Baselines = última versão da IA (antes de edições locais).
+    setCodeBaselines((prev) => {
+      const next = { ...prev };
+      for (const [path, content] of Object.entries(incoming)) {
+        if (localCodeEditsRef.current[path] == null) {
+          next[path] = content;
+          codeBaselinesRef.current[path] = content;
+        }
+      }
+      return next;
+    });
     setGeneratedFiles((prev) => {
       const next = { ...prev, ...incoming, ...localCodeEditsRef.current };
       return next;
@@ -268,34 +282,84 @@ export default function Editor() {
     });
   }, []);
 
+  const persistCodeEdit = useCallback(
+    async (path) => {
+      if (!firestoreId || !path) return;
+      const latest = localCodeEditsRef.current[path];
+      if (latest == null) return;
+      const safe = String(latest).replace(/<\/file>/gi, '</\u200bfile>');
+      const text =
+        `Código atualizado manualmente (${path}).\n\n` +
+        `<gocreate_artifact>\n` +
+        `<file path="${path}">\n${safe}\n</file>\n` +
+        `</gocreate_artifact>`;
+      try {
+        await saveMessage(firestoreId, { role: 'ai', text, uid: user?.uid || null });
+        await touchProject(firestoreId);
+        setDirtyCodeFiles((prev) => {
+          const next = new Set(prev);
+          next.delete(path);
+          return next;
+        });
+      } catch (err) {
+        console.error('[Editor] save code edit:', err);
+        setToast({ message: 'Não foi possível guardar a edição do código.', type: 'error' });
+      }
+    },
+    [firestoreId, user?.uid]
+  );
+
   const handleChangeFile = useCallback(
     (path, content) => {
       if (!path || !canEditCode) return;
       localCodeEditsRef.current = { ...localCodeEditsRef.current, [path]: content };
       setGeneratedFiles((prev) => ({ ...prev, [path]: content }));
+      setDirtyCodeFiles((prev) => {
+        const next = new Set(prev);
+        next.add(path);
+        return next;
+      });
 
       if (codeSaveTimerRef.current) clearTimeout(codeSaveTimerRef.current);
-      codeSaveTimerRef.current = setTimeout(async () => {
-        if (!firestoreId) return;
-        const latest = localCodeEditsRef.current[path];
-        if (latest == null) return;
-        // Avoid breaking XML if the source contains a literal </file> closer.
-        const safe = String(latest).replace(/<\/file>/gi, '</\u200bfile>');
-        const text =
-          `Código atualizado manualmente (${path}).\n\n` +
-          `<gocreate_artifact>\n` +
-          `<file path="${path}">\n${safe}\n</file>\n` +
-          `</gocreate_artifact>`;
-        try {
-          await saveMessage(firestoreId, { role: 'ai', text, uid: user?.uid || null });
-          await touchProject(firestoreId);
-        } catch (err) {
-          console.error('[Editor] save code edit:', err);
-          setToast({ message: 'Não foi possível guardar a edição do código.', type: 'error' });
-        }
+      codeSaveTimerRef.current = setTimeout(() => {
+        persistCodeEdit(path);
       }, 900);
     },
-    [canEditCode, firestoreId, user?.uid]
+    [canEditCode, persistCodeEdit]
+  );
+
+  const handleSaveFile = useCallback(
+    (path) => {
+      if (!path || !canEditCode) return;
+      if (codeSaveTimerRef.current) {
+        clearTimeout(codeSaveTimerRef.current);
+        codeSaveTimerRef.current = null;
+      }
+      persistCodeEdit(path);
+    },
+    [canEditCode, persistCodeEdit]
+  );
+
+  const handleRevertFile = useCallback(
+    (path) => {
+      if (!path || !canEditCode) return;
+      const baseline = codeBaselinesRef.current[path];
+      if (baseline == null) return;
+      localCodeEditsRef.current = { ...localCodeEditsRef.current, [path]: baseline };
+      setGeneratedFiles((prev) => ({ ...prev, [path]: baseline }));
+      setDirtyCodeFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+      if (codeSaveTimerRef.current) {
+        clearTimeout(codeSaveTimerRef.current);
+        codeSaveTimerRef.current = null;
+      }
+      persistCodeEdit(path);
+      setToast({ message: `Ficheiro revertido: ${path}`, type: 'success' });
+    },
+    [canEditCode, persistCodeEdit]
   );
 
   const notifyAutomations = useCallback(
@@ -309,6 +373,22 @@ export default function Editor() {
     },
     []
   );
+
+  const applyLoadedFiles = useCallback((files) => {
+    if (!files || !Object.keys(files).length) return;
+    setGeneratedFiles((prev) => ({ ...prev, ...files, ...localCodeEditsRef.current }));
+    setCodeBaselines((prev) => {
+      const next = { ...prev };
+      for (const [path, content] of Object.entries(files)) {
+        if (localCodeEditsRef.current[path] == null) {
+          next[path] = content;
+          codeBaselinesRef.current[path] = content;
+        }
+      }
+      return next;
+    });
+    setActiveFile((cur) => cur || Object.keys(files)[0] || null);
+  }, []);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -326,10 +406,7 @@ export default function Editor() {
           setActiveFile(null);
           setMessages(
             sanitizeMessages(getMessagesForProject(routeId), (files) => {
-              if (!cancelled) {
-                setGeneratedFiles((prev) => ({ ...prev, ...files }));
-                setActiveFile((cur) => cur || Object.keys(files)[0] || null);
-              }
+              if (!cancelled) applyLoadedFiles(files);
             })
           );
           setProjectLoading(false);
@@ -352,6 +429,9 @@ export default function Editor() {
         setFirestoreId(id);
         rememberLastProjectId(id);
         localCodeEditsRef.current = {};
+        codeBaselinesRef.current = {};
+        setCodeBaselines({});
+        setDirtyCodeFiles(new Set());
         if (codeSaveTimerRef.current) {
           clearTimeout(codeSaveTimerRef.current);
           codeSaveTimerRef.current = null;
@@ -370,8 +450,7 @@ export default function Editor() {
             const source = msgs.length ? msgs : getMessagesForProject('default');
             setMessages(
               sanitizeMessages(source, (files) => {
-                setGeneratedFiles((prev) => ({ ...prev, ...files }));
-                setActiveFile((cur) => cur || Object.keys(files)[0] || null);
+                applyLoadedFiles(files);
               })
             );
             setProjectLoading(false);
@@ -397,7 +476,7 @@ export default function Editor() {
       cancelled = true;
       unsub();
     };
-  }, [user, routeId, navigate]);
+  }, [user, routeId, navigate, applyLoadedFiles]);
 
   useEffect(() => {
     const keys = Object.keys(generatedFiles);
@@ -1660,6 +1739,10 @@ export default function Editor() {
           }}
           canEditCode={canEditCode}
           onChangeFile={handleChangeFile}
+          onSaveFile={handleSaveFile}
+          onRevertFile={handleRevertFile}
+          codeBaselines={codeBaselines}
+          dirtyCodeFiles={dirtyCodeFiles}
         />
       </main>
 

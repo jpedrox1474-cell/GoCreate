@@ -20,6 +20,7 @@ import {
   deleteProject,
   deleteProjects,
   duplicateProject,
+  archiveProject,
 } from '../lib/projects';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
@@ -30,6 +31,7 @@ import ProjectCardThumbnail from '../components/ProjectCardThumbnail';
 const STATUS_LABEL = {
   draft: { text: 'Rascunho', className: 'bg-zinc-800 text-zinc-400 border-zinc-700' },
   deployed: { text: 'Deployed', className: 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' },
+  archived: { text: 'Arquivado', className: 'bg-amber-950/50 text-amber-400/90 border-amber-800/50' },
 };
 
 const HIDDEN_DEMOS_KEY = 'gocreate-hidden-demos';
@@ -59,6 +61,7 @@ export default function Dashboard() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('active'); // active | all | archived | draft | deployed
 
   const refresh = useCallback(async () => {
     if (!user?.uid) return;
@@ -80,11 +83,16 @@ export default function Dashboard() {
 
   const demos = MOCK_PROJECTS.filter((p) => !hiddenDemos.has(p.id));
 
-  const filteredProjects = projects.filter(
-    (p) =>
+  const filteredProjects = projects.filter((p) => {
+    const matchSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.description || '').toLowerCase().includes(search.toLowerCase())
-  );
+      (p.description || '').toLowerCase().includes(search.toLowerCase());
+    if (!matchSearch) return false;
+    if (statusFilter === 'all') return true;
+    if (statusFilter === 'active') return p.status !== 'archived';
+    if (statusFilter === 'archived') return p.status === 'archived';
+    return p.status === statusFilter;
+  });
 
   const filteredDemos = demos.filter(
     (p) =>
@@ -157,6 +165,25 @@ export default function Dashboard() {
     } catch (err) {
       console.error('[Dashboard] duplicate:', err);
       setToast({ message: 'Não foi possível duplicar.', type: 'error' });
+    }
+  }
+
+  async function handleArchive(project) {
+    const isArchived = project.status === 'archived';
+    try {
+      await archiveProject(project.id, !isArchived);
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === project.id ? { ...p, status: isArchived ? 'draft' : 'archived' } : p
+        )
+      );
+      setToast({
+        message: isArchived ? 'Projeto restaurado.' : 'Projeto arquivado.',
+        type: 'success',
+      });
+    } catch (err) {
+      console.error('[Dashboard] archive:', err);
+      setToast({ message: 'Não foi possível arquivar.', type: 'error' });
     }
   }
 
@@ -314,6 +341,7 @@ export default function Dashboard() {
                 onOpen={(proj) => navigate(`/editor/${proj.id}`)}
                 onRename={handleRename}
                 onDuplicate={handleDuplicate}
+                onArchive={handleArchive}
                 onDelete={handleDelete}
               />
             )}
@@ -455,6 +483,29 @@ export default function Dashboard() {
           placeholder="Pesquisar projetos…"
           className="w-full bg-zinc-900 border border-zinc-800 focus:border-zinc-600 rounded-lg py-2.5 pl-9 pr-4 text-sm text-zinc-200 placeholder-zinc-500 outline-none transition-all"
         />
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-6">
+        {[
+          { id: 'active', label: 'Ativos' },
+          { id: 'all', label: 'Todos' },
+          { id: 'draft', label: 'Rascunho' },
+          { id: 'deployed', label: 'Deployed' },
+          { id: 'archived', label: 'Arquivados' },
+        ].map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setStatusFilter(f.id)}
+            className={`px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
+              statusFilter === f.id
+                ? 'border-blue-500/40 bg-blue-600/15 text-blue-300'
+                : 'border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
       </div>
 
       {loading ? (

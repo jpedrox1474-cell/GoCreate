@@ -3,7 +3,16 @@
 import admin from '../config/firebaseAdmin.js';
 import { db } from '../config/firebaseAdmin.js';
 
-const ALLOWED_TYPES = new Set(['string', 'number', 'boolean']);
+const ALLOWED_TYPES = new Set([
+  'string',
+  'text',
+  'number',
+  'boolean',
+  'date',
+  'email',
+  'url',
+  'json',
+]);
 
 function slugify(id) {
   return String(id || 'entity')

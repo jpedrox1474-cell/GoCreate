@@ -1,5 +1,25 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { FileCode, Folder, FolderOpen, ChevronRight, ChevronDown, Pencil } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import CodeMirror from '@uiw/react-codemirror';
+import { javascript } from '@codemirror/lang-javascript';
+import { css } from '@codemirror/lang-css';
+import { html } from '@codemirror/lang-html';
+import { json } from '@codemirror/lang-json';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorView } from '@codemirror/view';
+import { searchKeymap, openSearchPanel, highlightSelectionMatches } from '@codemirror/search';
+import { keymap } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import {
+  FileCode,
+  Folder,
+  FolderOpen,
+  ChevronRight,
+  ChevronDown,
+  Pencil,
+  Search,
+  RotateCcw,
+  Save,
+} from 'lucide-react';
 import { getUserSettings } from '../../lib/userSettings';
 
 const FONT_SIZE_PX = { sm: 12, md: 14, lg: 16 };
@@ -24,6 +44,17 @@ const CODE_THEME_STYLES = {
     text: 'text-zinc-200',
   },
 };
+
+function languageExtension(fileName = '') {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.css')) return css();
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return html();
+  if (lower.endsWith('.json')) return json();
+  if (lower.endsWith('.ts') || lower.endsWith('.tsx')) {
+    return javascript({ jsx: true, typescript: true });
+  }
+  return javascript({ jsx: true });
+}
 
 function buildTree(paths) {
   const root = { name: '', pathKey: '', children: {}, files: [] };
@@ -125,13 +156,17 @@ export default function CodeEditor({
   onSelectFile,
   canEdit = false,
   onChangeFile = null,
+  onRevertFile = null,
+  onSaveFile = null,
+  dirtyFiles = null,
+  baselines = null,
 }) {
   const fileNames = Object.keys(files || {});
   const code = (activeFile && files?.[activeFile]) || '';
-  const lines = code ? code.split('\n') : [''];
   const tree = useMemo(() => buildTree(fileNames), [fileNames]);
   const [prefs, setPrefs] = useState(() => getUserSettings());
-  const textareaRef = useRef(null);
+  const viewRef = useRef(null);
+  const [saveFlash, setSaveFlash] = useState(false);
 
   useEffect(() => {
     const sync = () => setPrefs(getUserSettings());
@@ -145,6 +180,20 @@ export default function CodeEditor({
 
   const fontSize = FONT_SIZE_PX[prefs.editorFontSize] || FONT_SIZE_PX.md;
   const theme = CODE_THEME_STYLES[prefs.codeTheme] || CODE_THEME_STYLES.dark;
+
+  const isDirty =
+    Boolean(activeFile) &&
+    (dirtyFiles?.has?.(activeFile) ||
+      (baselines &&
+        activeFile in baselines &&
+        baselines[activeFile] !== code));
+
+  const canRevert =
+    Boolean(activeFile) &&
+    typeof onRevertFile === 'function' &&
+    baselines &&
+    activeFile in baselines &&
+    baselines[activeFile] !== code;
 
   const allFolderKeys = useMemo(() => {
     const keys = new Set(['__root__']);
@@ -176,6 +225,68 @@ export default function CodeEditor({
       else next.add(key);
       return next;
     });
+  }
+
+  const extensions = useMemo(() => {
+    const lang = languageExtension(activeFile || '');
+    return [
+      lang,
+      history(),
+      highlightSelectionMatches(),
+      keymap.of([
+        ...defaultKeymap,
+        ...historyKeymap,
+        ...searchKeymap,
+        {
+          key: 'Mod-s',
+          run: () => {
+            if (activeFile && typeof onSaveFile === 'function') {
+              onSaveFile(activeFile);
+              setSaveFlash(true);
+              setTimeout(() => setSaveFlash(false), 1200);
+            }
+            return true;
+          },
+        },
+        {
+          key: 'Mod-f',
+          run: openSearchPanel,
+        },
+      ]),
+      EditorView.theme({
+        '&': { height: '100%', fontSize: `${fontSize}px` },
+        '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' },
+        '.cm-content': { padding: '12px 0' },
+        '.cm-gutters': { backgroundColor: 'transparent', border: 'none' },
+      }),
+      EditorView.lineWrapping,
+    ];
+  }, [activeFile, fontSize, onSaveFile]);
+
+  const handleChange = useCallback(
+    (value) => {
+      if (!activeFile || !canEdit || typeof onChangeFile !== 'function') return;
+      onChangeFile(activeFile, value);
+    },
+    [activeFile, canEdit, onChangeFile]
+  );
+
+  function openFind() {
+    const view = viewRef.current;
+    if (view) openSearchPanel(view);
+  }
+
+  function handleSaveClick() {
+    if (!activeFile || typeof onSaveFile !== 'function') return;
+    onSaveFile(activeFile);
+    setSaveFlash(true);
+    setTimeout(() => setSaveFlash(false), 1200);
+  }
+
+  function handleRevertClick() {
+    if (!activeFile || !canRevert) return;
+    if (!window.confirm(`Reverter “${activeFile}” para a última versão da IA?`)) return;
+    onRevertFile(activeFile);
   }
 
   if (!fileNames.length) {
@@ -213,87 +324,83 @@ export default function CodeEditor({
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
-        <div className={`border-b border-inherit px-4 py-2 text-xs font-mono text-zinc-400 truncate flex items-center justify-between gap-2 ${theme.aside}`}>
-          <span className="truncate">{activeFile || '—'}</span>
-          {canEdit ? (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-emerald-400/90 font-sans font-medium">
-              <Pencil size={10} /> Editável
-            </span>
-          ) : (
-            <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-600 font-sans">
-              Só leitura
-            </span>
-          )}
+        <div className={`border-b border-inherit px-3 py-1.5 text-xs font-mono text-zinc-400 flex items-center justify-between gap-2 ${theme.aside}`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="truncate">{activeFile || '—'}</span>
+            {isDirty && (
+              <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400" title="Alterações por guardar" />
+            )}
+            {saveFlash && (
+              <span className="shrink-0 text-[10px] text-emerald-400 font-sans font-medium">Guardado</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={openFind}
+              className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 transition-all"
+              title="Localizar / substituir (Ctrl+F)"
+            >
+              <Search size={13} />
+            </button>
+            {canEdit && typeof onSaveFile === 'function' && (
+              <button
+                type="button"
+                onClick={handleSaveClick}
+                disabled={!activeFile}
+                className="p-1.5 rounded-md text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800/80 transition-all disabled:opacity-40"
+                title="Guardar e atualizar preview (Ctrl+S)"
+              >
+                <Save size={13} />
+              </button>
+            )}
+            {canEdit && canRevert && (
+              <button
+                type="button"
+                onClick={handleRevertClick}
+                className="p-1.5 rounded-md text-zinc-500 hover:text-amber-400 hover:bg-zinc-800/80 transition-all"
+                title="Reverter ficheiro"
+              >
+                <RotateCcw size={13} />
+              </button>
+            )}
+            {canEdit ? (
+              <span className="ml-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-emerald-400/90 font-sans font-medium">
+                <Pencil size={10} /> Editável
+              </span>
+            ) : (
+              <span className="ml-1 text-[10px] uppercase tracking-wide text-zinc-600 font-sans">
+                Só leitura
+              </span>
+            )}
+          </div>
         </div>
-        <div
-          className={`flex-1 min-h-0 overflow-hidden flex flex-col ${theme.codeBg} ${theme.text}`}
-          style={{ fontSize }}
-        >
-          {canEdit && typeof onChangeFile === 'function' ? (
-            <textarea
-              ref={textareaRef}
-              key={activeFile || '__none__'}
-              value={code}
-              onChange={(e) => {
-                if (!activeFile) return;
-                onChangeFile(activeFile, e.target.value);
-              }}
-              spellCheck={false}
-              className={`flex-1 min-h-0 w-full resize-none border-0 outline-none p-4 font-mono leading-relaxed custom-scrollbar ${theme.codeBg} ${theme.text}`}
-              style={{ fontSize, tabSize: 2 }}
-              aria-label={`Editar ${activeFile || 'ficheiro'}`}
-            />
-          ) : (
-            <div className="flex-1 min-h-0 p-4 overflow-auto custom-scrollbar font-mono leading-relaxed">
-              <div className="flex min-w-max">
-                <div
-                  className={`text-[#858585] text-right pr-6 select-none opacity-50 flex flex-col items-end sticky left-0 ${theme.codeBg}`}
-                >
-                  {lines.map((_, i) => (
-                    <div key={i} className="h-5 leading-5">
-                      {i + 1}
-                    </div>
-                  ))}
-                </div>
-                <pre className="flex-1">
-                  <code>
-                    {lines.map((line, i) => (
-                      <div key={i} className="h-5 leading-5 whitespace-pre hover:bg-white/5 px-1">
-                        {highlightLine(line, activeFile) || ' '}
-                      </div>
-                    ))}
-                  </code>
-                </pre>
-              </div>
-            </div>
-          )}
+        <div className={`flex-1 min-h-0 overflow-hidden ${theme.codeBg} ${theme.text}`}>
+          <CodeMirror
+            key={activeFile || '__none__'}
+            value={code}
+            height="100%"
+            theme={oneDark}
+            extensions={extensions}
+            editable={canEdit && typeof onChangeFile === 'function'}
+            basicSetup={{
+              lineNumbers: true,
+              foldGutter: true,
+              highlightActiveLine: true,
+              highlightActiveLineGutter: true,
+              bracketMatching: true,
+              closeBrackets: true,
+              autocompletion: true,
+              indentOnInput: true,
+            }}
+            onChange={handleChange}
+            onCreateEditor={(view) => {
+              viewRef.current = view;
+            }}
+            className="h-full text-sm [&_.cm-editor]:h-full [&_.cm-editor]:outline-none"
+          />
         </div>
       </div>
     </div>
   );
-}
-
-function highlightLine(line, fileName) {
-  if (fileName?.endsWith('.css')) {
-    return line;
-  }
-
-  const escaped = line
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  const html = escaped
-    .replace(
-      /\b(import|from|export|default|function|const|return|let|var|if|else|new)\b/g,
-      '<span style="color:#c586c0">$1</span>'
-    )
-    .replace(
-      /\b(React|useState|useEffect|App)\b/g,
-      '<span style="color:#4ec9b0">$1</span>'
-    )
-    .replace(/(&#39;.*?&#39;|&quot;.*?&quot;|'.*?'|".*?")/g, '<span style="color:#ce9178">$&</span>')
-    .replace(/(\/\/.*)$/g, '<span style="color:#6a9955">$1</span>');
-
-  return <span dangerouslySetInnerHTML={{ __html: html || ' ' }} />;
 }

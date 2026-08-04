@@ -6,7 +6,6 @@ import {
   Sparkles,
   Plus,
   ChevronRight,
-  ArrowLeft,
   ScanSearch,
 } from 'lucide-react';
 import {
@@ -16,30 +15,7 @@ import {
   detectEntitiesFromFiles,
   seedDetectedEntities,
 } from '../../lib/entities';
-
-const TYPE_COLORS = {
-  string: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
-  number: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  boolean: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-};
-
-function TypeBadge({ type }) {
-  const t = TYPE_COLORS[type] ? type : 'string';
-  return (
-    <span
-      className={`inline-flex px-1 py-0.5 rounded border text-[9px] font-semibold uppercase tracking-wide ${TYPE_COLORS[t]}`}
-    >
-      {t}
-    </span>
-  );
-}
-
-function cellValue(v) {
-  if (v === null || v === undefined) return '—';
-  if (typeof v === 'boolean') return v ? 'true' : 'false';
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
-}
+import EntityBrowser from './EntityBrowser';
 
 /**
  * Compact entities browser scoped to a single project (editor workspace).
@@ -77,32 +53,30 @@ export default function EntitiesPanel({ projectId, files = {} }) {
     }
   }, []);
 
+  const refreshRows = useCallback(async () => {
+    if (!projectId || !selectedId) {
+      setRows([]);
+      return;
+    }
+    setRowsLoading(true);
+    try {
+      const list = await listEntityRows(projectId, selectedId);
+      setRows(list);
+    } catch (err) {
+      console.error('[EntitiesPanel] rows:', err);
+      setRows([]);
+    } finally {
+      setRowsLoading(false);
+    }
+  }, [projectId, selectedId]);
+
   useEffect(() => {
     refreshEntities(projectId);
   }, [projectId, refreshEntities]);
 
   useEffect(() => {
-    if (!projectId || !selectedId) {
-      setRows([]);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      setRowsLoading(true);
-      try {
-        const list = await listEntityRows(projectId, selectedId);
-        if (!cancelled) setRows(list);
-      } catch (err) {
-        console.error('[EntitiesPanel] rows:', err);
-        if (!cancelled) setRows([]);
-      } finally {
-        if (!cancelled) setRowsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, selectedId]);
+    refreshRows();
+  }, [refreshRows]);
 
   async function handleSeedTemplates() {
     if (!projectId || busy) return;
@@ -145,6 +119,11 @@ export default function EntitiesPanel({ projectId, files = {} }) {
     }
   }
 
+  async function handleBrowserRefresh() {
+    await refreshEntities(projectId);
+    await refreshRows();
+  }
+
   if (!projectId) {
     return (
       <div className="w-full h-full flex items-center justify-center px-6">
@@ -160,8 +139,6 @@ export default function EntitiesPanel({ projectId, files = {} }) {
       </div>
     );
   }
-
-  const columns = selected?.columns || [];
 
   return (
     <div className="w-full h-full min-h-0 overflow-y-auto custom-scrollbar px-1 sm:px-2 py-1">
@@ -184,85 +161,21 @@ export default function EntitiesPanel({ projectId, files = {} }) {
           <Loader2 size={14} className="animate-spin" /> A carregar…
         </div>
       ) : selected ? (
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => setSelectedId(null)}
-            className="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
-          >
-            <ArrowLeft size={12} /> Voltar
-          </button>
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-7 h-7 rounded-md bg-blue-600/15 border border-blue-500/20 flex items-center justify-center">
-              <Table2 size={13} className="text-blue-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-zinc-100 truncate">
-                {selected.name || selected.id}
-              </p>
-              <p className="text-[10px] text-zinc-500 font-mono truncate">{selected.id}</p>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950/80">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                  {columns.map((col) => (
-                    <th
-                      key={col.name}
-                      className="px-2.5 py-2 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap"
-                    >
-                      <span className="inline-flex items-center gap-1.5">
-                        {col.name}
-                        <TypeBadge type={col.type} />
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rowsLoading ? (
-                  <tr>
-                    <td
-                      colSpan={Math.max(columns.length, 1)}
-                      className="px-2.5 py-6 text-center text-zinc-500 text-xs"
-                    >
-                      <Loader2 size={12} className="inline animate-spin mr-1.5" />
-                      A carregar…
-                    </td>
-                  </tr>
-                ) : !rows.length ? (
-                  <tr>
-                    <td
-                      colSpan={Math.max(columns.length, 1)}
-                      className="px-2.5 py-6 text-center text-zinc-500 text-[11px]"
-                    >
-                      Sem linhas nesta entidade.
-                    </td>
-                  </tr>
-                ) : (
-                  rows.map((row, idx) => (
-                    <tr
-                      key={row.id || idx}
-                      className="border-b border-zinc-800/80 hover:bg-zinc-900/40"
-                    >
-                      {columns.map((col) => (
-                        <td
-                          key={col.name}
-                          className="px-2.5 py-1.5 text-zinc-300 font-mono text-[11px] whitespace-nowrap max-w-[180px] truncate"
-                          title={cellValue(row[col.name])}
-                        >
-                          {cellValue(row[col.name])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <EntityBrowser
+          compact
+          projectId={projectId}
+          entity={selected}
+          rows={rows}
+          rowsLoading={rowsLoading}
+          onRefresh={handleBrowserRefresh}
+          onBack={() => setSelectedId(null)}
+          onToast={(t) =>
+            setNotice({
+              message: t.message,
+              type: t.type === 'success' ? 'ok' : t.type === 'error' ? 'error' : 'info',
+            })
+          }
+        />
       ) : !entities.length ? (
         <div className="rounded-lg border border-dashed border-zinc-700 bg-zinc-900/30 px-4 py-10 text-center space-y-4">
           <div className="mx-auto w-9 h-9 rounded-lg bg-zinc-800/80 flex items-center justify-center">

@@ -176,6 +176,14 @@ export async function renameProject(projectId, name) {
   });
 }
 
+export async function archiveProject(projectId, archived = true) {
+  if (!projectId) throw new Error('Projeto inválido.');
+  await updateDoc(doc(db, 'projects', projectId), {
+    status: archived ? 'archived' : 'draft',
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function updateProjectSettings(
   projectId,
   { name, description, customDomain, authAccess, ownerEmail } = {}

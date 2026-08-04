@@ -14,6 +14,7 @@ import {
   Bot,
   CheckSquare,
   Trash2,
+  Database,
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
@@ -31,6 +32,7 @@ import {
 
 const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
+  { to: '/entities', label: 'Entidades', icon: Database },
   { to: '/automations', label: 'Automations', icon: Bot },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },
