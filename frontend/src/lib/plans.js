@@ -59,19 +59,19 @@ export const PLANS = [
       'Backend Functions incluídas',
       'Prioridade na fila',
     ],
-    cta: 'Assinar Pro',
+    cta: 'Assinar Pro via Pix',
   },
   {
     id: 'turbo',
     name: 'Turbo',
     priceLabel: 'R$ 20',
-    period: ' via PIX',
+    period: ' via Pix',
     credits: 100,
     type: 'topup',
     amount: 20,
     highlight: false,
-    features: ['+100 créditos', 'Pagamento único via PIX', 'Sem renovação'],
-    cta: 'Comprar via PIX',
+    features: ['+100 créditos', 'Pagamento único via Pix', 'Sem renovação'],
+    cta: 'Comprar via Pix',
   },
 ];
 

@@ -1,15 +1,13 @@
-// Rotas de billing / créditos — Mercado Pago (Brasil) + Stripe Checkout (internacional).
+// Rotas de billing / créditos — Mercado Pago Pix (checkout no modal GoCreate).
 //
-// Fluxo MP (Payment Brick — checkout transparente):
-// 1. GET  /api/billing/config (público) → publicKey + produtos
-// 2. POST /api/billing/create-payment (auth) → Brick session (Pro) ou Pix (Turbo)
-// 3. POST /api/billing/process-payment (auth) → Payments API com formData do Brick
+// Fluxo Pix (Pro + Turbo) — sem redirect Checkout Pro:
+// 1. GET  /api/billing/config (público) → produtos
+// 2. POST /api/billing/create-payment (auth) → Payments API payment_method_id=pix
+// 3. GET  /api/billing/status/:transactionId (auth) → polling até approved
 // 4. POST /api/billing/webhook → valida, fulfillTransaction()
-// 5. GET  /api/billing/status/:transactionId (auth) → polling Pix/boleto
 //
-// Fluxo Stripe (opcional — requer STRIPE_SECRET_KEY):
-// 1. POST /api/billing/stripe-checkout (auth) → Checkout Session (Pro)
-// 2. POST /api/billing/stripe-webhook (raw body) → checkout.session.completed → fulfill
+// Stripe / Payment Brick / Checkout Pro preference: mantidos só como legado
+// (não usados no fluxo Assinar Pro da UI).
 
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
@@ -20,7 +18,6 @@ import {
   isMercadoPagoConfigured,
   getPublicKey,
   isPublicKeyConfigured,
-  createCheckoutPreference,
   createPixPayment,
   processBrickPayment,
   getPaymentById,
@@ -28,7 +25,6 @@ import {
   verifyWebhookSignature,
   extractPaymentIdFromNotification,
   resolveNotificationUrl,
-  resolveAppUrl,
 } from '../services/mercadopago.js';
 import {
   isStripeConfigured,
@@ -105,9 +101,8 @@ export async function fulfillTransaction({
 
 /**
  * POST /api/billing/create-payment
- * Body: { productId: 'pro' | 'turbo', mode?: 'brick' | 'checkout' }
- * Pro → Payment Brick (transparente). Turbo → Pix QR.
- * mode=checkout força Preference Checkout Pro (legado).
+ * Body: { productId: 'pro' | 'turbo' }
+ * Sempre cria pagamento Pix (QR + copia-e-cola). Sem Checkout Pro / init_point.
  */
 router.post('/create-payment', requireAuth, async (req, res) => {
   try {
@@ -128,12 +123,7 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       });
     }
 
-    const forceCheckoutPro =
-      String(req.body?.mode || '').toLowerCase() === 'checkout' ||
-      req.body?.legacyCheckout === true;
-
     const notificationUrl = resolveNotificationUrl(req);
-    const appUrl = resolveAppUrl(req);
     const email = req.user.email || null;
 
     const txRef = db.collection('transactions').doc();
@@ -148,120 +138,37 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       status: 'pending',
       provider: 'mercadopago',
       productId: product.id,
+      checkoutMode: 'pix',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    if (product.id === 'turbo') {
-      const pix = await createPixPayment({
-        product,
-        transactionId,
-        userId: req.user.uid,
-        email,
-        notificationUrl,
-      });
-
-      await txRef.update({
-        mpPaymentId: pix.paymentId ? String(pix.paymentId) : null,
-        mpStatus: pix.status || 'pending',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      return res.status(201).json({
-        provider: 'mercadopago',
-        mode: 'pix',
-        transactionId,
-        paymentId: pix.paymentId,
-        status: pix.status,
-        amount: product.amount,
-        credits: product.credits,
-        qrCode: pix.qrCode,
-        qrCodeBase64: pix.qrCodeBase64,
-        ticketUrl: pix.ticketUrl,
-      });
-    }
-
-    // Pro — Payment Brick (preferido) ou Checkout Pro legado
-    let pref;
-    try {
-      pref = await createCheckoutPreference({
-        product,
-        transactionId,
-        userId: req.user.uid,
-        email,
-        notificationUrl,
-        appUrl,
-        purpose: forceCheckoutPro ? null : 'wallet_purchase',
-      });
-    } catch (prefErr) {
-      if (!forceCheckoutPro) {
-        console.warn(
-          '[billing/create-payment] preference wallet_purchase falhou, retry sem purpose:',
-          prefErr?.message || prefErr
-        );
-        pref = await createCheckoutPreference({
-          product,
-          transactionId,
-          userId: req.user.uid,
-          email,
-          notificationUrl,
-          appUrl,
-          purpose: null,
-        });
-      } else {
-        throw prefErr;
-      }
-    }
+    const pix = await createPixPayment({
+      product,
+      transactionId,
+      userId: req.user.uid,
+      email,
+      notificationUrl,
+    });
 
     await txRef.update({
-      mpPreferenceId: pref.preferenceId || null,
-      checkoutMode: forceCheckoutPro ? 'checkout_pro' : 'brick',
+      mpPaymentId: pix.paymentId ? String(pix.paymentId) : null,
+      mpStatus: pix.status || 'pending',
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    if (forceCheckoutPro) {
-      return res.status(201).json({
-        provider: 'mercadopago',
-        mode: 'checkout',
-        transactionId,
-        preferenceId: pref.preferenceId,
-        checkoutUrl: pref.initPoint,
-        amount: product.amount,
-        credits: product.credits,
-        stripeAvailable: isStripeConfigured(),
-      });
-    }
-
-    const publicKey = getPublicKey();
-    if (!publicKey) {
-      // Sem public key → fallback Checkout Pro para não bloquear vendas
-      console.warn(
-        '[billing/create-payment] MERCADOPAGO_PUBLIC_KEY ausente — fallback Checkout Pro.'
-      );
-      return res.status(201).json({
-        provider: 'mercadopago',
-        mode: 'checkout',
-        transactionId,
-        preferenceId: pref.preferenceId,
-        checkoutUrl: pref.initPoint,
-        amount: product.amount,
-        credits: product.credits,
-        stripeAvailable: isStripeConfigured(),
-        warning: 'MP_PUBLIC_KEY_MISSING',
-      });
-    }
-
     return res.status(201).json({
       provider: 'mercadopago',
-      mode: 'brick',
+      mode: 'pix',
       transactionId,
-      preferenceId: pref.preferenceId,
+      paymentId: pix.paymentId,
+      status: pix.status,
       amount: product.amount,
       credits: product.credits,
-      currency: product.currency || 'BRL',
+      plan: product.plan || null,
       title: product.title,
-      publicKey,
-      payerEmail: email,
-      stripeAvailable: isStripeConfigured(),
+      qrCode: pix.qrCode,
+      qrCodeBase64: pix.qrCodeBase64,
+      ticketUrl: pix.ticketUrl,
     });
   } catch (err) {
     console.error('[billing/create-payment]', err);
@@ -735,7 +642,7 @@ router.post('/checkout-intent', requireAuth, async (req, res) => {
     return res.status(201).json({
       transactionId: ref.id,
       status: 'pending',
-      message: 'Use POST /api/billing/create-payment ou /stripe-checkout.',
+      message: 'Use POST /api/billing/create-payment (Pix).',
     });
   } catch (err) {
     console.error('[billing/checkout-intent]', err);

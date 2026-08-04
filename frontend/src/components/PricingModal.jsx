@@ -8,41 +8,26 @@ import {
   Loader2,
   QrCode,
   Copy,
-  ExternalLink,
   ArrowLeft,
   CheckCircle2,
-  CreditCard,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PLANS } from '../lib/plans';
-import {
-  createPayment,
-  createStripeCheckout,
-  getBillingProviders,
-  getPaymentStatus,
-} from '../lib/billingApi';
-import MercadoPagoCheckout from './MercadoPagoCheckout';
+import { createPayment, getPaymentStatus } from '../lib/billingApi';
 import Toast from './Toast';
 
 /**
- * PricingModal — Dark Premium Bento (Free / Pro / Turbo).
- *
- * Mercado Pago:
- * - Pro → Payment Brick embutido (Pix, boleto, cartão, Conta MP)
- * - Turbo → Pix QR + polling /api/billing/status
- * Stripe (optional):
- * - Pro → Checkout Session (cartão internacional)
+ * PricingModal — Free / Pro / Turbo.
+ * Assinar Pro e Turbo → modal Pix no GoCreate (QR + copia-e-cola).
+ * Sem Stripe, sem Payment Brick, sem redirect Mercado Pago Checkout Pro.
  */
 export default function PricingModal({ open, onClose, currentPlan = 'free', message = null }) {
   const { user } = useAuth();
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState(null);
-  const [view, setView] = useState('plans'); // plans | brick | pending | success
+  const [view, setView] = useState('plans'); // plans | pending | success
   const [pixData, setPixData] = useState(null);
   const [pixStatus, setPixStatus] = useState('pending');
-  const [brickSession, setBrickSession] = useState(null);
-  const [brickIdToken, setBrickIdToken] = useState(null);
-  const [stripeReady, setStripeReady] = useState(false);
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
@@ -58,12 +43,8 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       setView('plans');
       setPixData(null);
       setPixStatus('pending');
-      setBrickSession(null);
-      setBrickIdToken(null);
       setBusyId(null);
-      return;
     }
-    getBillingProviders().then((p) => setStripeReady(Boolean(p?.stripe)));
   }, [open, stopPolling]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
@@ -84,7 +65,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         } catch (err) {
           console.warn('[PricingModal] poll:', err);
         }
-      }, 3500);
+      }, 3000);
     },
     [user, stopPolling]
   );
@@ -95,8 +76,6 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     stopPolling();
     setView('plans');
     setPixData(null);
-    setBrickSession(null);
-    setBrickIdToken(null);
     setPixStatus('pending');
   }
 
@@ -115,24 +94,20 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       const idToken = await user.getIdToken();
       const result = await createPayment({ productId: plan.id, idToken });
 
-      if (result.mode === 'brick') {
-        setBrickSession(result);
-        setBrickIdToken(idToken);
-        setView('brick');
-        return;
-      }
-
-      if (result.mode === 'checkout' && result.checkoutUrl) {
-        setToast({ message: 'A abrir checkout Mercado Pago…', type: 'info' });
-        window.location.href = result.checkoutUrl;
-        return;
-      }
-
-      if (result.mode === 'pix') {
+      if (result.mode === 'pix' && (result.qrCode || result.qrCodeBase64)) {
         setPixData(result);
         setPixStatus('pending');
         setView('pending');
         startStatusPolling(result.transactionId);
+        return;
+      }
+
+      // Nunca redirecionar para Checkout Pro / init_point
+      if (result.mode === 'checkout' || result.checkoutUrl) {
+        setToast({
+          message: 'Checkout por redirect desativado. Tenta novamente (Pix no modal).',
+          type: 'error',
+        });
         return;
       }
 
@@ -147,100 +122,13 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         });
       } else {
         setToast({
-          message: err?.message || 'Falha ao iniciar pagamento.',
+          message: err?.message || 'Falha ao iniciar pagamento Pix.',
           type: 'error',
         });
       }
     } finally {
       setBusyId(null);
     }
-  }
-
-  async function handleStripePro() {
-    if (!user?.uid) {
-      setToast({ message: 'Inicia sessão para continuar.', type: 'error' });
-      return;
-    }
-    setBusyId('stripe-pro');
-    try {
-      const idToken = await user.getIdToken();
-      const result = await createStripeCheckout({ productId: 'pro', idToken });
-      if (result.checkoutUrl) {
-        setToast({ message: 'A redirecionar para o Stripe…', type: 'info' });
-        window.location.href = result.checkoutUrl;
-        return;
-      }
-      setToast({ message: 'Resposta Stripe inesperada.', type: 'error' });
-    } catch (err) {
-      console.error('[PricingModal] stripe:', err);
-      if (err?.code === 'STRIPE_NOT_CONFIGURED' || err?.status === 503) {
-        setToast({
-          message: 'Stripe ainda não configurado no servidor (STRIPE_SECRET_KEY).',
-          type: 'error',
-        });
-      } else {
-        setToast({ message: err?.message || 'Falha ao iniciar Stripe Checkout.', type: 'error' });
-      }
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  function handleBrickResult(result) {
-    if (!result) return;
-
-    if (result.status === 'approved' || result.alreadyCompleted) {
-      stopPolling();
-      setPixStatus('completed');
-      setView('success');
-      setToast({ message: 'Pagamento aprovado. Plano Pro ativado.', type: 'success' });
-      return;
-    }
-
-    // Pix / boleto / pending — mostrar QR ou bilhete e poll
-    if (
-      result.status === 'pending' ||
-      result.status === 'in_process' ||
-      result.qrCode ||
-      result.qrCodeBase64 ||
-      result.ticketUrl
-    ) {
-      setPixData({
-        ...result,
-        amount: result.amount ?? brickSession?.amount,
-        credits: result.credits ?? brickSession?.credits,
-      });
-      setPixStatus('pending');
-      setView('pending');
-      if (result.transactionId) {
-        startStatusPolling(result.transactionId);
-      }
-      setToast({
-        message:
-          result.qrCode || result.qrCodeBase64
-            ? 'Pix gerado — paga para ativar o Pro.'
-            : result.ticketUrl
-              ? 'Boleto gerado — paga para ativar o Pro.'
-              : 'Pagamento pendente — aguardando confirmação.',
-        type: 'info',
-      });
-      return;
-    }
-
-    if (result.status === 'rejected') {
-      setToast({
-        message: result.statusDetail
-          ? `Pagamento recusado (${result.statusDetail}).`
-          : 'Pagamento recusado. Tenta outro método.',
-        type: 'error',
-      });
-      return;
-    }
-
-    setToast({
-      message: `Estado: ${result.status || 'desconhecido'}.`,
-      type: 'info',
-    });
   }
 
   async function copyPixCode() {
@@ -253,42 +141,37 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     }
   }
 
+  const amountLabel =
+    pixData?.amount != null
+      ? `R$ ${Number(pixData.amount).toFixed(2).replace('.', ',')}`
+      : '';
+
   const headerTitle =
-    view === 'brick'
-      ? 'Checkout Pro'
-      : view === 'pending'
-        ? pixData?.qrCode || pixData?.qrCodeBase64
-          ? 'Pagar com Pix'
-          : pixData?.ticketUrl
-            ? 'Boleto / bilhete'
-            : 'Aguardando pagamento'
-        : view === 'success'
-          ? 'Pagamento confirmado'
-          : 'Escolhe o teu ritmo';
+    view === 'pending'
+      ? 'Pagar com Pix'
+      : view === 'success'
+        ? 'Pagamento confirmado'
+        : 'Escolhe o teu ritmo';
 
   const headerSub =
-    view === 'brick'
-      ? 'Paga aqui mesmo — Pix, boleto, cartão ou Conta Mercado Pago.'
-      : view === 'pending'
-        ? pixData?.qrCode || pixData?.qrCodeBase64
-          ? 'Escaneia o QR ou copia o código. Os créditos entram assim que for aprovado.'
-          : 'Usa o link do bilhete. Ativamos o plano assim que o pagamento for confirmado.'
-        : view === 'success'
-          ? 'Créditos e plano atualizados na tua conta.'
-          : message || 'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.';
+    view === 'pending'
+      ? 'Escaneia o QR ou copia o código. Ativamos o plano assim que o Pix for aprovado.'
+      : view === 'success'
+        ? 'Créditos e plano atualizados na tua conta.'
+        : message || 'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.';
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/75 backdrop-blur-md"
-        onClick={onClose}
+        onClick={view === 'pending' ? undefined : onClose}
         aria-hidden
       />
       <div
         role="dialog"
         aria-modal="true"
         className={`relative w-full gc-themed bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden ${
-          view === 'brick' ? 'max-w-xl max-h-[92vh] flex flex-col' : 'max-w-5xl'
+          view === 'pending' || view === 'success' ? 'max-w-md' : 'max-w-5xl'
         }`}
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_40%_at_50%_0%,rgba(37,99,235,0.12),transparent_60%)]" />
@@ -296,7 +179,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         <div className="relative flex items-start justify-between gap-4 px-5 sm:px-7 py-5 border-b border-zinc-800 shrink-0">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">
-              Planos
+              {view === 'pending' ? 'Checkout' : 'Planos'}
             </p>
             <h2 className="text-xl sm:text-2xl font-bold text-zinc-50 tracking-tight">
               {headerTitle}
@@ -312,6 +195,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
             type="button"
             onClick={onClose}
             className="p-1.5 text-zinc-500 hover:text-zinc-100 hover:bg-zinc-800 rounded-md transition-all shrink-0"
+            aria-label="Fechar"
           >
             <X size={18} />
           </button>
@@ -398,7 +282,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                     >
                       {busyId === plan.id ? (
                         <span className="inline-flex items-center gap-2 justify-center">
-                          <Loader2 size={14} className="animate-spin" /> A processar…
+                          <Loader2 size={14} className="animate-spin" /> A gerar Pix…
                         </span>
                       ) : isCurrent ? (
                         'Plano atual'
@@ -406,28 +290,6 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                         plan.cta
                       )}
                     </button>
-
-                    {isPro && !isCurrent && (
-                      <button
-                        type="button"
-                        disabled={busyId === 'stripe-pro'}
-                        onClick={handleStripePro}
-                        className="relative mt-2 w-full py-2 rounded-xl text-xs font-medium text-zinc-300 hover:text-white border border-zinc-700/80 hover:border-zinc-500 bg-zinc-950/60 transition-all disabled:opacity-50"
-                        title={
-                          stripeReady
-                            ? 'Cartão internacional via Stripe Checkout'
-                            : 'Stripe: adiciona STRIPE_SECRET_KEY no servidor'
-                        }
-                      >
-                        {busyId === 'stripe-pro' ? (
-                          <span className="inline-flex items-center gap-2 justify-center">
-                            <Loader2 size={12} className="animate-spin" /> Stripe…
-                          </span>
-                        ) : (
-                          'Cartão internacional (Stripe)'
-                        )}
-                      </button>
-                    )}
                   </div>
                 );
               })}
@@ -435,51 +297,8 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
           </div>
         )}
 
-        {view === 'brick' && brickSession && brickIdToken && (
-          <div className="relative p-5 sm:p-6 overflow-y-auto flex-1">
-            <button
-              type="button"
-              onClick={resetToPlans}
-              className="mb-4 inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-all"
-            >
-              <ArrowLeft size={13} /> Voltar aos planos
-            </button>
-
-            <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                  <CreditCard size={15} />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-zinc-100">GoCreate Pro</p>
-                  <p className="text-[11px] text-zinc-500">+{brickSession.credits} créditos/mês</p>
-                </div>
-              </div>
-              <p className="text-lg font-bold text-zinc-50">
-                R$ {Number(brickSession.amount).toFixed(2).replace('.', ',')}
-              </p>
-            </div>
-
-            <MercadoPagoCheckout
-              publicKey={brickSession.publicKey}
-              amount={brickSession.amount}
-              preferenceId={brickSession.preferenceId}
-              transactionId={brickSession.transactionId}
-              payerEmail={brickSession.payerEmail || user?.email}
-              idToken={brickIdToken}
-              onResult={handleBrickResult}
-              onError={(err) => {
-                setToast({
-                  message: err?.message || 'Erro no checkout Mercado Pago.',
-                  type: 'error',
-                });
-              }}
-            />
-          </div>
-        )}
-
         {view === 'pending' && pixData && (
-          <div className="relative p-5 sm:p-8 flex flex-col items-center gap-5">
+          <div className="relative p-5 sm:p-7 flex flex-col items-center gap-5">
             <button
               type="button"
               onClick={resetToPlans}
@@ -488,76 +307,84 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
               <ArrowLeft size={13} /> Voltar aos planos
             </button>
 
-            <div className="w-full max-w-sm rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 flex flex-col items-center gap-4">
-              <div className="flex items-center gap-2 text-zinc-200 text-sm font-medium">
-                <QrCode size={16} className="text-blue-400" />
-                {pixData.qrCode || pixData.qrCodeBase64 ? 'Pix' : 'Pagamento'} · R${' '}
-                {pixData.amount}
-                {pixData.credits != null && (
-                  <>
-                    <span className="text-zinc-600">·</span>+{pixData.credits} créditos
-                  </>
-                )}
+            <div className="w-full rounded-2xl border border-zinc-800 bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-6 flex flex-col items-center gap-5">
+              <div className="w-full flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                    <QrCode size={16} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-100">
+                      {pixData.plan === 'pro' || pixData.title?.includes?.('Pro')
+                        ? 'GoCreate Pro'
+                        : 'GoCreate Turbo'}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      {pixData.credits != null ? `+${pixData.credits} créditos` : 'Pagamento Pix'}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xl font-bold tracking-tight text-zinc-50">{amountLabel}</p>
               </div>
 
               {pixData.qrCodeBase64 ? (
                 <img
                   src={`data:image/png;base64,${pixData.qrCodeBase64}`}
                   alt="QR Code Pix"
-                  className="w-52 h-52 rounded-xl bg-white p-2"
+                  className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl bg-white p-3 shadow-lg shadow-black/40"
                 />
               ) : pixData.qrCode ? (
-                <div className="w-52 h-52 rounded-xl bg-zinc-800 flex items-center justify-center text-zinc-500 text-xs text-center px-4">
-                  Usa o código copia-e-cola abaixo
+                <div className="w-56 h-56 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-500 text-xs text-center px-6">
+                  Usa o código copia-e-cola abaixo no app do teu banco
                 </div>
-              ) : null}
+              ) : (
+                <div className="w-56 h-56 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-500 text-xs text-center px-6">
+                  QR indisponível — tenta novamente
+                </div>
+              )}
 
               {pixData.qrCode && (
-                <div className="w-full flex items-center gap-2">
-                  <p className="flex-1 text-[11px] text-zinc-400 font-mono truncate bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2">
-                    {pixData.qrCode}
+                <div className="w-full space-y-2">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                    Pix copia e cola
                   </p>
-                  <button
-                    type="button"
-                    onClick={copyPixCode}
-                    className="shrink-0 p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-all"
-                    title="Copiar código"
-                  >
-                    <Copy size={14} />
-                  </button>
+                  <div className="flex items-stretch gap-2">
+                    <p className="flex-1 text-[11px] text-zinc-400 font-mono break-all bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 max-h-20 overflow-y-auto">
+                      {pixData.qrCode}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={copyPixCode}
+                      className="shrink-0 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-all"
+                      title="Copiar código"
+                    >
+                      <Copy size={14} /> Copiar
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {pixData.ticketUrl && (
-                <a
-                  href={pixData.ticketUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300"
-                >
-                  Abrir boleto / bilhete <ExternalLink size={12} />
-                </a>
-              )}
-
-              {pixData.barcode && (
-                <p className="w-full text-[11px] text-zinc-400 font-mono break-all bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2">
-                  {pixData.barcode}
-                </p>
-              )}
-
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <div className="flex items-center gap-2 text-sm text-zinc-300">
                 {pixStatus === 'pending' ? (
                   <>
-                    <Loader2 size={13} className="animate-spin text-blue-400" />
-                    Aguardando confirmação…
+                    <Loader2 size={15} className="animate-spin text-blue-400" />
+                    Aguardando pagamento…
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 size={13} className="text-emerald-400" />
+                    <CheckCircle2 size={15} className="text-emerald-400" />
                     Pagamento aprovado
                   </>
                 )}
               </div>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 rounded-xl text-sm font-medium text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 bg-zinc-950/50 transition-all"
+              >
+                Cancelar
+              </button>
             </div>
           </div>
         )}
@@ -583,7 +410,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
 
         {view === 'plans' && (
           <p className="relative px-6 pb-5 text-[11px] text-zinc-500 text-center">
-            Mercado Pago (Pix, boleto, cartão) · Stripe opcional (cartão internacional)
+            Pagamento via Pix · Mercado Pago · sem sair do GoCreate
           </p>
         )}
       </div>

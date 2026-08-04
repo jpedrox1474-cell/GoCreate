@@ -1,16 +1,16 @@
 /**
- * Mercado Pago — Payment Brick (Pro transparente) + Pix Payments (Turbo).
+ * Mercado Pago — Pix Payments API (Pro + Turbo no modal GoCreate).
  *
  * Env:
  *   MERCADOPAGO_ACCESS_TOKEN        (billing / fallback — preferir TEST- para Pix)
  *   MERCADOPAGO_TEST_ACCESS_TOKEN   (preferido em GoCreatePayments / public-create-payment)
- *   MERCADOPAGO_PUBLIC_KEY          (chave pública — Payment Brick / frontend; segura expor)
+ *   MERCADOPAGO_PUBLIC_KEY          (legado Brick; Pix não precisa)
  *   MERCADOPAGO_WEBHOOK_SECRET      (opcional — Assinatura secreta do painel Webhooks, NÃO OAuth)
  *   MERCADOPAGO_NOTIFICATION_URL    ex: https://gocreate-app.web.app/api/billing/webhook
  *   PUBLIC_APP_URL                  ex: https://gocreate-app.web.app
  *
- * Checkout Pro (preference init_point) fica só como fallback legado.
- * Stripe: services/stripe.js + routes/billing.js.
+ * Fluxo principal: createPixPayment → qr_code_base64 + qr_code.
+ * createCheckoutPreference / processBrickPayment ficam só como legado.
  */
 
 import crypto from 'crypto';
