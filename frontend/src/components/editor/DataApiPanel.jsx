@@ -136,7 +136,7 @@ export default function DataApiPanel({ projectId, backendEnabled = false, entiti
     });
   }
 
-  const exampleCurl = `curl -X POST https://gocreate.web.app/api/projects/${projectId || '{projectId}'}/data \\
+  const exampleCurl = `curl -X POST https://gocreate-app.web.app/api/projects/${projectId || '{projectId}'}/data \\
   -H "Content-Type: application/json" \\
   -H "X-GoCreate-Key: gck_…" \\
   -d '{"action":"list","entity":"${entities[0]?.id || 'products'}"}'`;

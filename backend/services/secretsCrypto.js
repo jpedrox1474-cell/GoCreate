@@ -21,7 +21,7 @@ function resolveKeyMaterial() {
   // (still better than plaintext; rotate by setting SECRETS_ENCRYPTION_KEY).
   const seed = [
     process.env.GEMINI_API_KEY || '',
-    process.env.GCLOUD_PROJECT || 'vexo-ef6e2',
+    process.env.GCLOUD_PROJECT || 'gen-lang-client-0968841856',
     'gocreate-secrets-v1',
   ].join('|');
   return crypto.createHash('sha256').update(seed).digest();

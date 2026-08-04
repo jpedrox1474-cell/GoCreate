@@ -601,7 +601,7 @@ router.get('/custom-domain/:projectId', requireAuth, async (req, res) => {
       dns: token
         ? domainDnsInstructions({ host, verificationToken: token })
         : null,
-      cnameTarget: 'gocreate.web.app',
+      cnameTarget: 'gocreate-app.web.app',
     });
   } catch (err) {
     console.error('[deploy/custom-domain/get]', err);

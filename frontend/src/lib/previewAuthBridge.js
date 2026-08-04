@@ -1,7 +1,7 @@
 /**
  * Parent-window bridge for Google Auth inside Sandpack iframes.
  * Sandpack runs on *.codesandbox.io — Firebase OAuth only works on authorized
- * parent origins (gocreate.web.app). The iframe posts here; we run signInWithPopup
+ * parent origins (gocreate-app.web.app). The iframe posts here; we run signInWithPopup
  * and return user + idToken via postMessage.
  *
  * After sign-in, enforces project.authAccess via /api/projects/:id/auth-check.
@@ -58,6 +58,10 @@ function isTrustedPreviewOrigin(origin) {
     return (
       host === 'localhost' ||
       host.endsWith('.localhost') ||
+      host === 'gocreate-app.web.app' ||
+      host === 'gocreate-app.firebaseapp.com' ||
+      host === 'gen-lang-client-0968841856.web.app' ||
+      host === 'gen-lang-client-0968841856.firebaseapp.com' ||
       host === 'gocreate.web.app' ||
       host === 'gocreate.firebaseapp.com' ||
       host.endsWith('.codesandbox.io') ||

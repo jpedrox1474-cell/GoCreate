@@ -1009,7 +1009,7 @@ async function createMpPaymentWithToken({
 
   if (method === 'preference') {
     const preference = new Preference(client);
-    const appUrl = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+    const appUrl = (process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
     const result = await preference.create({
       body: {
         items: [
@@ -1207,7 +1207,7 @@ export async function createProjectStripePayment({
   const title = String(description || 'Pagamento GoCreate').slice(0, 200);
 
   if (mode === 'checkout') {
-    const appUrl = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+    const appUrl = (process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
     let publicPathKey = projectId;
     if (projectId) {
       try {

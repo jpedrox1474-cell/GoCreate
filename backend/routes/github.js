@@ -25,7 +25,7 @@ import {
 const router = Router();
 
 function appBaseUrl() {
-  return (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+  return (process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
 }
 
 function frontendRedirect({ ok, error, login, returnPath }) {

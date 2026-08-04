@@ -30,7 +30,7 @@ function isMpPkceEnabled() {
 }
 
 export function getPublicApiUrl() {
-  return String(process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+  return String(process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
 }
 
 export function getOAuthConfig(platform) {

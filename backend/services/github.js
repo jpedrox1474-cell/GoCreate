@@ -20,7 +20,7 @@ export function isGitHubOAuthConfigured() {
 export function resolveGitHubRedirectUri() {
   const explicit = process.env.GITHUB_REDIRECT_URI?.trim();
   if (explicit) return explicit;
-  const app = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+  const app = (process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
   return `${app}/api/github/callback`;
 }
 

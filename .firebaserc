@@ -1,6 +1,8 @@
-{
+﻿{
   "projects": {
-    "default": "vexo-ef6e2"
+    "default": "gen-lang-client-0968841856",
+    "gocreate": "gen-lang-client-0968841856",
+    "vexo": "vexo-ef6e2"
   },
   "targets": {},
   "etags": {}

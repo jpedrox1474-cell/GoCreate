@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "gocreate",
+    "site": "gocreate-app",
     "public": "frontend/dist",
     "ignore": [
       "firebase.json",
@@ -25,7 +25,9 @@
     {
       "source": "functions",
       "codebase": "gocreate",
-      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run sync"],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run sync"
+      ],
       "ignore": [
         "node_modules",
         ".git",
@@ -46,15 +48,8 @@
       "emailPassword": true,
       "googleSignIn": {
         "oAuthBrandDisplayName": "GoCreate",
-        "supportEmail": "jpedrox1474@gmail.com",
-        "authorizedRedirectUris": [
-          "https://gocreate.web.app/__/auth/handler",
-          "https://gocreate.firebaseapp.com/__/auth/handler",
-          "https://vexo-ef6e2.firebaseapp.com/__/auth/handler",
-          "http://localhost/__/auth/handler"
-        ]
+        "supportEmail": "jpedrox1474@gmail.com"
       }
     }
   }
 }
-

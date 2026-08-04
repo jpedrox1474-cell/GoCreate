@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function initAdmin() {
   if (admin.apps.length) return;
 
-  const projectId = process.env.FIREBASE_PROJECT_ID || 'vexo-ef6e2';
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0968841856';
 
   if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
     admin.initializeApp({

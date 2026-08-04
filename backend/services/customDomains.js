@@ -6,14 +6,19 @@ import admin from '../config/firebaseAdmin.js';
 import { db } from '../config/firebaseAdmin.js';
 
 export const PLATFORM_HOSTS = new Set([
+  'gocreate-app.web.app',
+  'gocreate-app.firebaseapp.com',
+  'gen-lang-client-0968841856.web.app',
+  'gen-lang-client-0968841856.firebaseapp.com',
+  // legacy site ainda em vexo-ef6e2 (até migrar domínio)
   'gocreate.web.app',
   'gocreate.firebaseapp.com',
   'localhost',
   '127.0.0.1',
 ]);
 
-const FIREBASE_PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'vexo-ef6e2';
-const HOSTING_SITE = process.env.FIREBASE_HOSTING_SITE || 'gocreate';
+const FIREBASE_PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'gen-lang-client-0968841856';
+const HOSTING_SITE = process.env.FIREBASE_HOSTING_SITE || 'gocreate-app';
 
 /**
  * Try to register domain on Firebase Hosting (HTTPS). Requires SA with Firebase Hosting Admin.
@@ -166,7 +171,7 @@ export async function claimCustomDomain({ projectId, ownerId, host: rawHost }) {
     verified,
     verificationToken,
     txtRecord: `gocreate-verify=${verificationToken}`,
-    cnameTarget: 'gocreate.web.app',
+    cnameTarget: 'gocreate-app.web.app',
   };
 }
 
@@ -257,12 +262,12 @@ export async function verifyCustomDomainDns({ projectId }) {
       (c) =>
         String(c)
           .toLowerCase()
-          .replace(/\.$/, '') === 'gocreate.web.app'
+          .replace(/\.$/, '') === 'gocreate-app.web.app'
     );
     details.push(
       cnameOk
-        ? 'CNAME → gocreate.web.app OK'
-        : 'CNAME ainda não aponta para gocreate.web.app (opcional até o domínio estar no Hosting)'
+        ? 'CNAME → gocreate-app.web.app OK'
+        : 'CNAME ainda não aponta para gocreate-app.web.app (opcional até o domínio estar no Hosting)'
     );
   } catch {
     details.push('CNAME: ainda não resolvido (normal em apex ou antes da propagação)');
@@ -326,12 +331,12 @@ export function domainDnsInstructions({ host, verificationToken }) {
       {
         type: 'CNAME',
         name: host,
-        value: 'gocreate.web.app',
+        value: 'gocreate-app.web.app',
         purpose: 'Apontar o hostname para o Hosting GoCreate',
       },
     ],
     hostingSteps: [
-      'Firebase Console → Hosting → site gocreate → Add custom domain',
+      'Firebase Console → Hosting → site gocreate-app → Add custom domain',
       `Introduz ${host} e completa a verificação Firebase (pode pedir TXT extra)`,
       'Aguarda o certificado SSL (minutos a horas)',
     ],

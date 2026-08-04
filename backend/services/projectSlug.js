@@ -68,7 +68,7 @@ export function resolveProjectPublicKey(project, projectId) {
  * @param {'production'|'preview'} env
  */
 export function buildPublishUrl(publicKey, env = 'production') {
-  const origin = (process.env.PUBLIC_APP_URL || 'https://gocreate.web.app').replace(/\/$/, '');
+  const origin = (process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
   const key = String(publicKey || '').replace(/^\/+|\/+$/g, '');
   return env === 'preview' ? `${origin}/p/${key}/preview` : `${origin}/p/${key}`;
 }

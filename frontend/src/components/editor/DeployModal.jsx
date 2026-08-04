@@ -280,7 +280,7 @@ export default function DeployModal({
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1">URL fixo</p>
                 <p className="text-[11px] text-zinc-300 font-mono break-all">
-                  {(deployUrl || fixedUrl || 'gocreate.web.app/p/…').replace(/^https?:\/\//, '')}
+                  {(deployUrl || fixedUrl || 'gocreate-app.web.app/p/…').replace(/^https?:\/\//, '')}
                 </p>
               </div>
               <button
@@ -390,8 +390,8 @@ export default function DeployModal({
             <p className="text-[11px] text-zinc-500 leading-relaxed">
               Em Settings do projeto: define o hostname, cria TXT{' '}
               <span className="font-mono text-zinc-400">gocreate-verify=…</span> + CNAME →{' '}
-              <span className="font-mono text-zinc-400">gocreate.web.app</span>, verifica DNS, e
-              adiciona o domínio no Firebase Hosting (site gocreate).
+              <span className="font-mono text-zinc-400">gocreate-app.web.app</span>, verifica DNS, e
+              adiciona o domínio no Firebase Hosting (site gocreate-app).
             </p>
             {typeof onOpenSettings === 'function' ? (
               <button

@@ -327,7 +327,7 @@ export default function PreviewPane({
   const apiBase =
     typeof window !== 'undefined'
       ? window.location.origin
-      : 'https://gocreate.web.app';
+      : 'https://gocreate-app.web.app';
 
   const paymentsBootstrap = useMemo(() => {
     const pid = JSON.stringify(projectId || '');

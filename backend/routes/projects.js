@@ -572,7 +572,7 @@ router.get('/:projectId/openapi.json', async (req, res) => {
         description:
           'CRUD de entidades do projeto. Header `X-GoCreate-Key: gck_…` para nível authenticated; Bearer Firebase do dono = admin.',
       },
-      servers: [{ url: 'https://gocreate.web.app' }],
+      servers: [{ url: 'https://gocreate-app.web.app' }],
       paths: {
         [basePath]: {
           post: {

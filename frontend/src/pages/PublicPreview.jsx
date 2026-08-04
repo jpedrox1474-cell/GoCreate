@@ -4,7 +4,7 @@ import { Loader2, AlertTriangle } from 'lucide-react';
 import PreviewPane from '../components/editor/PreviewPane';
 import { getPublishedProject } from '../lib/projects';
 
-const GOCREATE_HOME = 'https://gocreate.web.app';
+const GOCREATE_HOME = 'https://gocreate-app.web.app';
 
 /** Free-plan watermark: only when snapshot says so (or legacy free default). */
 function shouldShowGoCreateBadge(publication) {

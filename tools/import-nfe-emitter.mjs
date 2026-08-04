@@ -186,7 +186,7 @@ async function main() {
   if (!admin.apps.length) {
     admin.initializeApp({
       credential: admin.credential.cert(sa),
-      projectId: sa.project_id || 'vexo-ef6e2',
+      projectId: sa.project_id || 'gen-lang-client-0968841856',
     });
   }
   const db = admin.firestore();
@@ -323,7 +323,7 @@ async function main() {
         projectName: PROJECT_NAME,
         fileCount: entries.length,
         chunks: chunks.length,
-        openUrl: `https://gocreate.web.app/editor/${projectId}`,
+        openUrl: `https://gocreate-app.web.app/editor/${projectId}`,
       },
       null,
       2

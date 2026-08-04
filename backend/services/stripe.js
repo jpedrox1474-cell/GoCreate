@@ -4,7 +4,7 @@
  * Env:
  *   STRIPE_SECRET_KEY          (sk_… or rk_…)
  *   STRIPE_WEBHOOK_SECRET      (whsec_…)
- *   PUBLIC_APP_URL             ex: https://gocreate.web.app
+ *   PUBLIC_APP_URL             ex: https://gocreate-app.web.app
  *
  * Pro only for now (same product catalog as mercadopago BILLING_PRODUCTS.pro).
  */
@@ -44,7 +44,7 @@ export function resolveAppUrl(req) {
   const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
   if (host) return `${proto}://${host}`;
 
-  return 'https://gocreate.web.app';
+  return 'https://gocreate-app.web.app';
 }
 
 /**
@@ -59,7 +59,7 @@ export async function createProCheckoutSession({
 }) {
   const product = BILLING_PRODUCTS.pro;
   const stripe = getStripe();
-  const base = (appUrl || 'https://gocreate.web.app').replace(/\/$/, '');
+  const base = (appUrl || 'https://gocreate-app.web.app').replace(/\/$/, '');
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',

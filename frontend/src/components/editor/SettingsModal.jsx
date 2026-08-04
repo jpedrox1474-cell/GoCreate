@@ -427,8 +427,8 @@ async function handleSave(e) {
                   </ul>
                 ) : (
                   <p className="text-[10px] text-zinc-600">
-                    TXT: gocreate-verify=… · CNAME → gocreate.web.app · depois Add custom domain no
-                    Firebase Hosting (site gocreate).
+                    TXT: gocreate-verify=… · CNAME → gocreate-app.web.app · depois Add custom domain no
+                    Firebase Hosting (site gocreate-app).
                   </p>
                 )}
               </div>

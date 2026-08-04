@@ -436,7 +436,7 @@ export function getPublishUrl(projectId, env = 'production', slug = null) {
   const origin =
     typeof window !== 'undefined' && window.location?.origin
       ? window.location.origin
-      : 'https://gocreate.web.app';
+      : 'https://gocreate-app.web.app';
   const key = getProjectPublicKey(slug, projectId) || projectId;
   const path = env === 'preview' ? `/p/${key}/preview` : `/p/${key}`;
   return `${origin}${path}`;

@@ -1,7 +1,7 @@
 // Cliente do POST /api/chat (SSE).
 // Contrato: eventos { type: 'chunk'|'done'|'error', text?, message?, model? }
 //
-// VITE_API_URL vazio → same-origin `/api/chat` (gocreate.web.app rewrite → gocreateApi).
+// VITE_API_URL vazio → same-origin `/api/chat` (gocreate-app.web.app rewrite → gocreateApi).
 // Local: VITE_API_URL=http://localhost:4000
 
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');

@@ -3,7 +3,7 @@
  * Generated apps call window.GoCreateAuth.signInWithGoogle() for real Firebase Google Auth.
  *
  * When running inside an iframe (Sandpack on *.codesandbox.io), OAuth must run on the
- * parent origin (gocreate.web.app) via postMessage — Firebase rejects unauthorized domains.
+ * parent origin (gocreate-app.web.app) via postMessage — Firebase rejects unauthorized domains.
  *
  * After Google sign-in, access is gated by project.authAccess (owner_only | invited).
  *

@@ -20,6 +20,10 @@ import PublicPreview from './pages/PublicPreview';
 import { resolveCustomHost } from './lib/deployApi';
 
 const PLATFORM_HOSTS = new Set([
+  'gocreate-app.web.app',
+  'gocreate-app.firebaseapp.com',
+  'gen-lang-client-0968841856.web.app',
+  'gen-lang-client-0968841856.firebaseapp.com',
   'gocreate.web.app',
   'gocreate.firebaseapp.com',
   'localhost',

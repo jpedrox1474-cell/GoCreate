@@ -1,4 +1,17 @@
 rules_version = '2';
+
+/**
+ * Firestore rules — projeto GoCreate dedicado: gen-lang-client-0968841856
+ *
+ * ⛔ NÃO faça deploy destas rules em vexo-ef6e2 (DB compartilhado com Promifer/Lava Japa).
+ * Alias vexo no .firebaserc aponta para vexo-ef6e2 — use só se souber o que está a fazer.
+ *
+ * Source of truth para firestore:rules no projeto vexo-ef6e2 (legado):
+ *   C:\Projetos\Promifer\firestore.rules
+ *
+ * Deploy GoCreate:
+ *   npx firebase-tools@latest deploy --only firestore:rules --project gen-lang-client-0968841856
+ */
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {

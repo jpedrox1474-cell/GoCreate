@@ -15,7 +15,7 @@
     try {
       return global.location.origin;
     } catch {
-      return 'https://gocreate.web.app';
+      return 'https://gocreate-app.web.app';
     }
   }
 

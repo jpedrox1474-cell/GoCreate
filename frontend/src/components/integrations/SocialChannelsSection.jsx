@@ -369,9 +369,9 @@ export default function SocialChannelsSection({
                 Meta Developer
               </a>
               , App Domains e Allowed Domains for the JavaScript SDK devem incluir{' '}
-              <span className="font-mono text-zinc-500">gocreate.web.app</span> e{' '}
+              <span className="font-mono text-zinc-500">gocreate-app.web.app</span> e{' '}
               <span className="font-mono text-zinc-500">localhost</span>. Redirects:{' '}
-              <span className="font-mono text-zinc-500">https://gocreate.web.app/</span> e{' '}
+              <span className="font-mono text-zinc-500">https://gocreate-app.web.app/</span> e{' '}
               <span className="font-mono text-zinc-500">/integrations</span>.
             </p>
           ) : null}
