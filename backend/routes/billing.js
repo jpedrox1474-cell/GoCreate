@@ -19,6 +19,7 @@ import {
   createCheckoutPreference,
   createPixPayment,
   getPaymentById,
+  findPaymentByExternalReference,
   verifyWebhookSignature,
   extractPaymentIdFromNotification,
   resolveNotificationUrl,
@@ -299,9 +300,14 @@ router.get('/status/:transactionId', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Sem permissão.' });
     }
 
-    if (data.status === 'pending' && data.mpPaymentId && isMercadoPagoConfigured()) {
+    if (data.status === 'pending' && isMercadoPagoConfigured()) {
       try {
-        const payment = await getPaymentById(data.mpPaymentId);
+        let payment = null;
+        if (data.mpPaymentId) {
+          payment = await getPaymentById(data.mpPaymentId);
+        } else {
+          payment = await findPaymentByExternalReference(transactionId);
+        }
         if (payment?.status === 'approved') {
           await fulfillTransaction({
             transactionId,
@@ -316,11 +322,13 @@ router.get('/status/:transactionId', requireAuth, async (req, res) => {
             plan: data.plan,
           });
         }
-        return res.json({
-          transactionId,
-          status: 'pending',
-          mpStatus: payment?.status || data.mpStatus || null,
-        });
+        if (payment) {
+          return res.json({
+            transactionId,
+            status: 'pending',
+            mpStatus: payment?.status || data.mpStatus || null,
+          });
+        }
       } catch (pollErr) {
         console.warn('[billing/status] poll MP:', pollErr?.message || pollErr);
       }
@@ -342,8 +350,9 @@ router.get('/status/:transactionId', requireAuth, async (req, res) => {
 
 /**
  * POST /api/billing/webhook — Mercado Pago Notifications
+ * GET  /api/billing/webhook — IPN legado (?topic=payment&id=…)
  */
-router.post('/webhook', async (req, res) => {
+async function handleMercadoPagoWebhook(req, res) {
   try {
     const sig = verifyWebhookSignature({
       headers: req.headers,
@@ -353,6 +362,11 @@ router.post('/webhook', async (req, res) => {
     if (!sig.ok) {
       console.warn('[billing/webhook] assinatura inválida:', sig.reason);
       return res.status(401).json({ error: 'Assinatura inválida.' });
+    }
+    if (sig.skipped === 'missing_signature_headers') {
+      console.warn(
+        '[billing/webhook] sem x-signature — a aceitar (IPN). Configure MERCADOPAGO_WEBHOOK_SECRET só com a Assinatura secreta do painel Webhooks.'
+      );
     }
 
     const topic = req.query?.topic || req.query?.type || req.body?.type || req.body?.action;
@@ -421,7 +435,10 @@ router.post('/webhook', async (req, res) => {
     console.error('[billing/webhook]', err);
     return res.status(200).json({ ok: false, error: err.message });
   }
-});
+}
+
+router.post('/webhook', handleMercadoPagoWebhook);
+router.get('/webhook', handleMercadoPagoWebhook);
 
 /**
  * Stripe webhook handler — must be mounted with express.raw({ type: 'application/json' }).

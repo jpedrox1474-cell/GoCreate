@@ -8,6 +8,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from './AuthContext';
@@ -17,12 +18,16 @@ import {
   isOwnerUser,
   PREMIUM_REQUIRED_MESSAGE,
 } from '../lib/plans';
+import { getPaymentStatus } from '../lib/billingApi';
 import PricingModal from '../components/PricingModal';
+import Toast from '../components/Toast';
 
 const CreditsContext = createContext(null);
 
 export function CreditsProvider({ children }) {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [credits, setCredits] = useState(null);
   const [plan, setPlan] = useState('free');
   const [role, setRole] = useState('user');
@@ -30,6 +35,7 @@ export function CreditsProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [pricingMessage, setPricingMessage] = useState(null);
+  const [billingToast, setBillingToast] = useState(null);
 
   useEffect(() => {
     if (!user?.uid) {
@@ -68,6 +74,112 @@ export function CreditsProvider({ children }) {
     );
     return unsub;
   }, [user?.uid]);
+
+  // Retorno do Checkout MP/Stripe: ?billing=success&tx=… → poll até fulfill
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const params = new URLSearchParams(location.search || '');
+    const billing = params.get('billing');
+    const tx = params.get('tx');
+    if (!billing) return undefined;
+
+    const cleanUrl = () => {
+      params.delete('billing');
+      params.delete('tx');
+      const next = params.toString();
+      navigate(
+        { pathname: location.pathname, search: next ? `?${next}` : '' },
+        { replace: true }
+      );
+    };
+
+    if (billing === 'failure' || billing === 'stripe_cancel') {
+      setBillingToast({
+        message: 'Pagamento cancelado ou falhou. Podes tentar de novo.',
+        type: 'error',
+      });
+      cleanUrl();
+      return undefined;
+    }
+
+    if (billing === 'pending') {
+      setBillingToast({
+        message: 'Pagamento pendente. Os créditos entram quando for aprovado.',
+        type: 'info',
+      });
+      cleanUrl();
+      return undefined;
+    }
+
+    if (billing !== 'success' && billing !== 'stripe_success') {
+      return undefined;
+    }
+
+    if (!tx) {
+      setBillingToast({
+        message: 'Pagamento recebido. O plano atualiza em instantes.',
+        type: 'success',
+      });
+      cleanUrl();
+      return undefined;
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+    setBillingToast({
+      message: 'A confirmar pagamento…',
+      type: 'info',
+    });
+
+    const poll = async () => {
+      attempts += 1;
+      try {
+        const idToken = await user.getIdToken();
+        const status = await getPaymentStatus({ transactionId: tx, idToken });
+        if (cancelled) return true;
+        if (status?.status === 'completed') {
+          setBillingToast({
+            message:
+              status.plan === 'pro'
+                ? 'Plano Pro ativado. Créditos atualizados.'
+                : 'Pagamento confirmado. Créditos atualizados.',
+            type: 'success',
+          });
+          cleanUrl();
+          return true;
+        }
+      } catch (err) {
+        console.warn('[CreditsContext] billing poll:', err);
+      }
+      if (attempts >= 12) {
+        if (!cancelled) {
+          setBillingToast({
+            message:
+              'Pagamento em processamento. O plano deve atualizar em breve via webhook.',
+            type: 'info',
+          });
+          cleanUrl();
+        }
+        return true;
+      }
+      return false;
+    };
+
+    let timer = null;
+    (async () => {
+      const done = await poll();
+      if (done || cancelled) return;
+      timer = setInterval(async () => {
+        const doneNow = await poll();
+        if (doneNow && timer) clearInterval(timer);
+      }, 2500);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [user, location.search, location.pathname, navigate]);
 
   const openPricing = useCallback((message) => {
     setPricingMessage(
@@ -147,6 +259,14 @@ export function CreditsProvider({ children }) {
         currentPlan={plan === 'enterprise_master' ? 'pro' : plan}
         message={pricingMessage}
       />
+      {billingToast && (
+        <Toast
+          message={billingToast.message}
+          type={billingToast.type}
+          onClose={() => setBillingToast(null)}
+          duration={5000}
+        />
+      )}
     </CreditsContext.Provider>
   );
 }

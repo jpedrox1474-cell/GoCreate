@@ -4,9 +4,9 @@
  * Env:
  *   MERCADOPAGO_ACCESS_TOKEN        (billing / fallback — preferir TEST- para Pix)
  *   MERCADOPAGO_TEST_ACCESS_TOKEN   (preferido em GoCreatePayments / public-create-payment)
- *   MERCADOPAGO_WEBHOOK_SECRET      (opcional — valida x-signature)
- *   MERCADOPAGO_NOTIFICATION_URL    ex: https://gocreate.web.app/api/billing/webhook
- *   PUBLIC_APP_URL                  ex: https://gocreate.web.app
+ *   MERCADOPAGO_WEBHOOK_SECRET      (opcional — Assinatura secreta do painel Webhooks, NÃO OAuth)
+ *   MERCADOPAGO_NOTIFICATION_URL    ex: https://gocreate-app.web.app/api/billing/webhook
+ *   PUBLIC_APP_URL                  ex: https://gocreate-app.web.app
  *
  * Futuro Stripe: espelhar createCheckoutSession / constructWebhookEvent
  * em services/stripe.js e ramificar em routes/billing.js por provider.
@@ -158,7 +158,7 @@ export function resolveNotificationUrl(req) {
   const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
   if (host) return `${proto}://${host}/api/billing/webhook`;
 
-  return 'https://gocreate.web.app/api/billing/webhook';
+  return 'https://gocreate-app.web.app/api/billing/webhook';
 }
 
 export function resolveAppUrl(req) {
@@ -169,7 +169,7 @@ export function resolveAppUrl(req) {
   const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
   if (host) return `${proto}://${host}`;
 
-  return 'https://gocreate.web.app';
+  return 'https://gocreate-app.web.app';
 }
 
 /**
@@ -293,8 +293,42 @@ export async function getPaymentById(paymentId) {
 }
 
 /**
+ * Procura pagamento aprovado (ou o mais recente) por external_reference.
+ * Útil no retorno do Checkout Pro quando ainda não temos mpPaymentId.
+ */
+export async function findPaymentByExternalReference(externalReference) {
+  const accessToken = getAccessToken() || getTestAccessToken();
+  if (!accessToken || !externalReference) return null;
+
+  const url = new URL('https://api.mercadopago.com/v1/payments/search');
+  url.searchParams.set('external_reference', String(externalReference));
+  url.searchParams.set('sort', 'date_created');
+  url.searchParams.set('criteria', 'desc');
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    const err = new Error(`MP search failed (${res.status}): ${text.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  const results = Array.isArray(data?.results) ? data.results : [];
+  if (!results.length) return null;
+  const approved = results.find((p) => p?.status === 'approved');
+  return approved || results[0] || null;
+}
+
+/**
  * Valida x-signature do webhook (quando MERCADOPAGO_WEBHOOK_SECRET está definido).
+ * Secret = painel MP → Webhooks → Assinatura secreta (NÃO o OAuth Client Secret).
  * Docs: https://www.mercadopago.com.br/developers/pt/docs/your-integrations/notifications/webhooks
+ *
+ * Sem secret: aceita (notification_url / IPN legado).
+ * Com secret mas sem headers: aceita com warn (IPN não assina).
+ * Com secret + headers: HMAC obrigatório.
  */
 export function verifyWebhookSignature({ headers, query, body }) {
   const secret = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
@@ -303,7 +337,7 @@ export function verifyWebhookSignature({ headers, query, body }) {
   const xSignature = headers['x-signature'] || headers['X-Signature'];
   const xRequestId = headers['x-request-id'] || headers['X-Request-Id'];
   if (!xSignature || !xRequestId) {
-    return { ok: false, reason: 'missing_signature_headers' };
+    return { ok: true, skipped: 'missing_signature_headers' };
   }
 
   const parts = Object.fromEntries(
@@ -316,13 +350,21 @@ export function verifyWebhookSignature({ headers, query, body }) {
   const hash = parts.v1;
   if (!ts || !hash) return { ok: false, reason: 'malformed_x_signature' };
 
-  const dataId =
-    query?.['data.id'] ||
-    query?.id ||
-    body?.data?.id ||
-    '';
+  // MP: data.id alfanumérico deve ir em minúsculas no manifest.
+  let dataId = String(
+    query?.['data.id'] || query?.id || body?.data?.id || ''
+  ).trim();
+  if (dataId && /[a-zA-Z]/.test(dataId)) {
+    dataId = dataId.toLowerCase();
+  }
 
-  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  // Campos ausentes saem do template (doc MP).
+  const manifestParts = [];
+  if (dataId) manifestParts.push(`id:${dataId}`);
+  if (xRequestId) manifestParts.push(`request-id:${xRequestId}`);
+  manifestParts.push(`ts:${ts}`);
+  const manifest = `${manifestParts.join(';')};`;
+
   const expected = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
 
   const a = Buffer.from(expected, 'utf8');
