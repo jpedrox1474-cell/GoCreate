@@ -1,15 +1,16 @@
 /**
- * Mercado Pago — Checkout Preferences (Pro) + Pix Payments (Turbo).
+ * Mercado Pago — Payment Brick (Pro transparente) + Pix Payments (Turbo).
  *
  * Env:
  *   MERCADOPAGO_ACCESS_TOKEN        (billing / fallback — preferir TEST- para Pix)
  *   MERCADOPAGO_TEST_ACCESS_TOKEN   (preferido em GoCreatePayments / public-create-payment)
+ *   MERCADOPAGO_PUBLIC_KEY          (chave pública — Payment Brick / frontend; segura expor)
  *   MERCADOPAGO_WEBHOOK_SECRET      (opcional — Assinatura secreta do painel Webhooks, NÃO OAuth)
  *   MERCADOPAGO_NOTIFICATION_URL    ex: https://gocreate-app.web.app/api/billing/webhook
  *   PUBLIC_APP_URL                  ex: https://gocreate-app.web.app
  *
- * Futuro Stripe: espelhar createCheckoutSession / constructWebhookEvent
- * em services/stripe.js e ramificar em routes/billing.js por provider.
+ * Checkout Pro (preference init_point) fica só como fallback legado.
+ * Stripe: services/stripe.js + routes/billing.js.
  */
 
 import crypto from 'crypto';
@@ -38,6 +39,20 @@ export const BILLING_PRODUCTS = {
 
 export function getAccessToken() {
   return String(process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
+}
+
+/** Chave pública (TEST-… / APP_USR-…) — segura para expor no frontend / /api/billing/config. */
+export function getPublicKey() {
+  return String(
+    process.env.MERCADOPAGO_PUBLIC_KEY ||
+      process.env.MERCADOPAGO_PUBLIC_KEY_TEST ||
+      process.env.MP_PUBLIC_KEY ||
+      ''
+  ).trim();
+}
+
+export function isPublicKeyConfigured() {
+  return Boolean(getPublicKey());
 }
 
 /** Credenciais sandbox clássicas (TEST-…) — necessárias para Payments API / Pix. */
@@ -173,7 +188,8 @@ export function resolveAppUrl(req) {
 }
 
 /**
- * Preferência Checkout Pro — redireciona para init_point (cartão / Pix no MP).
+ * Preferência Checkout Pro — redireciona para init_point (legado / fallback).
+ * Com purpose wallet_purchase também serve ao Payment Brick (método Conta MP).
  */
 export async function createCheckoutPreference({
   product,
@@ -182,8 +198,9 @@ export async function createCheckoutPreference({
   email,
   notificationUrl,
   appUrl,
+  purpose = null,
 }) {
-  const client = getClient();
+  const client = getClient({ preferTest: true });
   const preference = new Preference(client);
 
   const body = {
@@ -218,8 +235,15 @@ export async function createCheckoutPreference({
     statement_descriptor: 'GOCREATE',
   };
 
+  if (purpose) {
+    body.purpose = purpose;
+  }
+
   const result = await preference.create({ body });
-  const token = getAccessToken() || getTestAccessToken();
+  const token =
+    getAccessTokenForAppPayments({ preferTest: true })?.accessToken ||
+    getAccessToken() ||
+    getTestAccessToken();
   const sandbox = isTestAccessToken(token);
 
   return {
@@ -229,6 +253,84 @@ export async function createCheckoutPreference({
       : result.init_point || result.sandbox_init_point,
     sandboxInitPoint: result.sandbox_init_point || null,
   };
+}
+
+/**
+ * Processa formData do Payment Brick → POST /v1/payments.
+ * Sempre sobrescreve transaction_amount / external_reference com dados do servidor.
+ */
+export async function processBrickPayment({
+  formData,
+  product,
+  transactionId,
+  userId,
+  email,
+  notificationUrl,
+}) {
+  const client = getClient({ preferTest: true });
+  const payment = new Payment(client);
+  const idempotencyKey = `gocreate-brick-${transactionId}-${Date.now()}`;
+
+  const raw = formData && typeof formData === 'object' ? { ...formData } : {};
+  const payerFromBrick = raw.payer && typeof raw.payer === 'object' ? { ...raw.payer } : {};
+  const payerEmail =
+    payerFromBrick.email ||
+    (email && !/@testuser\.com$/i.test(email) ? email : null) ||
+    `user_${userId}@gocreate.app`;
+
+  const body = {
+    ...raw,
+    transaction_amount: Number(product.amount),
+    description: product.title,
+    external_reference: String(transactionId),
+    notification_url: notificationUrl,
+    metadata: {
+      ...(raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {}),
+      transactionId,
+      userId,
+      plan: product.plan || product.id,
+      type: product.type,
+      credits: product.credits,
+      provider: 'mercadopago',
+      checkout: 'brick',
+    },
+    payer: {
+      ...payerFromBrick,
+      email: payerEmail,
+    },
+  };
+
+  // Garantir installments para cartão
+  if (body.token && (body.installments == null || body.installments === '')) {
+    body.installments = 1;
+  }
+
+  try {
+    const result = await payment.create({
+      body,
+      requestOptions: { idempotencyKey },
+    });
+
+    const txData = result.point_of_interaction?.transaction_data || {};
+    const ticketUrl =
+      txData.ticket_url ||
+      result.transaction_details?.external_resource_url ||
+      null;
+
+    return {
+      paymentId: result.id,
+      status: result.status,
+      statusDetail: result.status_detail || null,
+      paymentMethodId: result.payment_method_id || raw.payment_method_id || null,
+      paymentTypeId: result.payment_type_id || null,
+      qrCode: txData.qr_code || null,
+      qrCodeBase64: txData.qr_code_base64 || null,
+      ticketUrl,
+      barcode: txData.barcode || result.barcode?.content || null,
+    };
+  } catch (err) {
+    throw mapMercadoPagoPaymentError(err);
+  }
 }
 
 /**

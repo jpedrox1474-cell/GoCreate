@@ -1,9 +1,11 @@
 // Rotas de billing / créditos — Mercado Pago (Brasil) + Stripe Checkout (internacional).
 //
-// Fluxo MP:
-// 1. POST /api/billing/create-payment (auth) → Preference (Pro) ou Pix (Turbo)
-// 2. POST /api/billing/webhook → valida, fulfillTransaction()
-// 3. GET /api/billing/status/:transactionId (auth) → polling Pix
+// Fluxo MP (Payment Brick — checkout transparente):
+// 1. GET  /api/billing/config (público) → publicKey + produtos
+// 2. POST /api/billing/create-payment (auth) → Brick session (Pro) ou Pix (Turbo)
+// 3. POST /api/billing/process-payment (auth) → Payments API com formData do Brick
+// 4. POST /api/billing/webhook → valida, fulfillTransaction()
+// 5. GET  /api/billing/status/:transactionId (auth) → polling Pix/boleto
 //
 // Fluxo Stripe (opcional — requer STRIPE_SECRET_KEY):
 // 1. POST /api/billing/stripe-checkout (auth) → Checkout Session (Pro)
@@ -16,8 +18,11 @@ import { db } from '../config/firebaseAdmin.js';
 import {
   BILLING_PRODUCTS,
   isMercadoPagoConfigured,
+  getPublicKey,
+  isPublicKeyConfigured,
   createCheckoutPreference,
   createPixPayment,
+  processBrickPayment,
   getPaymentById,
   findPaymentByExternalReference,
   verifyWebhookSignature,
@@ -100,7 +105,9 @@ export async function fulfillTransaction({
 
 /**
  * POST /api/billing/create-payment
- * Body: { productId: 'pro' | 'turbo' }
+ * Body: { productId: 'pro' | 'turbo', mode?: 'brick' | 'checkout' }
+ * Pro → Payment Brick (transparente). Turbo → Pix QR.
+ * mode=checkout força Preference Checkout Pro (legado).
  */
 router.post('/create-payment', requireAuth, async (req, res) => {
   try {
@@ -120,6 +127,10 @@ router.post('/create-payment', requireAuth, async (req, res) => {
         error: 'productId inválido. Use "pro" ou "turbo".',
       });
     }
+
+    const forceCheckoutPro =
+      String(req.body?.mode || '').toLowerCase() === 'checkout' ||
+      req.body?.legacyCheckout === true;
 
     const notificationUrl = resolveNotificationUrl(req);
     const appUrl = resolveAppUrl(req);
@@ -169,28 +180,87 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       });
     }
 
-    const pref = await createCheckoutPreference({
-      product,
-      transactionId,
-      userId: req.user.uid,
-      email,
-      notificationUrl,
-      appUrl,
-    });
+    // Pro — Payment Brick (preferido) ou Checkout Pro legado
+    let pref;
+    try {
+      pref = await createCheckoutPreference({
+        product,
+        transactionId,
+        userId: req.user.uid,
+        email,
+        notificationUrl,
+        appUrl,
+        purpose: forceCheckoutPro ? null : 'wallet_purchase',
+      });
+    } catch (prefErr) {
+      if (!forceCheckoutPro) {
+        console.warn(
+          '[billing/create-payment] preference wallet_purchase falhou, retry sem purpose:',
+          prefErr?.message || prefErr
+        );
+        pref = await createCheckoutPreference({
+          product,
+          transactionId,
+          userId: req.user.uid,
+          email,
+          notificationUrl,
+          appUrl,
+          purpose: null,
+        });
+      } else {
+        throw prefErr;
+      }
+    }
 
     await txRef.update({
       mpPreferenceId: pref.preferenceId || null,
+      checkoutMode: forceCheckoutPro ? 'checkout_pro' : 'brick',
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    if (forceCheckoutPro) {
+      return res.status(201).json({
+        provider: 'mercadopago',
+        mode: 'checkout',
+        transactionId,
+        preferenceId: pref.preferenceId,
+        checkoutUrl: pref.initPoint,
+        amount: product.amount,
+        credits: product.credits,
+        stripeAvailable: isStripeConfigured(),
+      });
+    }
+
+    const publicKey = getPublicKey();
+    if (!publicKey) {
+      // Sem public key → fallback Checkout Pro para não bloquear vendas
+      console.warn(
+        '[billing/create-payment] MERCADOPAGO_PUBLIC_KEY ausente — fallback Checkout Pro.'
+      );
+      return res.status(201).json({
+        provider: 'mercadopago',
+        mode: 'checkout',
+        transactionId,
+        preferenceId: pref.preferenceId,
+        checkoutUrl: pref.initPoint,
+        amount: product.amount,
+        credits: product.credits,
+        stripeAvailable: isStripeConfigured(),
+        warning: 'MP_PUBLIC_KEY_MISSING',
+      });
+    }
+
     return res.status(201).json({
       provider: 'mercadopago',
-      mode: 'checkout',
+      mode: 'brick',
       transactionId,
       preferenceId: pref.preferenceId,
-      checkoutUrl: pref.initPoint,
       amount: product.amount,
       credits: product.credits,
+      currency: product.currency || 'BRL',
+      title: product.title,
+      publicKey,
+      payerEmail: email,
       stripeAvailable: isStripeConfigured(),
     });
   } catch (err) {
@@ -198,6 +268,119 @@ router.post('/create-payment', requireAuth, async (req, res) => {
     const status = err.status || 500;
     return res.status(status).json({
       error: err.message || 'Falha ao criar pagamento.',
+      code: err.code || undefined,
+    });
+  }
+});
+
+/**
+ * POST /api/billing/process-payment
+ * Body: { transactionId, formData, selectedPaymentMethod? }
+ * Recebe formData do Payment Brick e cria o pagamento na API MP.
+ */
+router.post('/process-payment', requireAuth, async (req, res) => {
+  try {
+    if (!isMercadoPagoConfigured()) {
+      return res.status(503).json({
+        error: 'MERCADOPAGO_ACCESS_TOKEN não configurado.',
+        code: 'MP_NOT_CONFIGURED',
+      });
+    }
+
+    const transactionId = String(req.body?.transactionId || '').trim();
+    const formData = req.body?.formData;
+    if (!transactionId) {
+      return res.status(400).json({ error: 'transactionId é obrigatório.' });
+    }
+    if (!formData || typeof formData !== 'object') {
+      return res.status(400).json({ error: 'formData do Payment Brick é obrigatório.' });
+    }
+
+    const snap = await db.collection('transactions').doc(transactionId).get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Transaction não encontrada.' });
+    }
+    const tx = snap.data() || {};
+    if (tx.userId !== req.user.uid) {
+      return res.status(403).json({ error: 'Sem permissão.' });
+    }
+    if (tx.status === 'completed') {
+      return res.json({
+        transactionId,
+        status: 'approved',
+        alreadyCompleted: true,
+        credits: tx.credits,
+        plan: tx.plan,
+      });
+    }
+
+    const productId = String(tx.productId || tx.plan || 'pro').toLowerCase();
+    const product = BILLING_PRODUCTS[productId] || {
+      id: productId,
+      title: tx.plan ? `GoCreate ${tx.plan}` : 'GoCreate',
+      amount: Number(tx.amount) || 0,
+      credits: Number(tx.credits) || 0,
+      type: tx.type || 'subscription',
+      plan: tx.plan || productId,
+      currency: 'BRL',
+    };
+
+    const notificationUrl = resolveNotificationUrl(req);
+    const result = await processBrickPayment({
+      formData,
+      product,
+      transactionId,
+      userId: req.user.uid,
+      email: req.user.email || null,
+      notificationUrl,
+    });
+
+    await db
+      .collection('transactions')
+      .doc(transactionId)
+      .set(
+        {
+          mpPaymentId: result.paymentId ? String(result.paymentId) : null,
+          mpStatus: result.status || null,
+          mpStatusDetail: result.statusDetail || null,
+          mpPaymentMethodId: result.paymentMethodId || null,
+          selectedPaymentMethod: req.body?.selectedPaymentMethod || null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+    if (result.status === 'approved') {
+      await fulfillTransaction({
+        transactionId,
+        provider: 'mercadopago',
+        providerPaymentId: result.paymentId,
+        paymentStatus: result.status,
+      });
+    }
+
+    return res.status(201).json({
+      provider: 'mercadopago',
+      mode: 'brick',
+      transactionId,
+      paymentId: result.paymentId,
+      status: result.status,
+      statusDetail: result.statusDetail,
+      paymentMethodId: result.paymentMethodId,
+      paymentTypeId: result.paymentTypeId,
+      amount: product.amount,
+      credits: product.credits,
+      plan: product.plan,
+      qrCode: result.qrCode,
+      qrCodeBase64: result.qrCodeBase64,
+      ticketUrl: result.ticketUrl,
+      barcode: result.barcode,
+    });
+  } catch (err) {
+    console.error('[billing/process-payment]', err);
+    const status = err.status || 500;
+    return res.status(status).json({
+      error: err.message || 'Falha ao processar pagamento.',
       code: err.code || undefined,
     });
   }
@@ -282,6 +465,34 @@ router.get('/providers', (_req, res) => {
   res.json({
     mercadopago: isMercadoPagoConfigured(),
     stripe: isStripeConfigured(),
+    brick: isMercadoPagoConfigured() && isPublicKeyConfigured(),
+  });
+});
+
+/**
+ * GET /api/billing/config — chave pública + catálogo (sem access token).
+ */
+router.get('/config', (_req, res) => {
+  const publicKey = getPublicKey();
+  res.json({
+    mercadopago: isMercadoPagoConfigured(),
+    brick: Boolean(publicKey) && isMercadoPagoConfigured(),
+    publicKey: publicKey || null,
+    stripe: isStripeConfigured(),
+    products: Object.fromEntries(
+      Object.entries(BILLING_PRODUCTS).map(([id, p]) => [
+        id,
+        {
+          id: p.id,
+          title: p.title,
+          amount: p.amount,
+          credits: p.credits,
+          currency: p.currency || 'BRL',
+          type: p.type,
+          plan: p.plan,
+        },
+      ])
+    ),
   });
 });
 

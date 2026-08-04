@@ -1,5 +1,4 @@
-// Cliente billing — Mercado Pago create-payment + status poll.
-// VITE_API_URL vazio → same-origin /api/* (Hosting → gocreateApi).
+// Cliente billing — Mercado Pago Payment Brick + Pix + Stripe.
 
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
@@ -8,16 +7,50 @@ function billingUrl(path) {
 }
 
 /**
- * @param {{ productId: 'pro'|'turbo', idToken: string }} opts
+ * @param {{ productId: 'pro'|'turbo', idToken: string, mode?: 'brick'|'checkout' }} opts
  */
-export async function createPayment({ productId, idToken }) {
+export async function createPayment({ productId, idToken, mode }) {
+  const body = { productId };
+  if (mode) body.mode = mode;
+
   const res = await fetch(billingUrl('/create-payment'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ productId }),
+    body: JSON.stringify(body),
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    // ignore
+  }
+
+  if (!res.ok) {
+    const err = new Error(data?.message || data?.error || `Erro HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = data?.code;
+    throw err;
+  }
+
+  return data;
+}
+
+/**
+ * Processa formData do Payment Brick.
+ * @param {{ transactionId: string, formData: object, selectedPaymentMethod?: string, idToken: string }} opts
+ */
+export async function processPayment({ transactionId, formData, selectedPaymentMethod, idToken }) {
+  const res = await fetch(billingUrl('/process-payment'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ transactionId, formData, selectedPaymentMethod }),
   });
 
   let data = null;
@@ -69,15 +102,28 @@ export async function createStripeCheckout({ productId = 'pro', idToken }) {
 }
 
 /**
- * @returns {Promise<{ mercadopago: boolean, stripe: boolean }>}
+ * @returns {Promise<{ mercadopago: boolean, stripe: boolean, brick?: boolean, publicKey?: string|null, products?: object }>}
+ */
+export async function getBillingConfig() {
+  try {
+    const res = await fetch(billingUrl('/config'));
+    if (!res.ok) return { mercadopago: false, stripe: false, brick: false, publicKey: null };
+    return await res.json();
+  } catch {
+    return { mercadopago: false, stripe: false, brick: false, publicKey: null };
+  }
+}
+
+/**
+ * @returns {Promise<{ mercadopago: boolean, stripe: boolean, brick?: boolean }>}
  */
 export async function getBillingProviders() {
   try {
     const res = await fetch(billingUrl('/providers'));
-    if (!res.ok) return { mercadopago: false, stripe: false };
+    if (!res.ok) return { mercadopago: false, stripe: false, brick: false };
     return await res.json();
   } catch {
-    return { mercadopago: false, stripe: false };
+    return { mercadopago: false, stripe: false, brick: false };
   }
 }
 
@@ -105,4 +151,11 @@ export async function getPaymentStatus({ transactionId, idToken }) {
   return data;
 }
 
-export default { createPayment, createStripeCheckout, getBillingProviders, getPaymentStatus };
+export default {
+  createPayment,
+  processPayment,
+  createStripeCheckout,
+  getBillingConfig,
+  getBillingProviders,
+  getPaymentStatus,
+};
