@@ -24,6 +24,7 @@ import {
 } from '../lib/projects';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
+import { listSharedProjects } from '../lib/meApi';
 import Toast from '../components/Toast';
 import ProjectActionsMenu from '../components/ProjectActionsMenu';
 import ProjectCardThumbnail from '../components/ProjectCardThumbnail';
@@ -67,15 +68,35 @@ export default function Dashboard() {
     if (!user?.uid) return;
     setLoading(true);
     try {
-      const list = await listUserProjects(user.uid);
-      setProjects(list);
+      const owned = await listUserProjects(user.uid);
+      let shared = [];
+      try {
+        if (user.getIdToken) {
+          const idToken = await user.getIdToken();
+          shared = await listSharedProjects(idToken);
+        }
+      } catch {
+        shared = [];
+      }
+      const ownedIds = new Set(owned.map((p) => p.id));
+      const merged = [
+        ...owned,
+        ...shared
+          .filter((p) => !ownedIds.has(p.id))
+          .map((p) => ({
+            ...p,
+            sharedRole: p.role,
+            description: p.description || `Partilhado · ${p.role}`,
+          })),
+      ];
+      setProjects(merged);
     } catch (err) {
       console.error('[Dashboard] list:', err);
       setToast({ message: 'Não foi possível carregar os projetos.', type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [user?.uid]);
+  }, [user]);
 
   useEffect(() => {
     refresh();

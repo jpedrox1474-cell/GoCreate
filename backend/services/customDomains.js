@@ -12,6 +12,61 @@ export const PLATFORM_HOSTS = new Set([
   '127.0.0.1',
 ]);
 
+const FIREBASE_PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'vexo-ef6e2';
+const HOSTING_SITE = process.env.FIREBASE_HOSTING_SITE || 'gocreate';
+
+/**
+ * Try to register domain on Firebase Hosting (HTTPS). Requires SA with Firebase Hosting Admin.
+ */
+export async function registerHostingCustomDomain(host) {
+  try {
+    const { GoogleAuth } = await import('google-auth-library');
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    const client = await auth.getClient();
+    const tokenRes = await client.getAccessToken();
+    const token = tokenRes?.token;
+    if (!token) {
+      return {
+        ok: false,
+        error: 'Sem access token para Hosting API.',
+        consoleUrl: `https://console.firebase.google.com/project/${FIREBASE_PROJECT}/hosting/sites/${HOSTING_SITE}`,
+      };
+    }
+
+    const url = `https://firebasehosting.googleapis.com/v1beta1/projects/${FIREBASE_PROJECT}/sites/${HOSTING_SITE}/customDomains?customDomainId=${encodeURIComponent(host)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok || res.status === 409) {
+      return {
+        ok: true,
+        alreadyExists: res.status === 409,
+        hosting: body,
+        consoleUrl: `https://console.firebase.google.com/project/${FIREBASE_PROJECT}/hosting/sites/${HOSTING_SITE}`,
+      };
+    }
+    return {
+      ok: false,
+      error: body?.error?.message || `Hosting API HTTP ${res.status}`,
+      consoleUrl: `https://console.firebase.google.com/project/${FIREBASE_PROJECT}/hosting/sites/${HOSTING_SITE}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err?.message || 'Falha Hosting API',
+      consoleUrl: `https://console.firebase.google.com/project/${FIREBASE_PROJECT}/hosting/sites/${HOSTING_SITE}`,
+    };
+  }
+}
+
 export function normalizeHost(raw) {
   let h = String(raw || '')
     .trim()
@@ -241,14 +296,20 @@ export async function verifyCustomDomainDns({ projectId }) {
     { merge: true }
   );
 
+  const hosting = await registerHostingCustomDomain(host);
+
   return {
     ok: true,
     host,
     verified: true,
     cnameOk,
     details,
-    hostingNote:
-      'Depois do TXT OK, adiciona o mesmo domínio em Firebase Hosting (site gocreate) para o HTTPS servir a app.',
+    hosting,
+    hostingNote: hosting.ok
+      ? hosting.alreadyExists
+        ? 'Domínio já existe no Firebase Hosting — aguarda o certificado SSL.'
+        : 'Domínio registado no Firebase Hosting — SSL pode demorar alguns minutos.'
+      : `TXT OK. Registo Hosting automático falhou (${hosting.error}). Adiciona manualmente: ${hosting.consoleUrl}`,
   };
 }
 

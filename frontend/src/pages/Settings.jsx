@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Save, Loader2, User, Type, Palette } from 'lucide-react';
+import { Save, Loader2, User, Type, Palette, MonitorSmartphone, Trash2 } from 'lucide-react';
 import Toast from '../components/Toast';
 import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../lib/userSettings';
+import {
+  listMySessions,
+  revokeMySession,
+  revokeOtherSessions,
+} from '../lib/meApi';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -28,6 +33,9 @@ export default function Settings() {
   const [codeTheme, setCodeTheme] = useState('dark');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(null);
 
   useEffect(() => {
     const s = getUserSettings();
@@ -42,6 +50,26 @@ export default function Settings() {
 
   useEffect(() => {
     setDisplayName(user?.displayName || '');
+  }, [user]);
+
+  useEffect(() => {
+    if (!user?.getIdToken) return undefined;
+    let cancelled = false;
+    (async () => {
+      setSessionsLoading(true);
+      try {
+        const idToken = await user.getIdToken();
+        const list = await listMySessions(idToken);
+        if (!cancelled) setSessions(list);
+      } catch {
+        if (!cancelled) setSessions([]);
+      } finally {
+        if (!cancelled) setSessionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   function handleThemeChange(next) {
@@ -74,6 +102,41 @@ export default function Settings() {
       setToast({ message: err?.message || 'Não foi possível guardar.', type: 'error' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRevoke(id) {
+    if (!user || sessionBusy) return;
+    setSessionBusy(id);
+    try {
+      const idToken = await user.getIdToken();
+      await revokeMySession(idToken, id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      setToast({ message: 'Sessão revogada.', type: 'success' });
+    } catch (err) {
+      setToast({ message: err?.message || 'Falha ao revogar.', type: 'error' });
+    } finally {
+      setSessionBusy(null);
+    }
+  }
+
+  async function handleRevokeOthers() {
+    if (!user || sessionBusy) return;
+    if (!window.confirm('Terminar todas as outras sessões neste dispositivo?')) return;
+    setSessionBusy('others');
+    try {
+      const idToken = await user.getIdToken();
+      const result = await revokeOtherSessions(idToken);
+      const idToken2 = await user.getIdToken();
+      setSessions(await listMySessions(idToken2));
+      setToast({
+        message: `${result.revoked || 0} sessão(ões) terminada(s).`,
+        type: 'success',
+      });
+    } catch (err) {
+      setToast({ message: err?.message || 'Falha ao revogar.', type: 'error' });
+    } finally {
+      setSessionBusy(null);
     }
   }
 
@@ -113,6 +176,64 @@ export default function Settings() {
               </p>
             </div>
           </div>
+        </section>
+
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+              <MonitorSmartphone size={14} className="text-zinc-500" />
+              Sessões ativas
+            </h2>
+            <button
+              type="button"
+              disabled={!!sessionBusy || sessionsLoading}
+              onClick={() => void handleRevokeOthers()}
+              className="text-[11px] font-medium text-zinc-400 hover:text-red-300 disabled:opacity-40"
+            >
+              Terminar outras
+            </button>
+          </div>
+          {sessionsLoading ? (
+            <p className="text-xs text-zinc-500 flex items-center gap-2">
+              <Loader2 size={12} className="animate-spin" /> A carregar…
+            </p>
+          ) : !sessions.length ? (
+            <p className="text-xs text-zinc-500">
+              Ainda sem sessões registadas. Faz login de novo para começar a listar dispositivos.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {sessions.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-950/60"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm text-zinc-200 truncate">
+                      {s.label}
+                      {s.current ? (
+                        <span className="ml-2 text-[10px] text-emerald-400">esta sessão</span>
+                      ) : null}
+                    </p>
+                    <p className="text-[10px] text-zinc-600 font-mono truncate">
+                      {s.ip || 'ip —'}
+                    </p>
+                  </div>
+                  {!s.current && (
+                    <button
+                      type="button"
+                      disabled={sessionBusy === s.id}
+                      onClick={() => void handleRevoke(s.id)}
+                      className="p-1.5 rounded-md text-zinc-500 hover:text-red-300 disabled:opacity-40"
+                      title="Revogar"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section>

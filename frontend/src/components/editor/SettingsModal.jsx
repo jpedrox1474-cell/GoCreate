@@ -454,6 +454,13 @@ export default function SettingsModal({
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
+            Colaboradores (GoCreate)
+          </p>
+          <CollaboratorsBlock projectId={projectId} onToast={onToast} />
+        </section>
+
+        <section className="space-y-2 pt-1 border-t border-zinc-800/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
             Quem pode entrar com Google
           </p>
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-3">
@@ -725,6 +732,141 @@ export default function SettingsModal({
         </div>
       </form>
     </ModalShell>
+  );
+}
+
+function CollaboratorsBlock({ projectId, onToast }) {
+  const { user } = useAuth();
+  const [list, setList] = useState([]);
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('editor');
+  const [busy, setBusy] = useState(false);
+
+  const load = React.useCallback(async () => {
+    if (!projectId || !user) {
+      setList([]);
+      return;
+    }
+    try {
+      const idToken = await user.getIdToken();
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/collaborators`,
+        { headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setList(data.collaborators || []);
+    } catch {
+      /* ignore */
+    }
+  }, [projectId, user]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!projectId || !user || !email.trim()) return;
+    setBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/collaborators`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email: email.trim(), role }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Falha ao convidar');
+      setList(data.collaborators || []);
+      setEmail('');
+      onToast?.({ message: 'Colaborador adicionado.', type: 'success' });
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha ao convidar.', type: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemove(em) {
+    if (!window.confirm(`Remover ${em}?`)) return;
+    try {
+      const idToken = await user.getIdToken();
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/collaborators/${encodeURIComponent(em)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setList(data.collaborators || []);
+    } catch (err) {
+      onToast?.({ message: err?.message || 'Falha ao remover.', type: 'error' });
+    }
+  }
+
+  if (!projectId) {
+    return <p className="text-[11px] text-zinc-500">Guarda o projeto primeiro.</p>;
+  }
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2">
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        Convida contas GoCreate (editor ou visualizador) para abrir o projeto no Dashboard.
+      </p>
+      {list.length > 0 && (
+        <ul className="space-y-1">
+          {list.map((c) => (
+            <li
+              key={c.email}
+              className="flex items-center justify-between gap-2 text-xs text-zinc-300"
+            >
+              <span className="truncate">
+                {c.email}{' '}
+                <span className="text-zinc-600">· {c.role}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleRemove(c.email)}
+                className="text-zinc-500 hover:text-red-300"
+              >
+                <X size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={handleAdd} className="flex flex-col sm:flex-row gap-2">
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="email@exemplo.com"
+          className="flex-1 px-2 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 outline-none focus:border-blue-600"
+        />
+        <select
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          className="px-2 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-300"
+        >
+          <option value="editor">editor</option>
+          <option value="viewer">viewer</option>
+        </select>
+        <button
+          type="submit"
+          disabled={busy || !email.trim()}
+          className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white disabled:opacity-40 inline-flex items-center gap-1"
+        >
+          {busy ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+          Convidar
+        </button>
+      </form>
+    </div>
   );
 }
 

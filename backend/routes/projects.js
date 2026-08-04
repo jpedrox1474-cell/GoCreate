@@ -124,6 +124,24 @@ async function assertOwner(projectId, uid) {
   return snap;
 }
 
+async function assertOwnerOrEditor(projectId, uid, email) {
+  const { resolveProjectRole, canEditProject } = await import('../services/collaborators.js');
+  const snap = await db.collection('projects').doc(projectId).get();
+  if (!snap.exists) {
+    const err = new Error('Projeto não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  const project = snap.data() || {};
+  const role = resolveProjectRole(project, email, uid);
+  if (!canEditProject(role)) {
+    const err = new Error('Sem permissão de edição neste projeto.');
+    err.status = 403;
+    throw err;
+  }
+  return { snap, project, role };
+}
+
 async function loadProjectOrThrow(projectId) {
   const snap = await db.collection('projects').doc(projectId).get();
   if (!snap.exists) {
@@ -619,12 +637,12 @@ router.get('/:projectId/openapi.json', async (req, res) => {
 });
 
 /**
- * Env secrets (masked) — owner only.
+ * Env secrets (masked) — owner or editor.
  */
 router.get('/:projectId/env-secrets', requireAuth, async (req, res) => {
   try {
     const { projectId } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    await assertOwnerOrEditor(projectId, req.user.uid, req.user.email);
     const snap = await db.collection('projects').doc(projectId).collection('envSecrets').get();
     const secrets = snap.docs.map((d) => {
       const data = d.data() || {};
@@ -766,6 +784,51 @@ router.get('/:projectId/data', optionalAuth, async (req, res) => {
       error: err.message || 'Falha na API de dados.',
       code: err.code,
     });
+  }
+});
+
+/**
+ * Collaborators — owner only.
+ */
+router.get('/:projectId/collaborators', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const { listCollaborators } = await import('../services/collaborators.js');
+    const collaborators = await listCollaborators(projectId);
+    res.json({ ok: true, collaborators });
+  } catch (err) {
+    console.error('[projects/collaborators/list]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao listar.' });
+  }
+});
+
+router.post('/:projectId/collaborators', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const { addCollaborator } = await import('../services/collaborators.js');
+    const collaborators = await addCollaborator(projectId, {
+      email: req.body?.email,
+      role: req.body?.role,
+    });
+    res.json({ ok: true, collaborators });
+  } catch (err) {
+    console.error('[projects/collaborators/add]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao convidar.' });
+  }
+});
+
+router.delete('/:projectId/collaborators/:email', requireAuth, async (req, res) => {
+  try {
+    const { projectId, email } = req.params;
+    await assertOwner(projectId, req.user.uid);
+    const { removeCollaborator } = await import('../services/collaborators.js');
+    const collaborators = await removeCollaborator(projectId, decodeURIComponent(email));
+    res.json({ ok: true, collaborators });
+  } catch (err) {
+    console.error('[projects/collaborators/delete]', err);
+    res.status(err.status || 500).json({ error: err.message || 'Falha ao remover.' });
   }
 });
 

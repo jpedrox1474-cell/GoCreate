@@ -46,6 +46,8 @@ const FILES = [
   'services/projectSlug.js',
   'services/customDomains.js',
   'services/projectFunctions.js',
+  'services/sessions.js',
+  'services/collaborators.js',
   'services/oauth/pkce.js',
   'services/oauth/state.js',
   'services/oauth/providers.js',

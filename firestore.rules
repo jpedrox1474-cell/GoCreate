@@ -55,6 +55,11 @@ service cloud.firestore {
       match /secrets/{secretId} {
         allow read, write: if false;
       }
+
+      // Sessões / dispositivos — só Admin SDK
+      match /sessions/{sessionId} {
+        allow read, write: if false;
+      }
     }
 
     // Compras / packs — utilizador lê as suas; writes de conclusão via Admin/webhooks
