@@ -10,6 +10,7 @@ import meRouter from './routes/me.js';
 import deployRouter from './routes/deploy.js';
 import projectsRouter from './routes/projects.js';
 import adminRouter from './routes/admin.js';
+import functionsRouter from './routes/functions.js';
 
 export function createApp() {
   const app = express();
@@ -55,6 +56,8 @@ export function createApp() {
   app.use('/api/projects', projectsRouter);
   // Admin panel — owner allowlist
   app.use('/api/admin', adminRouter);
+  // Project serverless functions
+  app.use('/api/functions', functionsRouter);
 
   app.use((err, _req, res, _next) => {
     console.error('[server] Erro não tratado:', err);

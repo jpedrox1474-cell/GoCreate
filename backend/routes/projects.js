@@ -72,6 +72,12 @@ async function cascadeDeleteProject(projectId) {
   await deleteQueryInChunks(projectRef.collection('deployHistory'));
   await deleteQueryInChunks(projectRef.collection('envSecrets'));
 
+  const fnSnap = await projectRef.collection('backendFunctions').get();
+  for (const fn of fnSnap.docs) {
+    await deleteQueryInChunks(fn.ref.collection('logs'));
+  }
+  await deleteQueryInChunks(projectRef.collection('backendFunctions'));
+
   const entitiesSnap = await projectRef.collection('entities').get();
   for (const ent of entitiesSnap.docs) {
     await deleteQueryInChunks(ent.ref.collection('rows'));
@@ -713,6 +719,16 @@ router.post('/:projectId/data', optionalAuth, async (req, res) => {
       data: req.body?.data,
       accessLevel,
     });
+    const act = String(req.body?.action || '').toLowerCase();
+    if (act === 'create' || act === 'update' || act === 'delete') {
+      const { dispatchEntityEvents } = await import('../services/projectFunctions.js');
+      void dispatchEntityEvents(projectId, {
+        entity: req.body?.entity,
+        action: act,
+        id: result?.id || req.body?.id,
+        data: result?.data || req.body?.data,
+      });
+    }
     res.json(result);
   } catch (err) {
     console.error('[projects/data]', err);
