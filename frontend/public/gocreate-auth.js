@@ -6,6 +6,7 @@
  * parent origin (gocreate-app.web.app) via postMessage — Firebase rejects unauthorized domains.
  *
  * After Google sign-in, access is gated by project.authAccess (owner_only | invited).
+ * User-facing errors use GoCreateUI modal (never native alert).
  *
  * Expects (optional):
  *   window.__GOCREATE_FIREBASE_CONFIG__ — public Firebase web config
@@ -14,6 +15,7 @@
  *   window.__GOCREATE_AUTH_ACCESS__     — optional cached { mode, invitedEmails, ownerEmail, ownerId }
  *   window.__GOCREATE_AUTH__            — { googleEnabled, googleMode, googleAuthEnabled, emailPasswordEnabled }
  *   window.__GOCREATE_BACKEND_ENABLED__ — backend functions unlocked
+ *   window.GoCreateUI                   — styled modal/toast (gocreate-ui.js)
  */
 (function (global) {
   if (global.GoCreateAuth) return;
@@ -366,22 +368,85 @@
     return err;
   }
 
+  /** Codes that deserve a GoCreate modal (settings / config), not a silent reject. */
+  var MODAL_ERROR_CODES = {
+    GOOGLE_AUTH_DISABLED: true,
+    NO_FIREBASE_CONFIG: true,
+    BRIDGE_UNAVAILABLE: true,
+    AUTH_ACCESS_DENIED: true,
+    'auth/unauthorized-domain': true,
+    'auth/popup-blocked': true,
+  };
+
+  function notifyUserFacingError(err, opts) {
+    opts = opts || {};
+    var friendly = friendlyAuthError(err);
+    var code = friendly.code || '';
+    var message = friendly.message || 'Erro de autenticação.';
+    var openSettings = Boolean(
+      opts.openSettings ||
+        code === 'GOOGLE_AUTH_DISABLED' ||
+        code === 'NO_FIREBASE_CONFIG' ||
+        code === 'BRIDGE_UNAVAILABLE'
+    );
+    var title =
+      code === 'GOOGLE_AUTH_DISABLED'
+        ? 'Google Login'
+        : code === 'AUTH_ACCESS_DENIED'
+          ? 'Acesso negado'
+          : 'Autenticação';
+    try {
+      if (global.GoCreateUI && typeof global.GoCreateUI.alert === 'function') {
+        global.GoCreateUI.alert(message, {
+          title: title,
+          variant: 'error',
+          openSettings: openSettings,
+        });
+      } else {
+        console.warn('[GoCreateAuth]', title + ':', message);
+      }
+    } catch (e) {
+      /* never throw from UI notify */
+    }
+    return friendly;
+  }
+
+  function shouldShowModal(err) {
+    var code = (err && (err.code || err.errorCode)) || '';
+    return Boolean(MODAL_ERROR_CODES[code]);
+  }
+
   global.GoCreateAuth = {
     isGoogleEnabled: isGoogleAuthEnabled,
     getAuthFlags: function () {
       var flags = global.__GOCREATE_AUTH__;
       return flags && typeof flags === 'object' ? flags : null;
     },
+    /** Show styled auth message (GoCreateUI). Prefer this over alert(). */
+    showError: function (errOrMessage, opts) {
+      if (typeof errOrMessage === 'string') {
+        return notifyUserFacingError({ message: errOrMessage, code: 'BRIDGE_ERROR' }, opts);
+      }
+      return notifyUserFacingError(errOrMessage, opts);
+    },
     signInWithGoogle: function () {
       if (!isGoogleAuthEnabled()) {
-        return Promise.reject(googleDisabledError());
+        var disabled = googleDisabledError();
+        notifyUserFacingError(disabled, { openSettings: true });
+        return Promise.reject(disabled);
       }
       if (isInIframe()) {
         return signInViaParentBridge().catch(function (err) {
-          throw friendlyAuthError(err);
+          var friendly = friendlyAuthError(err);
+          if (shouldShowModal(friendly)) notifyUserFacingError(friendly);
+          throw friendly;
         });
       }
-      return signInLocal();
+      return signInLocal().catch(function (err) {
+        var friendly = friendlyAuthError(err);
+        if (shouldShowModal(friendly)) notifyUserFacingError(friendly);
+        throw friendly;
+      });
     },
     signOut: function () {
       if (isInIframe()) {
@@ -452,6 +517,6 @@
     },
     /** @deprecated internal */
     _isInIframe: isInIframe,
-    version: '1.3.0',
+    version: '1.4.0',
   };
 })(typeof window !== 'undefined' ? window : globalThis);

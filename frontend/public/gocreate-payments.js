@@ -59,6 +59,10 @@
 
   function showToast(message, type) {
     try {
+      if (global.GoCreateUI && typeof global.GoCreateUI.toast === 'function') {
+        global.GoCreateUI.toast(message, type === 'ok' || type === 'success' ? 'ok' : type || 'error');
+        return;
+      }
       if (!global.document || !global.document.body) return;
       ensureToastStyles();
       var el = global.document.getElementById('gc-payments-toast');

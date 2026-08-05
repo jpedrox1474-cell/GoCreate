@@ -49,6 +49,10 @@
 
   function showToast(message, type) {
     try {
+      if (global.GoCreateUI && typeof global.GoCreateUI.toast === 'function') {
+        global.GoCreateUI.toast(message, type === 'success' ? 'ok' : type || 'error');
+        return;
+      }
       var el = document.createElement('div');
       el.setAttribute('role', 'status');
       el.textContent = message;
@@ -70,7 +74,7 @@
         }
       }, 3200);
     } catch (_) {
-      /* ignore */
+      /* ignore — never alert() */
     }
   }
 

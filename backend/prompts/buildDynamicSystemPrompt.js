@@ -142,7 +142,7 @@ ${
 - Ligado (${mp.platform ? 'plataforma GoCreate' : 'conta do utilizador'}).
 - SEMPRE use \`window.GoCreatePayments.createPix\` / \`createCheckout\` ou fetch \`/api/integrations/mercadopago/public-create-payment\` com \`projectId\`.
 - NÃO invente nem cole Access Token / Public Key MP (APP_USR / TEST) em App.jsx — o bridge já usa o token do servidor.
-- NÃO use alert() em erros de Pix — toast/banner na UI do app.`);
+- NÃO use alert() em erros de Pix — toast/banner na UI do app (ou \`window.GoCreateUI.toast\`).`);
   }
 
   const googleAuth = userIntegrations.googleAuth || userIntegrations.firebaseAuth;
@@ -153,14 +153,15 @@ ${
 - SEMPRE use \`window.GoCreateAuth.signInWithGoogle()\`, \`onAuthStateChanged\`, \`signOut\`, \`getCurrentUser\`.
 - Respeita \`window.__GOCREATE_AUTH__.googleAuthEnabled\` — se false, não mostres o botão como ligado.
 - Em preview Sandpack (iframe), GoCreateAuth faz bridge para a janela pai — NÃO uses Firebase Auth npm / signInWithPopup no iframe.
-- Erros: mostra mensagem amigável em PT (err.message do bridge).
+- Erros: NUNCA alert() — GoCreateAuth mostra modal GoCreate; podes usar \`window.GoCreateUI.toast\` / banner na UI.
 - NÃO peça nem invente OAuth Client ID/Secret; NÃO embuta firebaseConfig manualmente.
 - Auth/entidades: preferir painel Authentication + orquestração JSON no backend.`);
   } else {
     lines.push(`
 ### Login Google / Firebase Auth
 - Mesmo sem BYO: a plataforma injeta \`window.GoCreateAuth\` — use-o para qualquer “login com Google” (bridge iframe → parent).
-- Só mostre como ligado se \`window.__GOCREATE_AUTH__.googleAuthEnabled\` for true (Backend + flag do projeto).`);
+- Só mostre como ligado se \`window.__GOCREATE_AUTH__.googleAuthEnabled\` for true (Backend + flag do projeto).
+- Nunca uses alert() para “Google desativado” — o runtime já mostra modal; opcional \`GoCreateUI.toast\`.`);
   }
 
   if (userIntegrations.stripe?.connected) {
@@ -174,7 +175,7 @@ ${
 ## Checklist ao gerar artefactos
 1. Se o app fala de WhatsApp/IG/FB/YT/TikTok/Pix/Google login e a secção acima tem a integração → USE os IDs/tokens/bridges listados automaticamente.
 2. Não diga “cole sua API key” / Client Secret para integrações já ligadas ou de plataforma.
-3. Runtime Sandpack: React + Tailwind; pagamentos via GoCreatePayments; login Google via GoCreateAuth; persistência via GoCreateData; WhatsApp sem libs Node.`);
+3. Runtime Sandpack: React + Tailwind; pagamentos via GoCreatePayments; login Google via GoCreateAuth; persistência via GoCreateData; UI de avisos via GoCreateUI (nunca alert nativo); WhatsApp sem libs Node.`);
 
   return lines.join('\n');
 }

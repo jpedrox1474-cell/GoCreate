@@ -142,6 +142,8 @@ export default function WorkspacePanel({
       onToggleVisualEdit={enterVisualEdit}
       onElementSelect={handleElementSelect}
       selectedElement={selectedElement}
+      onOpenSettings={onOpenSettings}
+      onToast={onToast}
     />
   );
 

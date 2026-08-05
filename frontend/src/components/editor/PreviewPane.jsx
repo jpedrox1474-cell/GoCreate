@@ -21,7 +21,9 @@ import {
   resolveSandpackDependencies,
 } from '../../lib/artifactParser';
 import { installPreviewAuthBridge } from '../../lib/previewAuthBridge';
+import { installPreviewUiBridge } from '../../lib/previewUiBridge';
 import SandpackErrorBoundary from './SandpackErrorBoundary';
+import ModalShell from './ModalShell';
 
 const VISUAL_EDIT_SET = 'gocreate-visual-edit-set';
 const VISUAL_EDIT_SELECT = 'gocreate-visual-edit-select';
@@ -390,9 +392,21 @@ export default function PreviewPane({
   onToggleVisualEdit = null,
   onElementSelect = null,
   selectedElement = null,
+  onOpenSettings = null,
+  onToast = null,
 }) {
   // Sandpack iframe OAuth → parent Google popup on authorized domain
   useEffect(() => installPreviewAuthBridge(), []);
+
+  const [previewUiModal, setPreviewUiModal] = useState(null);
+
+  useEffect(() => {
+    return installPreviewUiBridge({
+      onModal: (payload) => setPreviewUiModal(payload),
+      onToast: (payload) => onToast?.(payload),
+      onOpenSettings: () => onOpenSettings?.(),
+    });
+  }, [onToast, onOpenSettings]);
 
   const [liveRuntime, setLiveRuntime] = useState(null);
 
@@ -541,58 +555,94 @@ export default function PreviewPane({
     : 'w-full h-full min-h-0 rounded-xl border border-zinc-800 overflow-hidden bg-zinc-950 relative shadow-2xl shadow-black/40 flex flex-col';
 
   return (
-    <div className={shellClass}>
-      <div className="flex-1 min-h-0 bg-zinc-950 [&_.sp-wrapper]:h-full [&_.sp-wrapper]:!bg-zinc-950 [&_.sp-layout]:h-full [&_.sp-layout]:!bg-zinc-950 [&_.sp-layout]:!border-zinc-800 [&_.sp-preview-container]:h-full [&_.sp-preview-container]:!bg-zinc-950 [&_.sp-stack]:h-full [&_.sp-preview]:h-full [&_.sp-preview]:!bg-zinc-950">
-        {!hasFiles ? (
-          <EmptyPreviewPlaceholder
-            isGenerating={isGenerating}
-            entitiesOnly={entitiesOnly}
-            generationIncomplete={generationIncomplete}
-            onRequestUi={onRequestUi}
-            onContinue={onContinue}
-          />
-        ) : (
-          <SandpackErrorBoundary onAskFix={onAskFix} isGenerating={isGenerating} key={sandpackKey}>
-            <SandpackProvider
-              key={sandpackKey}
-              template="react"
-              theme="dark"
-              files={sandpackFiles}
-              customSetup={{
-                dependencies,
-              }}
-              options={{
-                autorun: true,
-                autoReload: true,
-                recompileMode: 'delayed',
-                recompileDelay: 300,
-                externalResources: [
-                  'https://cdn.tailwindcss.com',
-                  paymentsBootstrap,
-                  ...(runtimeJsUrl ? [runtimeJsUrl] : []),
-                  `${apiBase}/gocreate-payments.js`,
-                  `${apiBase}/gocreate-auth.js`,
-                  `${apiBase}/gocreate-data.js`,
-                  ...(publicMode ? [] : [`${apiBase}/gocreate-visual-edit.js`]),
-                ],
-              }}
-              style={{ height: '100%' }}
-            >
-              <PreviewInner
-                isGenerating={isGenerating}
-                onAskFix={onAskFix}
-                publicMode={publicMode}
-                generationIncomplete={generationIncomplete}
-                onContinue={onContinue}
-                visualEditMode={visualEditMode}
-                onToggleVisualEdit={onToggleVisualEdit}
-                onElementSelect={onElementSelect}
-                selectedElement={selectedElement}
-              />
-            </SandpackProvider>
-          </SandpackErrorBoundary>
-        )}
+    <>
+      <div className={shellClass}>
+        <div className="flex-1 min-h-0 bg-zinc-950 [&_.sp-wrapper]:h-full [&_.sp-wrapper]:!bg-zinc-950 [&_.sp-layout]:h-full [&_.sp-layout]:!bg-zinc-950 [&_.sp-layout]:!border-zinc-800 [&_.sp-preview-container]:h-full [&_.sp-preview-container]:!bg-zinc-950 [&_.sp-stack]:h-full [&_.sp-preview]:h-full [&_.sp-preview]:!bg-zinc-950">
+          {!hasFiles ? (
+            <EmptyPreviewPlaceholder
+              isGenerating={isGenerating}
+              entitiesOnly={entitiesOnly}
+              generationIncomplete={generationIncomplete}
+              onRequestUi={onRequestUi}
+              onContinue={onContinue}
+            />
+          ) : (
+            <SandpackErrorBoundary onAskFix={onAskFix} isGenerating={isGenerating} key={sandpackKey}>
+              <SandpackProvider
+                key={sandpackKey}
+                template="react"
+                theme="dark"
+                files={sandpackFiles}
+                customSetup={{
+                  dependencies,
+                }}
+                options={{
+                  autorun: true,
+                  autoReload: true,
+                  recompileMode: 'delayed',
+                  recompileDelay: 300,
+                  externalResources: [
+                    'https://cdn.tailwindcss.com',
+                    paymentsBootstrap,
+                    ...(runtimeJsUrl ? [runtimeJsUrl] : []),
+                    `${apiBase}/gocreate-ui.js`,
+                    `${apiBase}/gocreate-payments.js`,
+                    `${apiBase}/gocreate-auth.js`,
+                    `${apiBase}/gocreate-data.js`,
+                    ...(publicMode ? [] : [`${apiBase}/gocreate-visual-edit.js`]),
+                  ],
+                }}
+                style={{ height: '100%' }}
+              >
+                <PreviewInner
+                  isGenerating={isGenerating}
+                  onAskFix={onAskFix}
+                  publicMode={publicMode}
+                  generationIncomplete={generationIncomplete}
+                  onContinue={onContinue}
+                  visualEditMode={visualEditMode}
+                  onToggleVisualEdit={onToggleVisualEdit}
+                  onElementSelect={onElementSelect}
+                  selectedElement={selectedElement}
+                />
+              </SandpackProvider>
+            </SandpackErrorBoundary>
+          )}
+        </div>
       </div>
-    </div>
+
+      <ModalShell
+        open={Boolean(previewUiModal)}
+        onClose={() => setPreviewUiModal(null)}
+        title={previewUiModal?.title || 'Aviso'}
+        footer={
+          <div className="flex justify-end gap-2">
+            {previewUiModal?.openSettings && typeof onOpenSettings === 'function' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewUiModal(null);
+                  onOpenSettings();
+                }}
+                className="rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-100 transition-colors hover:bg-zinc-700"
+              >
+                Abrir Configurações
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setPreviewUiModal(null)}
+              className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-blue-500"
+            >
+              Entendi
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-zinc-300 whitespace-pre-wrap">
+          {previewUiModal?.message || ''}
+        </p>
+      </ModalShell>
+    </>
   );
 }

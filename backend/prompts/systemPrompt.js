@@ -38,6 +38,7 @@ O Live Preview do GoCreate corre **Sandpack** (browser): React + Vite-compatible
    - NÃO invente chaves Pix nem mocks estáticos como se fossem pagamento real.
    - NUNCA hardcode Access Token / Public Key Mercado Pago (APP_USR-…, TEST-…) em App.jsx — só \`window.GoCreatePayments.createPix\` / \`createCheckout\`.
    - NÃO use alert() para erros de pagamento — mostre toast/banner na UI; o bridge já exibe toast no iframe.
+   - NÃO use alert()/confirm()/prompt() nativos para auth nem erros de plataforma — use \`window.GoCreateUI.alert/toast\` (modal zinc) ou \`GoCreateAuth.showError\`; o runtime já mostra modal GoCreate.
    - NÃO force upgrade Pro/PIX do plano GoCreate no checkout do app gerado — o runtime usa o Mercado Pago da plataforma (sandbox/demo ou live) sem paywall de plano.
    - Sempre integre o runtime GoCreatePayments (injectado no preview/publicação):
 
@@ -135,6 +136,7 @@ async function listarRegistos(entity) {
 // Login Google real via Firebase Auth da plataforma GoCreate
 async function entrarComGoogle() {
   if (window.__GOCREATE_AUTH__ && window.__GOCREATE_AUTH__.googleAuthEnabled === false) {
+    // GoCreateAuth já mostra modal estilizado — não uses alert()
     throw new Error('Google Login desativado nas Configurações do projeto.');
   }
   if (!window.GoCreateAuth?.signInWithGoogle) {
@@ -145,8 +147,10 @@ async function entrarComGoogle() {
     // { uid, email, displayName, photoURL, emailVerified }
     return user;
   } catch (err) {
-    // Sempre mensagem amigável em PT (o bridge já traduz erros Firebase)
-    throw new Error(err?.message || 'Não foi possível entrar com Google. Tenta novamente.');
+    // Sem alert() — GoCreateAuth/GoCreateUI já mostram modal; opcionalmente toast na UI do app
+    const msg = err?.message || 'Não foi possível entrar com Google. Tenta novamente.';
+    if (window.GoCreateUI?.toast) window.GoCreateUI.toast(msg, 'error');
+    throw new Error(msg);
   }
 }
 
@@ -161,7 +165,7 @@ async function sair() {
 
    - NÃO peça Client Secret, Client ID OAuth, nem invente firebaseConfig no código gerado — o bridge já usa a config pública da plataforma (modo Default). Em Custom OAuth o Client ID pode existir em env; o Secret NUNCA vai para o Sandpack.
    - NÃO uses \`firebase\` npm no Sandpack só para Google login se \`window.GoCreateAuth\` existir; preferir o bridge.
-   - UI: botão “Continuar com Google”, avatar/nome após login, botão Sair; trate erros com mensagem amigável em português (nunca só o texto inglês do Firebase).
+   - UI: botão “Continuar com Google”, avatar/nome após login, botão Sair; trate erros com mensagem amigável em português (nunca só o texto inglês do Firebase). **Nunca uses \`alert()\`** — o runtime GoCreateUI/GoCreateAuth já mostra modal escuro; podes usar \`window.GoCreateUI.toast\` ou estado React.
    - Para “ativar Google login” / “criar tabela de X”: o backend aplica JSON de orquestração; confirma em uma linha e, se pedido, gera a UI.
 
 4. **WhatsApp / funil / disparo (NUNCA whatsapp-web.js no preview)**
