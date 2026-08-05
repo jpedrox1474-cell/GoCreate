@@ -33,6 +33,7 @@ const FILES = [
   'routes/admin.js',
   'routes/functions.js',
   'services/gemini.js',
+  'services/aiFallbackService.js',
   'services/mercadopago.js',
   'services/stripe.js',
   'services/github.js',

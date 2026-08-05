@@ -15,7 +15,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { creditCheck, debitCredit } from '../middleware/credits.js';
 import { db } from '../config/firebaseAdmin.js';
 import { buildDynamicSystemPrompt } from '../prompts/buildDynamicSystemPrompt.js';
-import { streamGeminiChat, getGeminiApiKey } from '../services/gemini.js';
+import { streamGeminiChat, hasAnyAiProvider } from '../services/gemini.js';
 import { loadUserIntegrationsForPrompt, getIntegrationsStatus } from '../services/integrations.js';
 import { parseEntitiesFromAiText, upsertProjectEntities } from '../services/entities.js';
 import {
@@ -40,9 +40,10 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
     return res.status(400).json({ error: 'projectId e messages (array não vazio) são obrigatórios.' });
   }
 
-  if (!getGeminiApiKey()) {
+  if (!hasAnyAiProvider()) {
     return res.status(503).json({
-      error: 'GEMINI_API_KEY não configurada no servidor.',
+      error:
+        'Nenhuma chave de IA configurada (GEMINI_API_KEY ou GROQ_API_KEY / OPENROUTER_API_KEY / GITHUB_MODELS_TOKEN).',
     });
   }
 

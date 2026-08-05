@@ -2,7 +2,13 @@
  * Cliente Gemini (REST) — padrão Promifer / BarberPro.
  * Chave só no backend. Fallback entre modelos free-tier.
  * Anexos Cloudinary: multimodal (inlineData / Files API) + URL no texto.
+ * Se Gemini falhar / sem chave: aiFallbackService (Groq → OpenRouter → GitHub).
  */
+
+import {
+  hasAiFallbackKeys,
+  completeTextWithFallback,
+} from './aiFallbackService.js';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GEMINI_FILES_BASE = 'https://generativelanguage.googleapis.com';
@@ -42,6 +48,50 @@ export function modelCandidates() {
 
 export function getGeminiApiKey() {
   return String(process.env.GEMINI_API_KEY || '').trim();
+}
+
+/** True se Gemini ou algum provider de fallback tiver chave. */
+export function hasAnyAiProvider() {
+  return Boolean(getGeminiApiKey()) || hasAiFallbackKeys();
+}
+
+/**
+ * Converte histórico GoCreate → prompt texto para providers OpenAI-compatible.
+ */
+function buildFallbackUserPrompt(systemPrompt, messages, attachmentUrl) {
+  const lines = [];
+  for (const m of messages || []) {
+    const role =
+      m.role === 'ai' || m.role === 'assistant' || m.role === 'model'
+        ? 'Assistant'
+        : 'User';
+    const text = String(m.text || m.content || '').trim();
+    if (text) lines.push(`${role}:\n${text}`);
+  }
+  if (attachmentUrl) {
+    lines.push(`User attachment URL (fetch/describe if useful):\n${attachmentUrl}`);
+  }
+  return lines.join('\n\n') || 'Continue.';
+}
+
+async function tryOpenAiFallbackChat({
+  systemPrompt,
+  messages,
+  attachmentUrl,
+  onChunk,
+}) {
+  if (!hasAiFallbackKeys()) return null;
+  console.warn('[gemini] a tentar AI fallback (Groq → OpenRouter → GitHub)…');
+  const result = await completeTextWithFallback(
+    buildFallbackUserPrompt(systemPrompt, messages, attachmentUrl),
+    {
+      systemPrompt: String(systemPrompt || '').slice(0, 120000) || undefined,
+      temperature: 0.5,
+      maxTokens: 8192,
+    }
+  );
+  if (typeof onChunk === 'function' && result.text) onChunk(result.text);
+  return { ok: true, text: result.text, model: result.model, provider: result.provider };
 }
 
 function extractText(data) {
@@ -328,8 +378,16 @@ export async function streamGeminiChat({
 }) {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
+    if (hasAiFallbackKeys()) {
+      return tryOpenAiFallbackChat({
+        systemPrompt,
+        messages,
+        attachmentUrl,
+        onChunk,
+      });
+    }
     const err = new Error(
-      'GEMINI_API_KEY não configurada no backend. Defina em backend/.env e reinicie o servidor.'
+      'GEMINI_API_KEY não configurada no backend. Defina em backend/.env e reinicie o servidor (ou configure GROQ_API_KEY / OPENROUTER_API_KEY / GITHUB_MODELS_TOKEN).'
     );
     err.status = 503;
     throw err;
@@ -439,14 +497,29 @@ export async function streamGeminiChat({
     }
   }
 
-  return generateGeminiChat({
-    systemPrompt,
-    messages,
-    attachmentUrl,
-    attachmentResourceType,
-    attachmentMimeType,
-    onChunk,
-  });
+  try {
+    return await generateGeminiChat({
+      systemPrompt,
+      messages,
+      attachmentUrl,
+      attachmentResourceType,
+      attachmentMimeType,
+      onChunk,
+    });
+  } catch (genErr) {
+    try {
+      const fb = await tryOpenAiFallbackChat({
+        systemPrompt,
+        messages,
+        attachmentUrl,
+        onChunk,
+      });
+      if (fb) return fb;
+    } catch (fbErr) {
+      console.warn('[gemini] AI fallback também falhou:', fbErr?.message || fbErr);
+    }
+    throw genErr;
+  }
 }
 
 /**
@@ -463,8 +536,16 @@ export async function generateGeminiChat({
 }) {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
+    if (hasAiFallbackKeys()) {
+      return tryOpenAiFallbackChat({
+        systemPrompt,
+        messages,
+        attachmentUrl,
+        onChunk,
+      });
+    }
     const err = new Error(
-      'GEMINI_API_KEY não configurada no backend. Defina em backend/.env e reinicie o servidor.'
+      'GEMINI_API_KEY não configurada no backend. Defina em backend/.env e reinicie o servidor (ou configure GROQ_API_KEY / OPENROUTER_API_KEY / GITHUB_MODELS_TOKEN).'
     );
     err.status = 503;
     throw err;
@@ -525,6 +606,19 @@ export async function generateGeminiChat({
     }
   }
 
+  try {
+    const fb = await tryOpenAiFallbackChat({
+      systemPrompt,
+      messages,
+      attachmentUrl,
+      onChunk,
+    });
+    if (fb) return fb;
+  } catch (fbErr) {
+    console.warn('[gemini] AI fallback também falhou:', fbErr?.message || fbErr);
+    lastError = `${lastError} | fallback: ${fbErr?.message || fbErr}`;
+  }
+
   const err = new Error(lastError);
   err.status = 502;
   throw err;
@@ -535,6 +629,7 @@ export default {
   DEFAULT_MODELS,
   modelCandidates,
   getGeminiApiKey,
+  hasAnyAiProvider,
   buildGeminiBody,
   buildAttachmentParts,
   streamGeminiChat,
