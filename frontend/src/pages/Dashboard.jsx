@@ -320,6 +320,7 @@ export default function Dashboard() {
             name={project.name}
             color={project.color}
             isDemo={isDemo}
+            thumbnailUrl={project.thumbnailUrl || project.thumbnail || null}
           />
           <div className="p-4">
             <div className="flex items-start justify-between gap-2 mb-1">

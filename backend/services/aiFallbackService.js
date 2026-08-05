@@ -92,6 +92,7 @@ export function listConfiguredFallbackProviders() {
  *   temperature?: number,
  *   maxTokens?: number,
  *   models?: { groq?: string, openrouter?: string, github?: string },
+ *   preferredProvider?: 'groq'|'openrouter'|'github'|null,
  * }} [options]
  * @returns {Promise<{ ok: true, text: string, provider: string, model: string, raw: object }>}
  */
@@ -117,8 +118,21 @@ export async function completeWithFallback(userPrompt, options = {}) {
 
   const errors = [];
   let anyKey = false;
+  const preferred = String(options.preferredProvider || '').trim().toLowerCase();
+  const strict = options.strictProvider === true;
+  let providersToTry = PROVIDERS;
+  if (preferred && PROVIDERS.some((p) => p.id === preferred)) {
+    if (strict) {
+      providersToTry = PROVIDERS.filter((p) => p.id === preferred);
+    } else {
+      providersToTry = [
+        ...PROVIDERS.filter((p) => p.id === preferred),
+        ...PROVIDERS.filter((p) => p.id !== preferred),
+      ];
+    }
+  }
 
-  for (const provider of PROVIDERS) {
+  for (const provider of providersToTry) {
     const apiKey = provider.getKey();
     if (!apiKey) {
       errors.push(`${provider.label}: chave em falta`);

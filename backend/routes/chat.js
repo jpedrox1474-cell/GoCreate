@@ -15,7 +15,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { creditCheck, debitCredit } from '../middleware/credits.js';
 import { db } from '../config/firebaseAdmin.js';
 import { buildDynamicSystemPrompt } from '../prompts/buildDynamicSystemPrompt.js';
-import { streamGeminiChat, hasAnyAiProvider } from '../services/gemini.js';
+import { streamGeminiChat, hasAnyAiProvider, listConfiguredAiProviders } from '../services/gemini.js';
 import { loadUserIntegrationsForPrompt, getIntegrationsStatus } from '../services/integrations.js';
 import { parseEntitiesFromAiText, upsertProjectEntities } from '../services/entities.js';
 import {
@@ -31,10 +31,25 @@ import {
 
 const router = Router();
 
+/** Público — quais providers de IA têm chave (sem secrets). */
+router.get('/providers', (_req, res) => {
+  res.json({
+    providers: listConfiguredAiProviders(),
+    default: 'auto',
+  });
+});
+
 // requireAuth → creditCheck (403 se credits <= 0) → Gemini → debit 1 crédito
 router.post('/', requireAuth, creditCheck, async (req, res) => {
-  const { projectId, messages, attachmentUrl, attachmentResourceType, attachmentMimeType } =
-    req.body;
+  const {
+    projectId,
+    messages,
+    attachmentUrl,
+    attachmentResourceType,
+    attachmentMimeType,
+    preferredProvider,
+    discussMode,
+  } = req.body;
 
   if (!projectId || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'projectId e messages (array não vazio) são obrigatórios.' });
@@ -225,6 +240,19 @@ ${String(req.body.wiringPrompt).slice(0, 2000)}
 `;
     }
 
+    if (discussMode === true || discussMode === 'true' || discussMode === 1) {
+      systemPrompt += `
+
+## Modo Discutir (ativo)
+- O utilizador quer conversar / planear / esclarecer — NÃO geres artefactos de código (<gocreate_artifact>), NÃO alteres ficheiros.
+- Responde em português, de forma clara e concisa. Podes sugerir o próximo passo; só gera código se o user pedir explicitamente depois.
+`;
+    }
+
+    const prefRaw = String(preferredProvider || 'auto').trim().toLowerCase();
+    const allowedPrefs = new Set(['auto', 'gemini', 'groq', 'openrouter', 'github']);
+    const pref = allowedPrefs.has(prefRaw) ? prefRaw : 'auto';
+
     const result = await streamGeminiChat({
       systemPrompt,
       messages,
@@ -233,6 +261,7 @@ ${String(req.body.wiringPrompt).slice(0, 2000)}
       attachmentMimeType: attachmentMimeType || null,
       // Vídeos: download Cloudinary + Files API pode demorar
       timeoutMs: attachmentUrl ? 170000 : 120000,
+      preferredProvider: pref,
       onChunk: (chunk) => {
         fullResponse += chunk;
         res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);

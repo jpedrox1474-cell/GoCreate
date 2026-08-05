@@ -15,6 +15,7 @@ import Integrations from './pages/Integrations';
 import Entities from './pages/Entities';
 import Admin from './pages/Admin';
 import PublicPreview from './pages/PublicPreview';
+import Plans from './pages/Plans';
 import { resolveCustomHost } from './lib/deployApi';
 
 const PLATFORM_HOSTS = new Set([
@@ -114,6 +115,7 @@ export default function App() {
     <CustomDomainRedirect>
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/plans" element={<Plans />} />
         <Route
           path="/login"
           element={

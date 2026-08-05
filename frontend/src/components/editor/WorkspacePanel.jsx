@@ -1,8 +1,9 @@
 import React from 'react';
-import { Monitor, Code, Layout, Smartphone, Database, ExternalLink } from 'lucide-react';
+import { Monitor, Code, Layout, Smartphone, Database, ExternalLink, LayoutDashboard } from 'lucide-react';
 import PreviewPane from './PreviewPane';
 import CodeEditor from './CodeEditor';
 import EntitiesPanel from './EntitiesPanel';
+import ProjectDashboardPanel from './ProjectDashboardPanel';
 
 export default function WorkspacePanel({
   activeTab,
@@ -29,6 +30,11 @@ export default function WorkspacePanel({
   codeBaselines = null,
   dirtyCodeFiles = null,
   diffBaselines = null,
+  projectMeta = null,
+  onOpenSettings = null,
+  onOpenDeploy = null,
+  onToast = null,
+  onProjectMetaPatch = null,
 }) {
   function openPreviewTab() {
     if (!projectId) return;
@@ -49,7 +55,19 @@ export default function WorkspacePanel({
             }`}
           >
             <Monitor size={14} />
-            Live Preview
+            Pré-visualização
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('panel')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+              activeTab === 'panel'
+                ? 'bg-zinc-800 text-white shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <LayoutDashboard size={14} />
+            Painel
           </button>
           <button
             type="button"
@@ -133,6 +151,21 @@ export default function WorkspacePanel({
               backendEnabled={backendEnabled}
               projectAuth={projectAuth}
               authAccess={authAccess}
+            />
+          </div>
+        ) : activeTab === 'panel' ? (
+          <div className="w-full h-full min-h-0 overflow-hidden">
+            <ProjectDashboardPanel
+              projectId={projectId}
+              projectMeta={projectMeta}
+              files={files}
+              backendEnabled={backendEnabled}
+              projectAuth={projectAuth}
+              onOpenSettings={onOpenSettings}
+              onOpenDeploy={onOpenDeploy}
+              onOpenCode={() => setActiveTab('code')}
+              onToast={onToast}
+              onProjectMetaPatch={onProjectMetaPatch}
             />
           </div>
         ) : activeTab === 'entities' ? (

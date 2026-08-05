@@ -8,6 +8,7 @@
 import {
   hasAiFallbackKeys,
   completeTextWithFallback,
+  listConfiguredFallbackProviders,
 } from './aiFallbackService.js';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -55,6 +56,14 @@ export function hasAnyAiProvider() {
   return Boolean(getGeminiApiKey()) || hasAiFallbackKeys();
 }
 
+/** Providers com chave configurada (para o picker Auto). */
+export function listConfiguredAiProviders() {
+  const out = [];
+  if (getGeminiApiKey()) out.push('gemini');
+  for (const id of listConfiguredFallbackProviders()) out.push(id);
+  return out;
+}
+
 /**
  * Converte histórico GoCreate → prompt texto para providers OpenAI-compatible.
  */
@@ -79,15 +88,23 @@ async function tryOpenAiFallbackChat({
   messages,
   attachmentUrl,
   onChunk,
+  preferredProvider = null,
+  strictProvider = false,
 }) {
   if (!hasAiFallbackKeys()) return null;
-  console.warn('[gemini] a tentar AI fallback (Groq → OpenRouter → GitHub)…');
+  console.warn(
+    `[gemini] a tentar AI fallback (Groq → OpenRouter → GitHub)${
+      preferredProvider ? ` preferido=${preferredProvider}` : ''
+    }…`
+  );
   const result = await completeTextWithFallback(
     buildFallbackUserPrompt(systemPrompt, messages, attachmentUrl),
     {
       systemPrompt: String(systemPrompt || '').slice(0, 120000) || undefined,
       temperature: 0.5,
       maxTokens: 8192,
+      preferredProvider: preferredProvider || undefined,
+      strictProvider: Boolean(strictProvider),
     }
   );
   if (typeof onChunk === 'function' && result.text) onChunk(result.text);
@@ -375,9 +392,50 @@ export async function streamGeminiChat({
   attachmentMimeType,
   onChunk,
   timeoutMs = 120000,
+  preferredProvider = null,
 }) {
+  const pref = String(preferredProvider || 'auto').trim().toLowerCase();
+  const forceFallback =
+    pref === 'groq' || pref === 'openrouter' || pref === 'github';
+  const forceGemini = pref === 'gemini';
+
   const apiKey = getGeminiApiKey();
+
+  // Provider explícito (não Auto / não Gemini) → só fallback OpenAI-compatible
+  if (forceFallback) {
+    try {
+      const fb = await tryOpenAiFallbackChat({
+        systemPrompt,
+        messages,
+        attachmentUrl,
+        onChunk,
+        preferredProvider: pref,
+        strictProvider: true,
+      });
+      if (fb) return fb;
+    } catch (e) {
+      const err = new Error(
+        e?.message ||
+          `Provider ${pref} indisponível. Verifica a chave no servidor ou escolhe Auto.`
+      );
+      err.status = e?.status || 503;
+      throw err;
+    }
+    const err = new Error(
+      `Provider ${pref} sem chave configurada. Define a env correspondente ou escolhe Auto.`
+    );
+    err.status = 503;
+    throw err;
+  }
+
   if (!apiKey) {
+    if (forceGemini) {
+      const err = new Error(
+        'GEMINI_API_KEY não configurada. Escolhe Auto ou outro provider com chave.'
+      );
+      err.status = 503;
+      throw err;
+    }
     if (hasAiFallbackKeys()) {
       return tryOpenAiFallbackChat({
         systemPrompt,
@@ -486,7 +544,7 @@ export async function streamGeminiChat({
         continue;
       }
 
-      return { ok: true, text: full, model };
+      return { ok: true, text: full, model: `gemini:${model}`, provider: 'gemini' };
     } catch (e) {
       if (e?.status && e.status !== 404 && e.status !== 429 && e.status !== 503) throw e;
       lastError =
@@ -505,8 +563,10 @@ export async function streamGeminiChat({
       attachmentResourceType,
       attachmentMimeType,
       onChunk,
+      preferredProvider: pref,
     });
   } catch (genErr) {
+    if (forceGemini) throw genErr;
     try {
       const fb = await tryOpenAiFallbackChat({
         systemPrompt,

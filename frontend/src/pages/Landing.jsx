@@ -15,6 +15,8 @@ import {
 import Logo from '../components/Logo';
 import VideoBackground from '../components/VideoBackground';
 import UserMenu from '../components/UserMenu';
+import AutoModelPicker from '../components/editor/AutoModelPicker';
+import { getPreferredAiProvider } from '../lib/aiModels';
 import { useAuth } from '../context/AuthContext';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { uploadFile } from '../lib/uploadApi';
@@ -71,6 +73,7 @@ export default function Landing() {
   const [localFile, setLocalFile] = useState(null); // File antes do upload (guest ou pré-view)
   const [attachError, setAttachError] = useState('');
   const [modelosOpen, setModelosOpen] = useState(false);
+  const [aiProvider, setAiProvider] = useState(() => getPreferredAiProvider());
   const [liveTranscript, setLiveTranscript] = useState('');
   const [micError, setMicError] = useState('');
 
@@ -447,74 +450,83 @@ export default function Landing() {
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-1">
-              <div className="hidden sm:flex w-8 h-8 shrink-0 rounded-lg items-center justify-center bg-zinc-800 text-zinc-400">
-                <Zap size={14} />
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-1">
+                <div className="hidden sm:flex w-8 h-8 shrink-0 rounded-lg items-center justify-center bg-zinc-800 text-zinc-400">
+                  <Zap size={14} />
+                </div>
+
+                <textarea
+                  ref={textareaRef}
+                  value={listening && liveTranscript ? liveTranscript : input}
+                  onChange={(e) => {
+                    if (!listening) setInput(e.target.value);
+                  }}
+                  disabled={loading || listening || uploading}
+                  placeholder="Ex.: app de reservas com agenda e confirmação por WhatsApp…"
+                  rows={1}
+                  className="flex-1 w-full bg-transparent border-none resize-none outline-none text-[15px] placeholder:text-zinc-500 py-2.5 sm:py-2 px-1 min-h-[44px] max-h-[120px] leading-snug text-zinc-100 text-left"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit(e);
+                    }
+                  }}
+                />
+
+                <div className="flex items-center justify-end gap-1 sm:gap-0.5 shrink-0 pb-0.5 sm:pb-0">
+                  <button
+                    type="button"
+                    disabled={loading || uploading || listening}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-2.5 rounded-lg transition-all disabled:opacity-40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                    title="Anexar foto, vídeo ou documento"
+                    aria-label="Anexar ficheiro"
+                  >
+                    {uploading ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <Paperclip size={18} />
+                    )}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!canSubmit}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-semibold text-white transition-all rounded-lg disabled:opacity-40 bg-blue-600 hover:bg-blue-500 disabled:hover:bg-blue-600"
+                  >
+                    {loading || uploading ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <>
+                        Gerar
+                        <ArrowRight size={14} className="opacity-80" />
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading || uploading}
+                    onClick={handleMicClick}
+                    className={`relative p-2.5 rounded-lg transition-all disabled:opacity-40 ${
+                      listening
+                        ? 'text-red-200 bg-red-500/25 landing-mic-listening'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                    }`}
+                    title={listening ? 'Concluir gravação' : 'Falar (segurar com cliques)'}
+                    aria-label={listening ? 'Parar e usar texto' : 'Iniciar microfone'}
+                    aria-pressed={listening}
+                  >
+                    {listening && <span className="landing-mic-pulse" aria-hidden />}
+                    <Mic size={18} className="relative z-[1]" />
+                  </button>
+                </div>
               </div>
-
-              <textarea
-                ref={textareaRef}
-                value={listening && liveTranscript ? liveTranscript : input}
-                onChange={(e) => {
-                  if (!listening) setInput(e.target.value);
-                }}
-                disabled={loading || listening || uploading}
-                placeholder="Ex.: app de reservas com agenda e confirmação por WhatsApp…"
-                rows={1}
-                className="flex-1 w-full bg-transparent border-none resize-none outline-none text-[15px] placeholder:text-zinc-500 py-2.5 sm:py-2 px-1 min-h-[44px] max-h-[120px] leading-snug text-zinc-100 text-left"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit(e);
-                  }
-                }}
-              />
-
-              <div className="flex items-center justify-end gap-1 sm:gap-0.5 shrink-0 pb-0.5 sm:pb-0">
-                <button
-                  type="button"
-                  disabled={loading || uploading || listening}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="p-2.5 rounded-lg transition-all disabled:opacity-40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-                  title="Anexar foto, vídeo ou documento"
-                  aria-label="Anexar ficheiro"
-                >
-                  {uploading ? (
-                    <Loader2 size={18} className="animate-spin" />
-                  ) : (
-                    <Paperclip size={18} />
-                  )}
-                </button>
-                <button
-                  type="submit"
-                  disabled={!canSubmit}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-semibold text-white transition-all rounded-lg disabled:opacity-40 bg-blue-600 hover:bg-blue-500 disabled:hover:bg-blue-600"
-                >
-                  {loading || uploading ? (
-                    <Loader2 size={15} className="animate-spin" />
-                  ) : (
-                    <>
-                      Gerar
-                      <ArrowRight size={14} className="opacity-80" />
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  disabled={loading || uploading}
-                  onClick={handleMicClick}
-                  className={`relative p-2.5 rounded-lg transition-all disabled:opacity-40 ${
-                    listening
-                      ? 'text-red-200 bg-red-500/25 landing-mic-listening'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                  }`}
-                  title={listening ? 'Concluir gravação' : 'Falar (segurar com cliques)'}
-                  aria-label={listening ? 'Parar e usar texto' : 'Iniciar microfone'}
-                  aria-pressed={listening}
-                >
-                  {listening && <span className="landing-mic-pulse" aria-hidden />}
-                  <Mic size={18} className="relative z-[1]" />
-                </button>
+              <div className="flex items-center px-1 pb-0.5">
+                <AutoModelPicker
+                  compact
+                  value={aiProvider}
+                  onChange={setAiProvider}
+                />
               </div>
             </div>
           </form>

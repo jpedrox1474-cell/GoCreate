@@ -23,6 +23,7 @@ import {
   X,
   Loader2,
   Undo2,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
@@ -37,6 +38,12 @@ import DeployModal from '../components/editor/DeployModal';
 import SettingsModal from '../components/editor/SettingsModal';
 import IntegrationsBanner from '../components/editor/IntegrationsBanner';
 import SuggestedIntegrationsBanner from '../components/editor/SuggestedIntegrationsBanner';
+import AutoModelPicker from '../components/editor/AutoModelPicker';
+import {
+  getPreferredAiProvider,
+  getDiscussMode,
+  setDiscussMode,
+} from '../lib/aiModels';
 import { createProject, getProject, listenToMessages, touchProject, listUserProjects, renameProject, deleteProject, deleteProjects, duplicateProject, saveMessage } from '../lib/projects';
 import { scheduleAutomationCheck, rememberLastProjectId } from '../lib/automations';
 import { streamChat, InsufficientCreditsError } from '../lib/chatApi';
@@ -158,6 +165,8 @@ export default function Editor() {
   const [attachment, setAttachment] = useState(null); // { url, name, resourceType, mimeType }
   const [uploading, setUploading] = useState(false);
   const [chatMicListening, setChatMicListening] = useState(false);
+  const [aiProvider, setAiProvider] = useState(() => getPreferredAiProvider());
+  const [discussMode, setDiscussModeState] = useState(() => getDiscussMode());
   const [historySelectMode, setHistorySelectMode] = useState(false);
   const [historySelectedIds, setHistorySelectedIds] = useState(() => new Set());
   const [historyBulkDeleting, setHistoryBulkDeleting] = useState(false);
@@ -789,6 +798,8 @@ export default function Editor() {
           attachmentResourceType: currentAttachment?.resourceType || null,
           attachmentMimeType: currentAttachment?.mimeType || null,
           wiringPrompt: wiringPrompt || null,
+          preferredProvider: aiProvider || getPreferredAiProvider(),
+          discussMode: discussMode || getDiscussMode(),
           idToken,
           signal: controller.signal,
           onSuggestedIntegrations: (ids) => {
@@ -970,6 +981,8 @@ export default function Editor() {
       finishGeneration,
       openPricing,
       notifyAutomations,
+      aiProvider,
+      discussMode,
     ]
   );
 
@@ -1815,7 +1828,7 @@ export default function Editor() {
                         ? 'A gerar…'
                         : 'Pede alterações, novas secções…'
                   }
-                  className="w-full bg-transparent border-none py-3.5 pl-4 pr-28 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none resize-none max-h-[150px] custom-scrollbar"
+                  className="w-full bg-transparent border-none py-3.5 pl-4 pr-4 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none resize-none max-h-[150px] custom-scrollbar"
                   rows={1}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1824,7 +1837,33 @@ export default function Editor() {
                     }
                   }}
                 />
-                <div className="absolute right-2 bottom-2 flex items-center gap-0.5 bg-zinc-900 pl-2">
+              </div>
+              <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AutoModelPicker
+                    compact
+                    value={aiProvider}
+                    onChange={setAiProvider}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !discussMode;
+                      setDiscussModeState(next);
+                      setDiscussMode(next);
+                    }}
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition-all ${
+                      discussMode
+                        ? 'border-blue-500/50 bg-blue-600/15 text-blue-200'
+                        : 'border-zinc-700/80 bg-zinc-900/80 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                    title="Modo discutir — conversa sem gerar código"
+                  >
+                    <MessageSquare size={12} />
+                    Discutir
+                  </button>
+                </div>
+                <div className="flex items-center gap-0.5">
                   {isGenerating ? (
                     <button
                       type="button"
@@ -1885,7 +1924,7 @@ export default function Editor() {
             </form>
             <div className="mt-2 flex justify-between items-center px-1 gap-2">
               <span className="text-[10px] text-zinc-600 font-medium flex items-center gap-1">
-                <Wand2 size={10} /> {HAS_API ? 'Gemini / API' : 'Modo demo'}
+                <Wand2 size={10} /> {HAS_API ? (discussMode ? 'Modo discutir' : 'Assistente') : 'Modo demo'}
               </span>
               <div className="flex items-center gap-2">
                 {canUndo && !isBusy && (
@@ -1956,6 +1995,13 @@ export default function Editor() {
           codeBaselines={codeBaselines}
           dirtyCodeFiles={dirtyCodeFiles}
           diffBaselines={diffBaselines}
+          projectMeta={projectMeta}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenDeploy={() => setDeployOpen(true)}
+          onToast={setToast}
+          onProjectMetaPatch={(patch) => {
+            setProjectMeta((prev) => (prev ? { ...prev, ...patch } : prev));
+          }}
         />
       </main>
 

@@ -231,7 +231,16 @@ export async function archiveProject(projectId, archived = true) {
 
 export async function updateProjectSettings(
   projectId,
-  { name, description, customDomain, authAccess, ownerEmail, layoutLock } = {}
+  {
+    name,
+    description,
+    customDomain,
+    authAccess,
+    ownerEmail,
+    layoutLock,
+    thumbnailUrl,
+    hideGoCreateBadge,
+  } = {}
 ) {
   if (!projectId) throw new Error('Projeto inválido.');
   const patch = { updatedAt: serverTimestamp() };
@@ -251,6 +260,14 @@ export async function updateProjectSettings(
   }
   if (layoutLock != null) {
     patch.layoutLock = Boolean(layoutLock);
+  }
+  if (thumbnailUrl != null) {
+    const url = String(thumbnailUrl).trim();
+    patch.thumbnailUrl = url || null;
+    patch.thumbnail = url || null;
+  }
+  if (hideGoCreateBadge != null) {
+    patch.hideGoCreateBadge = Boolean(hideGoCreateBadge);
   }
   if (authAccess != null) {
     const mode = authAccess.mode === 'invited' ? 'invited' : 'owner_only';
