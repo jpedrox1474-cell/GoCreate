@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export default function ModalShell({ open, onClose, title, children, wide, footer }) {
@@ -13,8 +14,8 @@ export default function ModalShell({ open, onClose, title, children, wide, foote
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 overflow-y-auto">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div
         role="dialog"
@@ -40,6 +41,7 @@ export default function ModalShell({ open, onClose, title, children, wide, foote
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

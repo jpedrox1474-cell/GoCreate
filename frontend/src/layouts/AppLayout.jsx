@@ -23,6 +23,7 @@ import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { isOwnerEmail } from '../lib/plans';
+import { useConfirm } from '../components/editor/ConfirmDialog';
 import {
   listUserProjects,
   renameProject,
@@ -43,6 +44,7 @@ export default function AppLayout() {
   const { user } = useAuth();
   const { isLight } = useTheme();
   const navigate = useNavigate();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -104,7 +106,13 @@ export default function AppLayout() {
   }
 
   async function handleDelete(project) {
-    if (!window.confirm(`Eliminar “${project.name}”? Esta ação não pode ser desfeita.`)) return;
+    const ok = await askConfirm({
+      title: 'Eliminar projeto',
+      message: `Eliminar “${project.name}”? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await deleteProject(project.id);
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
@@ -144,13 +152,13 @@ export default function AppLayout() {
   async function handleBulkDelete() {
     const ids = [...selectedIds];
     if (!ids.length || bulkDeleting) return;
-    if (
-      !window.confirm(
-        `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Eliminar projetos',
+      message: `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBulkDeleting(true);
     try {
       const result = await deleteProjects(ids);
@@ -376,6 +384,7 @@ export default function AppLayout() {
       </div>
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+      {confirmDialog}
     </div>
   );
 }

@@ -495,8 +495,8 @@ export default function ProjectDashboardPanel({
           <EmptyState
             icon={ScrollText}
             title="Logs"
-            description="Histórico de deploys e execuções. Consulta o histórico no modal de Deploy."
-            actionLabel="Abrir Deploy"
+            description="Histórico de publicações e execuções. Consulta o histórico no modal Publicar."
+            actionLabel="Abrir Publicar"
             onAction={() => onOpenDeploy?.()}
           />
         );

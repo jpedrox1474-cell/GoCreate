@@ -9,12 +9,14 @@ import {
   ACCESS_OPTIONS,
   openApiDocsUrl,
 } from '../../lib/dataApi';
+import { useConfirm } from './ConfirmDialog';
 
 /**
  * API keys + OpenAPI docs + entity permission hints for a project.
  */
 export default function DataApiPanel({ projectId, backendEnabled = false, entities = [], onPermissionsSaved }) {
   const { user } = useAuth();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(null);
@@ -85,7 +87,13 @@ export default function DataApiPanel({ projectId, backendEnabled = false, entiti
 
   async function handleRevoke(keyId) {
     if (!user || !projectId || busy) return;
-    if (!window.confirm('Revogar esta API key? Chamadas externas deixam de funcionar.')) return;
+    const ok = await askConfirm({
+      title: 'Revogar API key',
+      message: 'Revogar esta API key? Chamadas externas deixam de funcionar.',
+      confirmLabel: 'Revogar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(keyId);
     try {
       const idToken = await user.getIdToken();
@@ -143,6 +151,7 @@ export default function DataApiPanel({ projectId, backendEnabled = false, entiti
 
   return (
     <div className="space-y-4 text-xs">
+      {confirmDialog}
       {notice && (
         <div
           className={`px-2.5 py-1.5 rounded-md border ${

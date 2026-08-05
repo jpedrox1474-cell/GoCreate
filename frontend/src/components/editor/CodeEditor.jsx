@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getUserSettings } from '../../lib/userSettings';
 import CodeDiffView from './CodeDiffView';
+import { useConfirm } from './ConfirmDialog';
 
 const FONT_SIZE_PX = { sm: 12, md: 14, lg: 16 };
 
@@ -164,6 +165,7 @@ export default function CodeEditor({
   baselines = null,
   diffBaselines = null,
 }) {
+  const [askConfirm, confirmDialog] = useConfirm();
   const fileNames = Object.keys(files || {});
   const code = (activeFile && files?.[activeFile]) || '';
   const tree = useMemo(() => buildTree(fileNames), [fileNames]);
@@ -303,9 +305,15 @@ export default function CodeEditor({
     setTimeout(() => setSaveFlash(false), 1200);
   }
 
-  function handleRevertClick() {
+  async function handleRevertClick() {
     if (!activeFile || !canRevert) return;
-    if (!window.confirm(`Reverter “${activeFile}” para a última versão da IA?`)) return;
+    const ok = await askConfirm({
+      title: 'Reverter ficheiro',
+      message: `Reverter “${activeFile}” para a última versão da IA?`,
+      confirmLabel: 'Reverter',
+      destructive: true,
+    });
+    if (!ok) return;
     onRevertFile(activeFile);
   }
 
@@ -324,6 +332,7 @@ export default function CodeEditor({
 
   return (
     <div className={`w-full h-full rounded-xl border shadow-2xl overflow-hidden flex animate-in ${theme.shell}`}>
+      {confirmDialog}
       <aside className={`w-52 shrink-0 border-r overflow-y-auto custom-scrollbar ${theme.aside}`}>
         <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-zinc-500 font-semibold border-b border-inherit flex items-center justify-between gap-1">
           <span>Explorer</span>

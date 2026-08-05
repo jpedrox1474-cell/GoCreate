@@ -16,6 +16,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
+import { useConfirm } from './ConfirmDialog';
 import { updateProjectSettings, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
 import { checkSlugAvailability, updateProjectSlug, updateCustomDomain, verifyCustomDomain, getCustomDomainStatus } from '../../lib/deployApi';
 import {
@@ -1081,6 +1082,7 @@ async function handleSave(e) {
 
 function CollaboratorsBlock({ projectId, onToast }) {
   const { user } = useAuth();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [list, setList] = useState([]);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('editor');
@@ -1140,7 +1142,13 @@ function CollaboratorsBlock({ projectId, onToast }) {
   }
 
   async function handleRemove(em) {
-    if (!window.confirm(`Remover ${em}?`)) return;
+    const ok = await askConfirm({
+      title: 'Remover colaborador',
+      message: `Remover ${em}?`,
+      confirmLabel: 'Remover',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       const idToken = await user.getIdToken();
       const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -1161,6 +1169,7 @@ function CollaboratorsBlock({ projectId, onToast }) {
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2">
+      {confirmDialog}
       <p className="text-[11px] text-zinc-500 leading-relaxed">
         Convida contas GoCreate (editor ou visualizador) para abrir o projeto no Dashboard.
       </p>
@@ -1216,6 +1225,7 @@ function CollaboratorsBlock({ projectId, onToast }) {
 
 function EnvSecretsBlock({ projectId, onToast }) {
   const { user } = useAuth();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [secrets, setSecrets] = useState([]);
   const [keyName, setKeyName] = useState('');
   const [value, setValue] = useState('');
@@ -1277,7 +1287,13 @@ function EnvSecretsBlock({ projectId, onToast }) {
   }
 
   async function handleDelete(key) {
-    if (!window.confirm(`Apagar secret ${key}?`)) return;
+    const ok = await askConfirm({
+      title: 'Apagar secret',
+      message: `Apagar secret ${key}?`,
+      confirmLabel: 'Apagar',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       const idToken = await user.getIdToken();
       const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -1297,6 +1313,7 @@ function EnvSecretsBlock({ projectId, onToast }) {
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3 space-y-2">
+      {confirmDialog}
       <p className="text-[11px] text-zinc-500 leading-relaxed">
         Injetadas no preview como{' '}
         <span className="font-mono text-zinc-400">window.__GOCREATE_ENV__</span> (client-safe).

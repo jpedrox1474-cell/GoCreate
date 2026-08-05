@@ -230,7 +230,7 @@ button:hover { background: #3b82f6; }
 </gocreate_artifact>`;
 
 export const AI_REPLIES = [
-  `Atualizei o layout com base no teu pedido. Confere o Live Preview à direita — podes pedir mais ajustes quando quiseres.
+  `Atualizei o layout com base no teu pedido. Confere a Pré-visualização à direita — podes pedir mais ajustes quando quiseres.
 ${DEMO_ARTIFACT}`,
   `Feito! Ajustei os componentes e o estilo. Experimenta interagir no preview ou muda para a aba Código para ver o diff.
 ${DEMO_ARTIFACT}`,

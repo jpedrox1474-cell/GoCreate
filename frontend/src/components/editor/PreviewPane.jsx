@@ -213,11 +213,15 @@ function PreviewInner({
             ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-900/30'
             : 'bg-zinc-800 text-zinc-100 border-zinc-700 hover:bg-zinc-700 hover:text-white'
         }`}
-        title={visualEditMode ? 'Sair do modo edição' : 'Modo edição visual (estilo Figma)'}
+        title={
+          visualEditMode
+            ? 'Sair do modo Editar código'
+            : 'Editar código: split + destaque. Não é editor Figma pixel-a-pixel (iframe cross-origin).'
+        }
         aria-pressed={visualEditMode}
       >
         <MousePointer2 size={13} />
-        Editar
+        Editar código
       </button>
     ) : null;
 
@@ -236,9 +240,9 @@ function PreviewInner({
       {visualEditMode && !publicMode && (
         <div className="shrink-0 z-20 flex items-center gap-2 px-3 py-1.5 bg-blue-600/15 border-b border-blue-500/40 text-[11px] text-blue-100">
           <MousePointer2 size={13} className="text-blue-400 shrink-0" />
-          <span className="font-semibold text-blue-200">Modo Editar</span>
+          <span className="font-semibold text-blue-200">Editar código</span>
           <span className="text-blue-200/80 truncate">
-            — clica num elemento no preview para selecionar
+            — clica para destacar (não é Figma pixel-a-pixel)
           </span>
           {selectedElement?.tag ? (
             <span className="ml-auto font-mono text-[10px] text-blue-100/90 bg-blue-950/50 border border-blue-500/30 rounded px-1.5 py-0.5 max-w-[40%] truncate">
@@ -366,7 +370,7 @@ function EmptyPreviewPlaceholder({
 
   return (
     <div className="h-full flex flex-col items-center justify-center gap-2 bg-zinc-900/40 px-6 text-center">
-      <p className="text-sm font-medium text-zinc-300">Live Preview</p>
+      <p className="text-sm font-medium text-zinc-300">Pré-visualização</p>
       <p className="text-xs text-zinc-500 max-w-xs">
         Ainda não há ficheiros gerados. Envia uma mensagem no chat para a IA criar a interface.
       </p>

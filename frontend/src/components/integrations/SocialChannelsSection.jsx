@@ -20,6 +20,7 @@ import {
   openOAuthPopup,
   waitForOAuthMessage,
 } from '../../lib/socialChannelsApi';
+import { useConfirm } from '../editor/ConfirmDialog';
 
 const META_LOGIN_SCOPES = [
   'pages_show_list',
@@ -153,6 +154,7 @@ export default function SocialChannelsSection({
   onRefresh,
   onToast,
 }) {
+  const [askConfirm, confirmDialog] = useConfirm();
   const [waOpen, setWaOpen] = useState(false);
   const [busy, setBusy] = useState(null);
   const [metaAppId, setMetaAppId] = useState(
@@ -252,7 +254,13 @@ export default function SocialChannelsSection({
 
   async function handleMetaDisconnect() {
     if (!guardPremium()) return;
-    if (!window.confirm('Desligar Instagram e Facebook desta conta?')) return;
+    const ok = await askConfirm({
+      title: 'Desligar Meta',
+      message: 'Desligar Instagram e Facebook desta conta?',
+      confirmLabel: 'Desligar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy('meta');
     try {
       await disconnectMeta({ idToken });
@@ -306,7 +314,13 @@ export default function SocialChannelsSection({
   async function handleOAuthDisconnect(platformId) {
     if (!guardPremium()) return;
     const label = platformId === 'youtube' ? 'YouTube' : 'TikTok';
-    if (!window.confirm(`Desligar ${label} desta conta?`)) return;
+    const ok = await askConfirm({
+      title: `Desligar ${label}`,
+      message: `Desligar ${label} desta conta?`,
+      confirmLabel: 'Desligar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(platformId);
     try {
       await disconnectPlatformOAuth({ idToken, platform: platformId });
@@ -345,6 +359,7 @@ export default function SocialChannelsSection({
 
   return (
     <section id="social-channels" className="mb-10">
+      {confirmDialog}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-500/90 mb-1.5 flex items-center gap-1.5">

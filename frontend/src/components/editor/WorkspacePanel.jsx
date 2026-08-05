@@ -71,16 +71,32 @@ export default function WorkspacePanel({
   onOpenDeploy = null,
   onToast = null,
   onProjectMetaPatch = null,
+  /** When provided, visual-edit is controlled by the parent (top navbar). */
+  visualEditMode: visualEditModeProp = undefined,
+  onVisualEditChange = null,
+  onSelectedElementChange = null,
+  /** Hide Pré-visualização / Painel / Editar when those live in the top navbar. */
+  hidePrimaryModes = false,
 }) {
-  const [visualEditMode, setVisualEditMode] = useState(false);
+  const [internalVisualEdit, setInternalVisualEdit] = useState(false);
   const [selectedElement, setSelectedElement] = useState(null);
+  const controlled = typeof onVisualEditChange === 'function';
+  const visualEditMode = controlled
+    ? Boolean(visualEditModeProp)
+    : internalVisualEdit;
+
+  function setVisualEditMode(next) {
+    if (controlled) onVisualEditChange(next);
+    else setInternalVisualEdit(next);
+  }
 
   function openPreviewTab() {
     if (!projectId) return;
     window.open(`/p/${projectId}/preview`, '_blank', 'noopener,noreferrer');
   }
 
-  const showPreviewChrome = activeTab === 'preview' || activeTab === 'edit';
+  const showPreviewChrome =
+    activeTab === 'preview' || activeTab === 'edit' || visualEditMode;
 
   const enterVisualEdit = useCallback(
     (next) => {
@@ -94,20 +110,23 @@ export default function WorkspacePanel({
         }
       } else {
         setSelectedElement(null);
+        onSelectedElementChange?.(null);
         if (activeTab === 'edit') setActiveTab('preview');
       }
     },
-    [visualEditMode, setActiveTab, activeFile, files, setActiveFile, activeTab]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setVisualEditMode is stable enough via controlled flag
+    [visualEditMode, setActiveTab, activeFile, files, setActiveFile, activeTab, onSelectedElementChange, controlled, onVisualEditChange]
   );
 
   const handleElementSelect = useCallback(
     (payload) => {
       setSelectedElement(payload);
+      onSelectedElementChange?.(payload);
       if (!payload) return;
       const match = guessFileForElement(files, payload);
       if (match && typeof setActiveFile === 'function') setActiveFile(match);
     },
-    [files, setActiveFile]
+    [files, setActiveFile, onSelectedElementChange]
   );
 
   const codePane = (
@@ -152,43 +171,50 @@ export default function WorkspacePanel({
       <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-zinc-800 gap-2 shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex p-0.5 bg-zinc-900 rounded-lg border border-zinc-800">
+            {!hidePrimaryModes && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVisualEditMode(false);
+                    setSelectedElement(null);
+                    onSelectedElementChange?.(null);
+                    setActiveTab('preview');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                    activeTab === 'preview' && !visualEditMode
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <Monitor size={14} />
+                  Pré-visualização
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVisualEditMode(false);
+                    setSelectedElement(null);
+                    onSelectedElementChange?.(null);
+                    setActiveTab('panel');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                    activeTab === 'panel'
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <LayoutDashboard size={14} />
+                  Painel
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => {
                 setVisualEditMode(false);
                 setSelectedElement(null);
-                setActiveTab('preview');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                activeTab === 'preview' && !visualEditMode
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <Monitor size={14} />
-              Pré-visualização
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setVisualEditMode(false);
-                setSelectedElement(null);
-                setActiveTab('panel');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                activeTab === 'panel'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <LayoutDashboard size={14} />
-              Painel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setVisualEditMode(false);
-                setSelectedElement(null);
+                onSelectedElementChange?.(null);
                 setActiveTab('code');
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
@@ -205,6 +231,7 @@ export default function WorkspacePanel({
               onClick={() => {
                 setVisualEditMode(false);
                 setSelectedElement(null);
+                onSelectedElementChange?.(null);
                 setActiveTab('entities');
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
@@ -218,21 +245,22 @@ export default function WorkspacePanel({
             </button>
           </div>
 
-          {/* Primary Figma-style Edit control — not buried in tabs */}
-          <button
-            type="button"
-            onClick={() => enterVisualEdit(!visualEditMode)}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg border transition-all shadow-sm ${
-              visualEditMode
-                ? 'bg-blue-600 text-white border-blue-500 shadow-blue-900/40 ring-2 ring-blue-400/40'
-                : 'bg-zinc-900 text-zinc-100 border-zinc-700 hover:border-blue-500/50 hover:text-white hover:bg-zinc-800'
-            }`}
-            title="Modo edição visual — seleciona elementos no preview"
-            aria-pressed={visualEditMode}
-          >
-            <MousePointer2 size={14} />
-            Editar
-          </button>
+          {!hidePrimaryModes && (
+            <button
+              type="button"
+              onClick={() => enterVisualEdit(!visualEditMode)}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg border transition-all shadow-sm ${
+                visualEditMode
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-blue-900/40 ring-2 ring-blue-400/40'
+                  : 'bg-zinc-900 text-zinc-100 border-zinc-700 hover:border-blue-500/50 hover:text-white hover:bg-zinc-800'
+              }`}
+              title="Editar código: split código+preview e destaque de elementos. Não é editor Figma pixel-a-pixel (iframe cross-origin)."
+              aria-pressed={visualEditMode}
+            >
+              <MousePointer2 size={14} />
+              Editar código
+            </button>
+          )}
         </div>
 
         {showPreviewChrome && (

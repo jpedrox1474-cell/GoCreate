@@ -12,13 +12,14 @@ import {
   History,
 } from 'lucide-react';
 import ModalShell from './ModalShell';
+import { useConfirm } from './ConfirmDialog';
 import { publishProject, getPublishUrl, getProjectPublicKey } from '../../lib/projects';
 import { publishViaApi, checkSlugAvailability, updateProjectSlug, listDeployHistory, rollbackDeploy } from '../../lib/deployApi';
 import { getUserSettings, recordDeployNotificationStub } from '../../lib/userSettings';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditsContext';
 
-const STEPS = ['A preparar build…', 'A guardar snapshot…', 'A publicar…', 'Live!'];
+const STEPS = ['A preparar build…', 'A guardar snapshot…', 'A publicar…', 'Pronto!'];
 
 export default function DeployModal({
   open,
@@ -36,6 +37,7 @@ export default function DeployModal({
 }) {
   const { user } = useAuth();
   const { canUsePremium, plan, role } = useCredits();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [env, setEnv] = useState('production');
   const [phase, setPhase] = useState('idle'); // idle | deploying | done | error
   const [stepIdx, setStepIdx] = useState(0);
@@ -101,9 +103,14 @@ export default function DeployModal({
 
   async function handleRollback(historyId) {
     if (!user || !projectId || rollbackBusy) return;
-    if (!window.confirm('Reverter para este snapshot? O deploy atual será guardado no histórico.')) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Reverter publicação',
+      message:
+        'Reverter para este snapshot? A publicação atual será guardada no histórico.',
+      confirmLabel: 'Reverter',
+      destructive: true,
+    });
+    if (!ok) return;
     setRollbackBusy(historyId);
     try {
       const idToken = await user.getIdToken();
@@ -135,7 +142,7 @@ export default function DeployModal({
     if (!projectId || !ownerId) {
       setPhase('error');
       setErrorMsg('Guarda o projeto (conta real) antes de publicar. Templates demo não têm URL live.');
-      onToast?.({ message: 'Deploy precisa de um projeto guardado.', type: 'error' });
+      onToast?.({ message: 'Publicar precisa de um projeto guardado.', type: 'error' });
       return;
     }
 
@@ -194,7 +201,7 @@ export default function DeployModal({
       console.error('[DeployModal]', err);
       setPhase('error');
       setErrorMsg(err?.message || 'Falha ao publicar. Tenta novamente.');
-      onToast?.({ message: 'Deploy falhou.', type: 'error' });
+      onToast?.({ message: 'Publicação falhou.', type: 'error' });
     }
   }
 
@@ -249,11 +256,13 @@ export default function DeployModal({
   }
 
   return (
-    <ModalShell open={open} onClose={onClose} title="Deploy">
+    <>
+      {confirmDialog}
+    <ModalShell open={open} onClose={onClose} title="Publicar">
       <div className="space-y-4">
         <p className="text-xs text-zinc-500 leading-relaxed">
-          O link é fixo para este projeto — cada deploy atualiza o mesmo URL. Free publica com a tag
-          “Feito com GoCreate”; Pro remove a badge. Guardar dados no site exige Backend ativado.
+          O link é fixo para este projeto — cada publicação atualiza o mesmo URL. Free publica com a
+          tag “Feito com GoCreate”; Pro remove a badge. Guardar dados no site exige Backend ativado.
         </p>
 
         <div className="space-y-2">
@@ -416,7 +425,7 @@ export default function DeployModal({
             className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-md shadow-blue-900/20 transition-all"
           >
             <Rocket size={16} />
-            Iniciar deploy
+            Publicar
           </button>
         )}
 
@@ -480,7 +489,7 @@ export default function DeployModal({
                 onClick={startDeploy}
                 className="flex-1 text-xs font-medium text-zinc-400 hover:text-zinc-200 py-2 rounded-lg border border-zinc-800 hover:border-zinc-700 transition-all"
               >
-                Redeploy
+                Republicar
               </button>
             </div>
           </div>
@@ -497,7 +506,7 @@ export default function DeployModal({
               </p>
             ) : !history.length ? (
               <p className="text-[11px] text-zinc-500">
-                Ainda sem snapshots. Cada redeploy guarda a versão anterior.
+                Ainda sem snapshots. Cada republicação guarda a versão anterior.
               </p>
             ) : (
               <ul className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
@@ -529,5 +538,6 @@ export default function DeployModal({
         )}
       </div>
     </ModalShell>
+    </>
   );
 }

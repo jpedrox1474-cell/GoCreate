@@ -1,25 +1,18 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Send,
   Mic,
   Plus,
   Zap,
-  Download,
-  Menu,
   Paperclip,
-  Settings,
-  Save,
-  ArrowLeft,
   Wand2,
   Play,
-  ChevronRight,
   Square,
   LayoutTemplate,
   BarChart3,
   CreditCard,
   Smartphone,
-  PanelLeft,
   X,
   Loader2,
   Undo2,
@@ -28,9 +21,6 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
 import Toast from '../components/Toast';
-import CreditsBadge from '../components/CreditsBadge';
-import UserMenu from '../components/UserMenu';
-import Logo from '../components/Logo';
 import WorkspacePanel from '../components/editor/WorkspacePanel';
 import HistoryDrawer from '../components/editor/HistoryDrawer';
 import ExportModal from '../components/editor/ExportModal';
@@ -39,6 +29,11 @@ import SettingsModal from '../components/editor/SettingsModal';
 import IntegrationsBanner from '../components/editor/IntegrationsBanner';
 import SuggestedIntegrationsBanner from '../components/editor/SuggestedIntegrationsBanner';
 import AutoModelPicker from '../components/editor/AutoModelPicker';
+import {
+  EditorTopNavbar,
+  EditorPropertiesPanel,
+} from '../components/editor/EditorLayout';
+import { useConfirm } from '../components/editor/ConfirmDialog';
 import {
   getPreferredAiProvider,
   getDiscussMode,
@@ -75,7 +70,6 @@ import {
   clearPendingPrompt,
   takePendingLandingFile,
 } from '../lib/landingPending';
-import { useTheme } from '../context/ThemeContext';
 
 function readGenerationSession() {
   try {
@@ -101,11 +95,6 @@ function clearGenerationSession() {
   } catch {
     /* ignore */
   }
-}
-
-function EditorLogo() {
-  const { isLight } = useTheme();
-  return <Logo to="/dashboard" variant={isLight ? 'light' : 'dark'} size="sm" />;
 }
 
 // Empty VITE_API_URL = same-origin /api/* (Firebase Hosting → gocreateApi).
@@ -144,6 +133,7 @@ export default function Editor() {
   const { user } = useAuth();
   const { openPricing, plan: ownerPlan } = useCredits();
   const navigate = useNavigate();
+  const [askConfirm, confirmDialog] = useConfirm();
 
   const [firestoreId, setFirestoreId] = useState(null);
   const [projectLoading, setProjectLoading] = useState(true);
@@ -152,6 +142,8 @@ export default function Editor() {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeTab, setActiveTab] = useState('preview');
+  const [visualEditMode, setVisualEditMode] = useState(false);
+  const [selectedElement, setSelectedElement] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(true);
   const [previewMode, setPreviewMode] = useState('desktop');
@@ -1025,13 +1017,14 @@ export default function Editor() {
 
   const handleUndoLastTurn = useCallback(async () => {
     if (!firestoreId || undoing || isBusy) return;
-    if (
-      !window.confirm(
-        'Desfazer a última alteração da IA? Os ficheiros e as mensagens desse turno serão restaurados.'
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Desfazer alteração',
+      message:
+        'Desfazer a última alteração da IA? Os ficheiros e as mensagens desse turno serão restaurados.',
+      confirmLabel: 'Desfazer',
+      destructive: true,
+    });
+    if (!ok) return;
     setUndoing(true);
     try {
       const result = await undoLastCheckpoint(firestoreId);
@@ -1059,7 +1052,7 @@ export default function Editor() {
     } finally {
       setUndoing(false);
     }
-  }, [firestoreId, undoing, isBusy]);
+  }, [firestoreId, undoing, isBusy, askConfirm]);
 
   function handleStopGeneration() {
     abortRef.current?.abort();
@@ -1374,7 +1367,13 @@ export default function Editor() {
   }
 
   async function handleDeleteHistoryProject(project) {
-    if (!window.confirm(`Eliminar “${project.name}”? Esta ação não pode ser desfeita.`)) return;
+    const ok = await askConfirm({
+      title: 'Eliminar projeto',
+      message: `Eliminar “${project.name}”? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await deleteProject(project.id);
       setHistoryProjects((prev) => prev.filter((p) => p.id !== project.id));
@@ -1419,13 +1418,13 @@ export default function Editor() {
   async function handleHistoryBulkDelete() {
     const ids = [...historySelectedIds];
     if (!ids.length || historyBulkDeleting) return;
-    if (
-      !window.confirm(
-        `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Eliminar projetos',
+      message: `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     setHistoryBulkDeleting(true);
     try {
       const result = await deleteProjects(ids);
@@ -1466,90 +1465,42 @@ export default function Editor() {
           <div className="h-full w-1/3 bg-gradient-to-r from-blue-500 via-indigo-400 to-blue-500 animate-[gc-progress_1.4s_ease-in-out_infinite]" />
         </div>
       )}
-      <header className="relative flex items-center justify-between px-3 sm:px-4 h-14 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md z-30 shrink-0">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-md transition-all lg:hidden"
-          >
-            <Menu size={18} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setHistoryOpen((v) => !v)}
-            className="hidden lg:inline-flex p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-md transition-all"
-            title={historyOpen ? 'Recolher histórico' : 'Abrir histórico'}
-          >
-            <PanelLeft size={16} />
-          </button>
-
-          <EditorLogo />
-
-          <div className="h-4 w-px bg-zinc-800 mx-1 hidden sm:block" />
-
-          <Link
-            to="/dashboard"
-            className="hidden sm:inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-all"
-          >
-            <ArrowLeft size={12} />
-            Projetos
-          </Link>
-
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-900/50 rounded-md border border-zinc-800/50 min-w-0">
-            <span className="text-sm text-zinc-300 font-medium truncate max-w-[120px] sm:max-w-[180px]">
-              {project.name}
-            </span>
-            <ChevronRight size={14} className="text-zinc-500 shrink-0" />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <CreditsBadge />
-          <UserMenu variant="header" showName={false} className="hidden sm:block" />
-          <button
-            type="button"
-            onClick={handleSaveProject}
-            disabled={isReadOnly}
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all disabled:opacity-40"
-          >
-            <Save size={14} />
-            Salvar
-          </button>
-          <button
-            type="button"
-            onClick={() => setExportOpen(true)}
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all"
-          >
-            <Download size={14} />
-            Exportar
-          </button>
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            disabled={isReadOnly && !isProjectOwner}
-            className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-md transition-all disabled:opacity-40"
-            title={isReadOnly ? 'Só leitura' : 'Configurações'}
-          >
-            <Settings size={16} />
-          </button>
-          <div className="w-px h-4 bg-zinc-800 mx-0.5 hidden sm:block" />
-          {isReadOnly ? (
-            <span className="px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide bg-zinc-800 text-zinc-400 border border-zinc-700">
-              Visualizador
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setDeployOpen(true)}
-              className="flex items-center gap-2 px-3 sm:px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-all shadow-md shadow-blue-900/20"
-            >
-              <Play size={14} className="fill-white" />
-              Deploy
-            </button>
-          )}
-        </div>
-      </header>
+      <EditorTopNavbar
+        viewMode={
+          visualEditMode || activeTab === 'edit'
+            ? 'edit'
+            : activeTab === 'panel'
+              ? 'panel'
+              : activeTab === 'preview'
+                ? 'preview'
+                : null
+        }
+        onViewModeChange={(mode) => {
+          if (mode === 'edit') {
+            setVisualEditMode(true);
+            setActiveTab('edit');
+            if (!activeFile) {
+              const first = Object.keys(generatedFiles || {})[0];
+              if (first) setActiveFile(first);
+            }
+          } else {
+            setVisualEditMode(false);
+            setSelectedElement(null);
+            setActiveTab(mode);
+          }
+        }}
+        projectName={project.name}
+        isReadOnly={isReadOnly}
+        isProjectOwner={isProjectOwner}
+        onToggleMobileSidebar={() => setIsSidebarOpen((v) => !v)}
+        onToggleHistory={() => setHistoryOpen((v) => !v)}
+        historyOpen={historyOpen}
+        onSave={handleSaveProject}
+        onExport={() => setExportOpen(true)}
+        onSettings={() => setSettingsOpen(true)}
+        onPublish={() => setDeployOpen(true)}
+        showPublish={!isReadOnly}
+      />
 
       <main className="flex flex-1 min-h-0 overflow-hidden relative">
         <div className="hidden lg:flex h-full min-h-0 shrink-0">
@@ -2050,8 +2001,17 @@ export default function Editor() {
           onProjectMetaPatch={(patch) => {
             setProjectMeta((prev) => (prev ? { ...prev, ...patch } : prev));
           }}
+          hidePrimaryModes
+          visualEditMode={visualEditMode}
+          onVisualEditChange={setVisualEditMode}
+          onSelectedElementChange={setSelectedElement}
         />
+        <div className="hidden xl:flex h-full min-h-0 shrink-0">
+          <EditorPropertiesPanel selectedElement={selectedElement} />
+        </div>
       </main>
+
+      {confirmDialog}
 
       <ExportModal
         open={exportOpen}

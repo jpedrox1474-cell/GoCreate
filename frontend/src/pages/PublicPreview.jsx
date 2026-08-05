@@ -121,7 +121,7 @@ export default function PublicPreview() {
         </div>
         <p className="text-sm font-medium text-zinc-200">{error}</p>
         <p className="text-xs text-zinc-500 max-w-sm">
-          Abre o editor, gera a interface e faz Deploy para publicar um URL partilhável.
+          Abre o editor, gera a interface e faz Publicar para obter um URL partilhável.
         </p>
         <Link
           to="/"

@@ -9,6 +9,7 @@ import {
 } from '../lib/meApi';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { useConfirm } from '../components/editor/ConfirmDialog';
 
 const FONT_SIZES = [
   { id: 'sm', label: 'Pequeno', px: 12 },
@@ -25,6 +26,7 @@ const CODE_THEMES = [
 export default function Settings() {
   const { preference, setTheme } = useTheme();
   const { user, updateUserProfile } = useAuth();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [theme, setThemeLocal] = useState(preference);
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [email] = useState(user?.email || '');
@@ -122,7 +124,13 @@ export default function Settings() {
 
   async function handleRevokeOthers() {
     if (!user || sessionBusy) return;
-    if (!window.confirm('Terminar todas as outras sessões neste dispositivo?')) return;
+    const ok = await askConfirm({
+      title: 'Terminar sessões',
+      message: 'Terminar todas as outras sessões neste dispositivo?',
+      confirmLabel: 'Terminar',
+      destructive: true,
+    });
+    if (!ok) return;
     setSessionBusy('others');
     try {
       const idToken = await user.getIdToken();
@@ -354,6 +362,7 @@ export default function Settings() {
       </form>
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+      {confirmDialog}
     </div>
   );
 }

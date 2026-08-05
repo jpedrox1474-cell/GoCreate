@@ -9,7 +9,6 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Editor from './pages/Editor';
-import EditorLayout from './components/editor/EditorLayout';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Integrations from './pages/Integrations';
@@ -161,8 +160,8 @@ export default function App() {
           }
         />
 
-        {/* Visual-only editor chrome skeleton (no DB) */}
-        <Route path="/editor-layout-demo" element={<EditorLayout />} />
+        {/* Visual chrome is live in the real Editor — demo redirects */}
+        <Route path="/editor-layout-demo" element={<Navigate to="/dashboard" replace />} />
 
         {/* Public share links — no auth required */}
         <Route path="/p/:projectId/preview" element={<PublicPreview />} />

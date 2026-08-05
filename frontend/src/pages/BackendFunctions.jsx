@@ -29,6 +29,7 @@ import {
   httpInvokeUrl,
   DEFAULT_HANDLER_CODE,
 } from '../lib/functionsApi';
+import { useConfirm } from '../components/editor/ConfirmDialog';
 
 const TRIGGERS = [
   { id: 'http', label: 'HTTP', icon: Webhook },
@@ -38,6 +39,7 @@ const TRIGGERS = [
 
 export default function BackendFunctions() {
   const { user } = useAuth();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(null);
@@ -220,7 +222,13 @@ export default function BackendFunctions() {
 
   async function handleDelete() {
     if (!user || !projectId || !name.trim()) return;
-    if (!window.confirm(`Apagar função ${name}?`)) return;
+    const ok = await askConfirm({
+      title: 'Apagar função',
+      message: `Apagar função ${name}?`,
+      confirmLabel: 'Apagar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       const idToken = await user.getIdToken();
@@ -562,6 +570,7 @@ export default function BackendFunctions() {
       {toast && (
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
+      {confirmDialog}
     </div>
   );
 }

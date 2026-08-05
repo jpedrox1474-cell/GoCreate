@@ -29,10 +29,11 @@ import { listSharedProjects } from '../lib/meApi';
 import Toast from '../components/Toast';
 import ProjectActionsMenu from '../components/ProjectActionsMenu';
 import ProjectCardThumbnail from '../components/ProjectCardThumbnail';
+import { useConfirm } from '../components/editor/ConfirmDialog';
 
 const STATUS_LABEL = {
   draft: { text: 'Rascunho', className: 'bg-zinc-800 text-zinc-400 border-zinc-700' },
-  deployed: { text: 'Deployed', className: 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' },
+  deployed: { text: 'Publicado', className: 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' },
   archived: { text: 'Arquivado', className: 'bg-amber-950/50 text-amber-400/90 border-amber-800/50' },
 };
 
@@ -54,6 +55,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const { credits, plan, creditsUsedThisMonth, allowance, lowCredits, unlimited } = useCredits();
   const navigate = useNavigate();
+  const [askConfirm, confirmDialog] = useConfirm();
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -214,7 +216,13 @@ export default function Dashboard() {
   }
 
   async function handleDelete(project) {
-    if (!window.confirm(`Eliminar “${project.name}”? Esta ação não pode ser desfeita.`)) return;
+    const ok = await askConfirm({
+      title: 'Eliminar projeto',
+      message: `Eliminar “${project.name}”? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await deleteProject(project.id);
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
@@ -233,13 +241,13 @@ export default function Dashboard() {
   async function handleBulkDelete() {
     const ids = [...selectedIds];
     if (!ids.length || bulkDeleting) return;
-    if (
-      !window.confirm(
-        `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Eliminar projetos',
+      message: `Eliminar ${ids.length} projeto${ids.length === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBulkDeleting(true);
     try {
       const result = await deleteProjects(ids);
@@ -536,7 +544,7 @@ export default function Dashboard() {
           { id: 'active', label: 'Ativos' },
           { id: 'all', label: 'Todos' },
           { id: 'draft', label: 'Rascunho' },
-          { id: 'deployed', label: 'Deployed' },
+          { id: 'deployed', label: 'Publicado' },
           { id: 'archived', label: 'Arquivados' },
         ].map((f) => (
           <button
@@ -619,6 +627,7 @@ export default function Dashboard() {
       )}
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+      {confirmDialog}
     </div>
   );
 }

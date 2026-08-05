@@ -32,6 +32,7 @@ import {
   deleteEntity,
   importEntityRows,
 } from '../../lib/entities';
+import { useConfirm } from './ConfirmDialog';
 
 export function TypeBadge({ type }) {
   const t = TYPE_COLORS[type] ? type : 'string';
@@ -65,6 +66,7 @@ export default function EntityBrowser({
   onToast,
   compact = false,
 }) {
+  const [askConfirm, confirmDialog] = useConfirm();
   const [editingSchema, setEditingSchema] = useState(false);
   const [draftName, setDraftName] = useState(entity?.name || '');
   const [draftCols, setDraftCols] = useState(() => normalizeColumns(entity?.columns || []));
@@ -146,13 +148,13 @@ export default function EntityBrowser({
     }
     const danger = warnings.filter((w) => w.level === 'danger');
     if (danger.length) {
-      if (
-        !window.confirm(
-          `${danger.map((d) => d.message).join('\n')}\n\nContinuar mesmo assim?`
-        )
-      ) {
-        return;
-      }
+      const ok = await askConfirm({
+        title: 'Avisos no schema',
+        message: `${danger.map((d) => d.message).join('\n')}\n\nContinuar mesmo assim?`,
+        confirmLabel: 'Continuar',
+        destructive: true,
+      });
+      if (!ok) return;
     }
     setSavingSchema(true);
     try {
@@ -206,7 +208,13 @@ export default function EntityBrowser({
   async function handleBulkDelete() {
     const ids = [...selectedIds];
     if (!ids.length) return;
-    if (!window.confirm(`Eliminar ${ids.length} linha(s)?`)) return;
+    const ok = await askConfirm({
+      title: 'Eliminar linhas',
+      message: `Eliminar ${ids.length} linha(s)?`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy('bulk');
     try {
       await deleteEntityRows(projectId, entity.id, ids);
@@ -235,9 +243,13 @@ export default function EntityBrowser({
   }
 
   async function handleDeleteEntity() {
-    if (!window.confirm(`Eliminar entidade “${entity.name || entity.id}” e todas as linhas?`)) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Eliminar entidade',
+      message: `Eliminar entidade “${entity.name || entity.id}” e todas as linhas?`,
+      confirmLabel: 'Eliminar',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy('delEnt');
     try {
       await deleteEntity(projectId, entity.id);
@@ -278,13 +290,17 @@ export default function EntityBrowser({
         onToast?.({ message: 'Ficheiro sem linhas.', type: 'info' });
         return;
       }
-      const replace = window.confirm(
-        `${parsed.rows.length} linha(s) encontradas.\nOK = substituir todas\nCancelar = acrescentar`
-      );
-      // If user cancels confirm for replace, still import as append — use a clearer flow:
-      // Actually confirm: OK = replace, Cancel = append is confusing. Use two-step:
-      // We'll interpret: confirm true = replace, false = append
-      await importEntityRows(projectId, entity.id, parsed.rows, { replace });
+      const replace = await askConfirm({
+        title: 'Importar linhas',
+        message: `${parsed.rows.length} linha(s) encontradas. Substituir todas as existentes, ou acrescentar?`,
+        confirmLabel: 'Substituir',
+        cancelLabel: 'Acrescentar',
+        destructive: true,
+      });
+      // Cancelar/fechar no X = não importar; Acrescentar = false → append
+      // askConfirm: false on cancel. User chose "Acrescentar" which is cancelLabel → false = append.
+      // If they click X, also false — same as append. For import, treat false as append (legacy).
+      await importEntityRows(projectId, entity.id, parsed.rows, { replace: Boolean(replace) });
       if (parsed.columns?.length && (!columns.length || replace)) {
         const merged = normalizeColumns([
           ...columns,
@@ -329,6 +345,7 @@ export default function EntityBrowser({
 
   return (
     <div className={`space-y-3 ${compact ? 'h-full flex flex-col min-h-0' : ''}`}>
+      {confirmDialog}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           {onBack && (
