@@ -48,7 +48,9 @@ export default function AutoModelPicker({
   const [coords, setCoords] = useState({ top: 0, left: 0, placement: 'above' });
   const btnRef = useRef(null);
   const panelRef = useRef(null);
-  const premiumOk = canUsePremium({ plan, role, email: user?.email });
+  const premiumOk =
+    canUsePremium({ plan, role, email: user?.email }) ||
+    Boolean(role === 'owner' || plan === 'enterprise_master');
 
   useEffect(() => {
     if (value != null) setSelected(value);
@@ -165,7 +167,7 @@ export default function AutoModelPicker({
           left: coords.left,
           width: coords.width || PANEL_W,
         }}
-        className="fixed z-[100] rounded-xl border border-zinc-700/90 bg-zinc-950 shadow-2xl shadow-black/50 overflow-hidden"
+        className="fixed z-[100] gc-themed rounded-xl border border-zinc-700/90 bg-zinc-950 shadow-2xl shadow-black/50 overflow-hidden"
       >
         <div className="px-3.5 pt-3.5 pb-2 border-b border-zinc-800/80">
           <div className="flex items-center gap-2">
@@ -175,7 +177,7 @@ export default function AutoModelPicker({
             </span>
           </div>
           <p className="mt-1 text-[11px] text-zinc-500">
-            Escolha o modelo certo para o seu app
+            Auto usa o provider disponível com fallback; ou escolhe um modelo fixo
           </p>
         </div>
 

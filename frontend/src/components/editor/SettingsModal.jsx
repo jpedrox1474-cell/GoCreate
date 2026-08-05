@@ -312,7 +312,11 @@ async function handleSave(e) {
     try {
       const trimmedName = name.trim();
       const trimmedDesc = description.trim();
-      const trimmedDomain = customDomain.trim().toLowerCase();
+      // Domínio opcional — vazio → null (não bloqueia guardar settings)
+      const trimmedDomain = customDomain.trim().toLowerCase() || null;
+      const prevDomain = String(project?.customDomain || '')
+        .trim()
+        .toLowerCase() || null;
       const trimmedSlug = slug
         .trim()
         .toLowerCase()
@@ -321,6 +325,7 @@ async function handleSave(e) {
 
       let nextSlug = project?.slug || null;
       let nextPublishedUrl = project?.publishedUrl || null;
+      let nextDomainVerified = domainVerified;
 
       if (projectId && trimmedSlug && trimmedSlug !== (project?.slug || projectId)) {
         if (!user?.getIdToken) throw new Error('Sessão inválida para alterar o link.');
@@ -354,7 +359,7 @@ async function handleSave(e) {
       if (projectId && trimmedName) {
         const nameChanged = trimmedName !== (project?.name || '');
         const descChanged = trimmedDesc !== (project?.description || '');
-        const domainChanged = trimmedDomain !== (project?.customDomain || '');
+        const domainChanged = trimmedDomain !== prevDomain;
         const prevAccess = project?.authAccess || { mode: 'owner_only', invitedEmails: [] };
         const authChanged =
           prevAccess.mode !== nextAuthAccess.mode ||
@@ -372,19 +377,22 @@ async function handleSave(e) {
             layoutLock: Boolean(layoutLock),
           });
         }
+        // Só chama API de domínio se mudou; vazio limpa (clear). Não exige hostname.
         if (domainChanged && user?.getIdToken) {
           const idToken = await user.getIdToken();
           const domainResult = await updateCustomDomain({
             idToken,
             projectId,
-            host: trimmedDomain,
+            host: trimmedDomain || '',
           });
-          if (domainResult.cleared) {
+          if (domainResult.cleared || !trimmedDomain) {
             setDomainDns(null);
             setDomainVerified(false);
+            nextDomainVerified = false;
           } else {
             setDomainDns(domainResult.dns || null);
-            setDomainVerified(Boolean(domainResult.verified));
+            nextDomainVerified = Boolean(domainResult.verified);
+            setDomainVerified(nextDomainVerified);
           }
         }
       }
@@ -398,8 +406,8 @@ async function handleSave(e) {
         ...project,
         name: trimmedName || project?.name,
         description: trimmedDesc,
-        customDomain: trimmedDomain,
-        customDomainVerified: domainChanged ? Boolean(domainDns && domainVerified) : domainVerified,
+        customDomain: trimmedDomain || '',
+        customDomainVerified: trimmedDomain ? nextDomainVerified : false,
         slug: nextSlug || project?.slug || null,
         publishedUrl: nextPublishedUrl || project?.publishedUrl || null,
         backendEnabled,
@@ -503,7 +511,7 @@ async function handleSave(e) {
               className="w-full bg-zinc-950 border border-zinc-800 focus:border-blue-600 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none transition-all disabled:opacity-50 font-mono"
             />
             <p className="mt-1 text-[10px] text-zinc-600">
-              Guarda as settings para mapear o domínio. Depois cria TXT + CNAME e clica Verificar.
+              Opcional — podes guardar sem domínio. Se preencheres, cria TXT + CNAME e clica Verificar.
             </p>
             {customDomain.trim() && (
               <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2.5 space-y-2">

@@ -252,8 +252,15 @@ export async function updateProjectSettings(
   if (description != null) {
     patch.description = String(description).trim();
   }
-  if (customDomain != null) {
-    patch.customDomain = String(customDomain).trim().toLowerCase();
+  if (customDomain !== undefined) {
+    const host = String(customDomain || '')
+      .trim()
+      .toLowerCase();
+    // Empty → null (domínio opcional; não exigir hostname para guardar settings)
+    patch.customDomain = host || null;
+    if (!host) {
+      patch.customDomainVerified = false;
+    }
   }
   if (ownerEmail != null) {
     patch.ownerEmail = String(ownerEmail).trim().toLowerCase() || null;

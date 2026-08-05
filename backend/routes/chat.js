@@ -262,6 +262,7 @@ ${String(req.body.wiringPrompt).slice(0, 2000)}
       // Vídeos: download Cloudinary + Files API pode demorar
       timeoutMs: attachmentUrl ? 170000 : 120000,
       preferredProvider: pref,
+      turnIntent,
       onChunk: (chunk) => {
         fullResponse += chunk;
         res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);

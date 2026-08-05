@@ -70,7 +70,11 @@ import {
   getMessagesForProject,
   GENERATION_STATE_KEY,
 } from '../lib/mockData';
-import { loadPendingPrompt, takePendingLandingFile } from '../lib/landingPending';
+import {
+  peekPendingPrompt,
+  clearPendingPrompt,
+  takePendingLandingFile,
+} from '../lib/landingPending';
 import { useTheme } from '../context/ThemeContext';
 
 function readGenerationSession() {
@@ -197,6 +201,7 @@ export default function Editor() {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const pendingSentRef = useRef(false);
+  const isGeneratingRef = useRef(false);
   const streamBufferRef = useRef('');
   const abortRef = useRef(null);
   const mockTimerRef = useRef(null);
@@ -217,6 +222,10 @@ export default function Editor() {
   useEffect(() => {
     pendingUserTextRef.current = pendingUserText;
   }, [pendingUserText]);
+
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
 
   useEffect(() => {
     generatedFilesRef.current = generatedFiles;
@@ -577,13 +586,36 @@ export default function Editor() {
 
   useEffect(() => {
     if (!user || projectLoading || pendingSentRef.current || !firestoreId) return;
-    const pending = loadPendingPrompt();
+    const pending = peekPendingPrompt();
     const pendingFile = takePendingLandingFile();
     if (!pending && !pendingFile) return;
     pendingSentRef.current = true;
 
     const text = pending?.text || '';
     if (text) setInput(text);
+
+    const dispatchPending = (attempt = 0) => {
+      if (!text) {
+        clearPendingPrompt();
+        return;
+      }
+      if (isGeneratingRef.current) {
+        if (attempt >= 40) {
+          // ~8s: keep prompt in storage + input so the user can retry
+          pendingSentRef.current = false;
+          setToast({
+            message: 'O prompt da landing ficou na caixa — envia quando a geração atual terminar.',
+            type: 'info',
+            duration: 4200,
+          });
+          return;
+        }
+        setTimeout(() => dispatchPending(attempt + 1), 200);
+        return;
+      }
+      clearPendingPrompt();
+      void sendMessageTextRef.current?.(text);
+    };
 
     (async () => {
       try {
@@ -603,21 +635,18 @@ export default function Editor() {
           setAttachment(att);
           attachmentRef.current = att;
         }
-        if (text) {
-          setTimeout(() => sendMessageText(text), 80);
-        }
+        setTimeout(() => dispatchPending(0), 80);
       } catch (err) {
         console.error('[Editor] pending landing upload:', err);
         setToast({
           message: err?.message || 'Falha ao enviar o anexo da landing.',
           type: 'error',
         });
-        if (text) setTimeout(() => sendMessageText(text), 80);
+        setTimeout(() => dispatchPending(0), 80);
       } finally {
         setUploading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, projectLoading, firestoreId]);
 
   useEffect(() => {
@@ -667,6 +696,7 @@ export default function Editor() {
 
   const finishGeneration = useCallback((opts = {}) => {
     const { clearOptimistic = true, waitForHistory = false } = opts;
+    isGeneratingRef.current = false;
     setIsGenerating(false);
     setIsTyping(false);
     setAskFixPending(false);
@@ -691,7 +721,9 @@ export default function Editor() {
 
   const sendMessageText = useCallback(
     async (userText, { askFix = false, isContinue = false, wiringPrompt = null } = {}) => {
-      if (!userText?.trim() || isGenerating || !user) return;
+      const hasText = Boolean(userText?.trim());
+      const hasAttachment = Boolean(attachmentRef.current?.url);
+      if ((!hasText && !hasAttachment) || isGeneratingRef.current || !user) return;
       if (projectMeta && !canEditProject(resolveClientProjectRole(projectMeta, user))) {
         setToast({
           message: 'Modo visualizador — sem permissão para gerar ou alterar.',
@@ -699,7 +731,9 @@ export default function Editor() {
         });
         return;
       }
-      const trimmed = userText.trim();
+      const trimmed =
+        userText?.trim() ||
+        (hasAttachment ? 'Analisa o anexo e aplica no projeto.' : '');
       const currentAttachment = attachmentRef.current;
       setInput('');
       setAttachment(null);
@@ -711,6 +745,7 @@ export default function Editor() {
       if (!askFix && !isContinue) {
         continueAutoTriedRef.current = false;
       }
+      isGeneratingRef.current = true;
       setIsGenerating(true);
       setIsTyping(true);
       setPendingUserText(trimmed);
@@ -1030,6 +1065,7 @@ export default function Editor() {
     abortRef.current?.abort();
     if (mockTimerRef.current) clearTimeout(mockTimerRef.current);
     setIsTyping(false);
+    isGeneratingRef.current = false;
     setIsGenerating(false);
     setAskFixPending(false);
     setStreamHeartbeat(null);
@@ -1268,6 +1304,7 @@ export default function Editor() {
       setActiveFile(null);
       setStreamingText('');
       setPendingUserText(null);
+      isGeneratingRef.current = false;
       setIsGenerating(false);
       setIsTyping(false);
       return;
@@ -1429,7 +1466,7 @@ export default function Editor() {
           <div className="h-full w-1/3 bg-gradient-to-r from-blue-500 via-indigo-400 to-blue-500 animate-[gc-progress_1.4s_ease-in-out_infinite]" />
         </div>
       )}
-      <header className="flex items-center justify-between px-3 sm:px-4 h-14 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md z-10 shrink-0">
+      <header className="relative flex items-center justify-between px-3 sm:px-4 h-14 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md z-30 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             type="button"
@@ -1826,7 +1863,9 @@ export default function Editor() {
                         ? 'Modo visualizador — só leitura'
                       : isGenerating
                         ? 'A gerar…'
-                        : 'Pede alterações, novas secções…'
+                        : discussMode
+                          ? 'Pergunta, brainstorm, confirma o plano… (sem gerar código)'
+                          : 'Descreve o que queres construir ou alterar…'
                   }
                   className="w-full bg-transparent border-none py-3.5 pl-4 pr-4 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none resize-none max-h-[150px] custom-scrollbar"
                   rows={1}
@@ -1839,7 +1878,7 @@ export default function Editor() {
                 />
               </div>
               <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
-                <div className="flex items-center gap-1.5 min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                   <AutoModelPicker
                     compact
                     value={aiProvider}
@@ -1857,10 +1896,11 @@ export default function Editor() {
                         ? 'border-blue-500/50 bg-blue-600/15 text-blue-200'
                         : 'border-zinc-700/80 bg-zinc-900/80 text-zinc-400 hover:text-zinc-200'
                     }`}
-                    title="Modo discutir — conversa sem gerar código"
+                    title="Modo discutir — conversa e confirma antes de gerar código"
+                    aria-pressed={discussMode}
                   >
                     <MessageSquare size={12} />
-                    Discutir
+                    {discussMode ? 'Discutir · on' : 'Discutir'}
                   </button>
                 </div>
                 <div className="flex items-center gap-0.5">
@@ -1905,15 +1945,18 @@ export default function Editor() {
                       </button>
                       <button
                         type="submit"
-                        disabled={!input.trim() || projectLoading || uploading}
+                        disabled={
+                          (!input.trim() && !attachment) || projectLoading || uploading
+                        }
                         className={`
                           p-1.5 rounded-md transition-all flex items-center justify-center
                           ${
-                            input.trim()
+                            input.trim() || attachment
                               ? 'bg-blue-600 text-white shadow-md hover:bg-blue-500'
                               : 'bg-zinc-800 text-zinc-600'
                           }
                         `}
+                        title="Enviar"
                       >
                         <Send size={16} />
                       </button>
@@ -1924,7 +1967,12 @@ export default function Editor() {
             </form>
             <div className="mt-2 flex justify-between items-center px-1 gap-2">
               <span className="text-[10px] text-zinc-600 font-medium flex items-center gap-1">
-                <Wand2 size={10} /> {HAS_API ? (discussMode ? 'Modo discutir' : 'Assistente') : 'Modo demo'}
+                <Wand2 size={10} />{' '}
+                {HAS_API
+                  ? discussMode
+                    ? 'Discutir — confirma, depois gera'
+                    : 'Gerar · Auto + anexos'
+                  : 'Modo demo'}
               </span>
               <div className="flex items-center gap-2">
                 {canUndo && !isBusy && (

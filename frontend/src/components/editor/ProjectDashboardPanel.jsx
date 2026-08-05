@@ -28,7 +28,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { useCredits } from '../../context/CreditsContext';
-import { canUsePremium } from '../../lib/plans';
+import { canUsePremium, isOwnerUser } from '../../lib/plans';
 import { updateProjectSettings } from '../../lib/projects';
 import { uploadFile } from '../../lib/uploadApi';
 import { useAuth } from '../../context/AuthContext';
@@ -112,7 +112,7 @@ export default function ProjectDashboardPanel({
 }) {
   void projectAuth;
   const { user } = useAuth();
-  const { openCheckout, plan, role } = useCredits();
+  const { openCheckout, plan, role, unlimited } = useCredits();
   const [section, setSection] = useState('overview');
   const [search, setSearch] = useState('');
   const [copied, setCopied] = useState(false);
@@ -120,7 +120,9 @@ export default function ProjectDashboardPanel({
   const [hideBadgeBusy, setHideBadgeBusy] = useState(false);
   const logoInputRef = useRef(null);
 
-  const premiumOk = canUsePremium({ plan, role, email: user?.email });
+  const ownerOk = unlimited || isOwnerUser({ plan, role, email: user?.email });
+  // Owner allowlist = full unlock (todas as abas, sem paywall / “em breve”)
+  const premiumOk = ownerOk || canUsePremium({ plan, role, email: user?.email });
   const name = projectMeta?.name || 'Projeto';
   const description = projectMeta?.description || 'App criado no GoCreate.';
   const slug = projectMeta?.slug || projectId;
@@ -244,19 +246,28 @@ export default function ProjectDashboardPanel({
                 <h2 className="text-xl font-semibold text-zinc-100 truncate">{name}</h2>
                 <p className="text-sm text-zinc-500 mt-1 leading-relaxed">{description}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openCheckout('turbo')}
-                    className="px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900"
-                  >
-                    Ganhar créditos
-                  </button>
-                  <Link
-                    to="/plans"
-                    className="px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900"
-                  >
-                    Ver uso / planos
-                  </Link>
+                  {!ownerOk && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openCheckout('turbo')}
+                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900"
+                      >
+                        Ganhar créditos
+                      </button>
+                      <Link
+                        to="/plans"
+                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900"
+                      >
+                        Ver uso / planos
+                      </Link>
+                    </>
+                  )}
+                  {ownerOk && (
+                    <span className="px-3 py-1.5 text-xs font-medium rounded-lg border border-emerald-700/50 text-emerald-300/90 bg-emerald-950/30">
+                      Conta Owner — tudo liberado
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -341,6 +352,32 @@ export default function ProjectDashboardPanel({
           </div>
         );
 
+      case 'analytics':
+        return (
+          <EmptyState
+            icon={BarChart3}
+            title="Análises"
+            description="Métricas de visitas e uso do app publicado. Liga Analytics nas Integrações ou pede ao Assistente para instrumentar eventos."
+            actionLabel="Abrir integrações"
+            onAction={() => {
+              window.location.href = '/integrations';
+            }}
+          />
+        );
+
+      case 'marketing':
+        return (
+          <EmptyState
+            icon={Megaphone}
+            title="Marketing"
+            description="Campanhas e canais sociais. Liga WhatsApp, Instagram e mais no hub de integrações."
+            actionLabel="Abrir integrações"
+            onAction={() => {
+              window.location.href = '/integrations';
+            }}
+          />
+        );
+
       case 'domains':
         return (
           <div className="max-w-xl space-y-4">
@@ -363,7 +400,8 @@ export default function ProjectDashboardPanel({
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
               <p className="text-sm font-medium text-zinc-100 mb-1">Domínios personalizados</p>
               <p className="text-sm text-zinc-500 mb-3">
-                Liga o teu domínio (ex.: app.tuaempresa.com) nos planos pagos.
+                Liga o teu domínio (ex.: app.tuaempresa.com)
+                {premiumOk ? ' — disponível na tua conta.' : ' nos planos pagos.'}
               </p>
               {premiumOk ? (
                 <button
@@ -425,11 +463,30 @@ export default function ProjectDashboardPanel({
           <EmptyState
             icon={Bot}
             title="Agentes"
-            description="Cria agentes que trabalham no teu app (automações com IA). Em breve — por agora usa o Assistente Auto no chat."
-            actionLabel="Ver planos"
+            description={
+              premiumOk
+                ? 'Cria agentes que trabalham no teu app. Por agora usa o Assistente Auto no chat (Discutir + gerar).'
+                : 'Cria agentes que trabalham no teu app (automações com IA). Em breve — por agora usa o Assistente Auto no chat.'
+            }
+            actionLabel={premiumOk ? 'Abrir configurações' : 'Ver planos'}
             onAction={() => {
+              if (premiumOk) {
+                onOpenSettings?.();
+                return;
+              }
               window.location.href = '/plans';
             }}
+          />
+        );
+
+      case 'workflows':
+        return (
+          <EmptyState
+            icon={Workflow}
+            title="Fluxos de trabalho"
+            description="Automatiza passos do app (notificações, sync, webhooks). Configura automações no projeto ou pede ao Assistente."
+            actionLabel="Abrir configurações"
+            onAction={() => onOpenSettings?.()}
           />
         );
 
@@ -467,11 +524,26 @@ export default function ProjectDashboardPanel({
           <EmptyState
             icon={Server}
             title="MCP — acesso para assistentes de IA"
-            description="Deixa assistentes de IA usarem o teu app via Model Context Protocol. Disponível em planos pagos."
-            actionLabel="Ver planos"
+            description={
+              premiumOk
+                ? 'Model Context Protocol liberado na tua conta. Liga credenciais em Segredos / Integrações e usa o Assistente com contexto do projeto.'
+                : 'Deixa assistentes de IA usarem o teu app via Model Context Protocol. Disponível em planos pagos.'
+            }
+            actionLabel={premiumOk ? 'Abrir integrações' : 'Ver planos'}
             onAction={() => {
-              window.location.href = '/plans';
+              window.location.href = premiumOk ? '/integrations' : '/plans';
             }}
+          />
+        );
+
+      case 'secrets':
+        return (
+          <EmptyState
+            icon={KeyRound}
+            title="Segredos"
+            description="API keys e variáveis de ambiente do projeto. Gere via Configurações / Backend Functions."
+            actionLabel="Abrir configurações"
+            onAction={() => onOpenSettings?.()}
           />
         );
 
@@ -480,9 +552,17 @@ export default function ProjectDashboardPanel({
           <EmptyState
             icon={item?.icon || LayoutDashboard}
             title={item?.label || 'Secção'}
-            description="Esta área estará disponível em breve no GoCreate."
-            actionLabel="Ver planos"
+            description={
+              premiumOk
+                ? 'Área liberada — usa as ações abaixo ou o Assistente para configurar.'
+                : 'Esta área estará disponível em breve no GoCreate.'
+            }
+            actionLabel={premiumOk ? 'Abrir configurações' : 'Ver planos'}
             onAction={() => {
+              if (premiumOk) {
+                onOpenSettings?.();
+                return;
+              }
               window.location.href = '/plans';
             }}
           />
@@ -532,13 +612,20 @@ export default function ProjectDashboardPanel({
           })}
         </nav>
         <div className="p-3 border-t border-zinc-800">
-          <Link
-            to="/plans"
-            className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-xs font-medium text-amber-200/90 bg-amber-950/30 border border-amber-800/40 hover:bg-amber-950/50"
-          >
-            <Crown size={13} />
-            Atualizar plano
-          </Link>
+          {ownerOk ? (
+            <div className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-xs font-medium text-emerald-300/90 bg-emerald-950/30 border border-emerald-800/40">
+              <Crown size={13} />
+              Owner — plano máximo
+            </div>
+          ) : (
+            <Link
+              to="/plans"
+              className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-xs font-medium text-amber-200/90 bg-amber-950/30 border border-amber-800/40 hover:bg-amber-950/50"
+            >
+              <Crown size={13} />
+              Atualizar plano
+            </Link>
+          )}
         </div>
       </aside>
 

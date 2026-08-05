@@ -393,11 +393,13 @@ export async function streamGeminiChat({
   onChunk,
   timeoutMs = 120000,
   preferredProvider = null,
+  turnIntent = null,
 }) {
   const pref = String(preferredProvider || 'auto').trim().toLowerCase();
   const forceFallback =
     pref === 'groq' || pref === 'openrouter' || pref === 'github';
   const forceGemini = pref === 'gemini';
+  const intent = String(turnIntent || '').trim().toLowerCase();
 
   const apiKey = getGeminiApiKey();
 
@@ -426,6 +428,24 @@ export async function streamGeminiChat({
     );
     err.status = 503;
     throw err;
+  }
+
+  // Auto + chat_only: prioriza Groq (rápido/barato) se houver chave; senão Gemini.
+  // Continua a ser fallback por disponibilidade — não ranking de “melhor modelo”.
+  if (!forceGemini && (pref === 'auto' || !pref) && intent === 'chat_only' && hasAiFallbackKeys()) {
+    try {
+      const fb = await tryOpenAiFallbackChat({
+        systemPrompt,
+        messages,
+        attachmentUrl,
+        onChunk,
+        preferredProvider: 'groq',
+        strictProvider: false,
+      });
+      if (fb) return fb;
+    } catch (e) {
+      console.warn('[gemini] auto chat_only fallback falhou, a tentar Gemini:', e?.message);
+    }
   }
 
   if (!apiKey) {

@@ -88,7 +88,8 @@ export function buildChatBehaviorAddon({
   } else {
     parts.push(`### Comportamento conversacional (OBRIGATÓRIO)
 - Antes do código: 1–3 frases a confirmar o plano (o que vais alterar e o que NÃO vais tocar).
-- Se o pedido for ambíguo (entidade, campos, ou escopo), faz UMA pergunta curta no chat; só gera código se houver contexto suficiente ou o utilizador já tiver deixado claro.
+- Se o pedido nomeia uma feature concreta (página, integração, formulário, auth, entidade, MCP, etc.), **implementa já um default sensato** e explica no chat — NÃO faças só uma pergunta de confirmação e pares.
+- Só faz UMA pergunta curta **sem gerar código** quando o pedido for genérico demais para adivinhar (ex.: “melhora o app”, “faz algo fixe”) e não houver contexto no projeto.
 - Preferência por **diffs mínimos**: altera só os ficheiros necessários ao pedido. Não reescrevas o projeto inteiro “por precaução”.
 - Ao emitir \`<file>\`, o conteúdo tem de ser o ficheiro COMPLETO (o runtime faz replace por path) — mas **copia a estrutura/JSX/classes existentes** e muda só o necessário.`);
   }

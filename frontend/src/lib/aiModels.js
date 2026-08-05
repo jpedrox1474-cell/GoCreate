@@ -1,6 +1,7 @@
 /**
  * Catálogo de modelos/providers do GoCreate Assistant + persistência.
- * Auto = cadeia Gemini → Groq → OpenRouter → GitHub Models (servidor).
+ * Auto = disponibilidade/fallback (Gemini → Groq → OpenRouter → GitHub),
+ * com prioridade leve Groq em turnos chat_only — não é ranking por capacidade.
  */
 
 export const AI_MODEL_STORAGE_KEY = 'gocreate-ai-provider';
@@ -12,7 +13,8 @@ export const AI_MODELS = [
   {
     id: 'auto',
     label: 'Auto',
-    description: 'Escolhe o melhor disponível (Gemini → Groq → OpenRouter → GitHub)',
+    description:
+      'Automático — tenta o melhor disponível / fallback (Gemini → Groq → OpenRouter → GitHub)',
     premium: false,
     icon: 'auto',
   },

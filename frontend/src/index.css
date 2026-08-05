@@ -250,6 +250,25 @@ html.light .gc-themed .text-zinc-600 {
   color: #71717a !important;
 }
 
+/* Logo mark must stay blue + white icon in light theme (zinc remaps hide white-on-white) */
+html.light .gc-logo .gc-logo-mark,
+html.light .gc-app-shell .gc-logo .gc-logo-mark,
+html.light .gc-themed .gc-logo .gc-logo-mark {
+  background-color: #2563eb !important;
+}
+html.light .gc-logo .gc-logo-icon,
+html.light .gc-app-shell .gc-logo .gc-logo-icon,
+html.light .gc-themed .gc-logo .gc-logo-icon {
+  color: #ffffff !important;
+  fill: rgba(255, 255, 255, 0.2);
+}
+html.light .gc-logo .gc-logo-wordmark {
+  color: #18181b !important;
+}
+html.light .gc-logo .gc-logo-wordmark span {
+  color: #71717a !important;
+}
+
 html.light .gc-app-shell .custom-scrollbar::-webkit-scrollbar-thumb,
 html.light .gc-themed .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #d4d4d8;

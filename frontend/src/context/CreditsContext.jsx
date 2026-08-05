@@ -213,8 +213,10 @@ export function CreditsProvider({ children }) {
   }, []);
 
   const openPremiumPaywall = useCallback(() => {
+    // Owners never see paywall
+    if (isOwnerUser({ plan, role, email: user?.email })) return;
     openPricing(PREMIUM_REQUIRED_MESSAGE);
-  }, [openPricing]);
+  }, [openPricing, plan, role, user?.email]);
 
   const profile = useMemo(
     () => ({
@@ -226,7 +228,7 @@ export function CreditsProvider({ children }) {
   );
 
   const unlimited = isOwnerUser(profile);
-  const premium = canUsePremium(profile);
+  const premium = unlimited || canUsePremium(profile);
   const allowance = unlimited ? Infinity : getPlanAllowance(plan);
   const used = unlimited
     ? 0

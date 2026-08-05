@@ -48,12 +48,12 @@ export function savePendingPrompt(text, attachment = null) {
 }
 
 /**
+ * Lê sem remover — evita perder o prompt se o envio falhar / remount.
  * @returns {{ text: string, attachment: { url: string, name: string, resourceType: string, mimeType?: string|null } | null } | null}
  */
-export function loadPendingPrompt() {
+export function peekPendingPrompt() {
   const raw = sessionStorage.getItem(PENDING_PROMPT_KEY);
   if (!raw) return null;
-  sessionStorage.removeItem(PENDING_PROMPT_KEY);
   try {
     if (raw.startsWith('{')) {
       const parsed = JSON.parse(raw);
@@ -77,4 +77,22 @@ export function loadPendingPrompt() {
   }
   const text = raw.trim();
   return text ? { text, attachment: null } : null;
+}
+
+export function clearPendingPrompt() {
+  try {
+    sessionStorage.removeItem(PENDING_PROMPT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Consome (peek + clear). Preferir peek + clear após o envio começar.
+ * @returns {{ text: string, attachment: { url: string, name: string, resourceType: string, mimeType?: string|null } | null } | null}
+ */
+export function loadPendingPrompt() {
+  const pending = peekPendingPrompt();
+  if (pending) clearPendingPrompt();
+  return pending;
 }

@@ -100,6 +100,11 @@ function newVerifyToken() {
  * Claim or update custom domain for a project. Releases previous host if changed.
  */
 export async function claimCustomDomain({ projectId, ownerId, host: rawHost }) {
+  // Empty / whitespace → clear (domínio opcional)
+  if (!String(rawHost || '').trim()) {
+    await clearCustomDomain({ projectId });
+    return { cleared: true, host: '', verified: false };
+  }
   const normalized = normalizeHost(rawHost);
   if (!normalized.ok) {
     const err = new Error(normalized.error);
@@ -193,7 +198,7 @@ export async function clearCustomDomain({ projectId }) {
   batch.set(
     projectRef,
     {
-      customDomain: '',
+      customDomain: null,
       customDomainVerified: false,
       customDomainToken: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -201,7 +206,7 @@ export async function clearCustomDomain({ projectId }) {
     { merge: true }
   );
   await batch.commit();
-  return { ok: true };
+  return { ok: true, cleared: true };
 }
 
 export async function resolveCustomDomain(rawHost) {
