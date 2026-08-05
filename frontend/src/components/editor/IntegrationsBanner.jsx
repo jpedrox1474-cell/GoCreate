@@ -38,7 +38,7 @@ const CHANNEL_ICONS = [
   },
   {
     id: 'mercadopago',
-    altIds: ['pix'],
+    altIds: [],
     label: 'Mercado Pago',
     className: 'bg-[#009EE3] text-white',
     glyph: 'MP',

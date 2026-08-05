@@ -1,16 +1,16 @@
 /**
- * Mercado Pago — Pix Payments API (Pro + Turbo no modal GoCreate).
+ * Mercado Pago — Payment Brick (Pro + Turbo no modal GoCreate).
  *
  * Env:
- *   MERCADOPAGO_ACCESS_TOKEN        (billing / fallback — preferir TEST- para Pix)
- *   MERCADOPAGO_TEST_ACCESS_TOKEN   (preferido em GoCreatePayments / public-create-payment)
- *   MERCADOPAGO_PUBLIC_KEY          (legado Brick; Pix não precisa)
+ *   MERCADOPAGO_ACCESS_TOKEN        (billing / fallback)
+ *   MERCADOPAGO_TEST_ACCESS_TOKEN   (preferido em sandbox / GoCreatePayments)
+ *   MERCADOPAGO_PUBLIC_KEY          (obrigatório para Brick no frontend)
  *   MERCADOPAGO_WEBHOOK_SECRET      (opcional — Assinatura secreta do painel Webhooks, NÃO OAuth)
  *   MERCADOPAGO_NOTIFICATION_URL    ex: https://gocreate-app.web.app/api/billing/webhook
  *   PUBLIC_APP_URL                  ex: https://gocreate-app.web.app
  *
- * Fluxo principal: createPixPayment → qr_code_base64 + qr_code.
- * createCheckoutPreference / processBrickPayment ficam só como legado.
+ * Fluxo principal: createCheckoutPreference (wallet_purchase) → Payment Brick
+ * → processBrickPayment. createPixPayment fica como util interno / apps gerados.
  */
 
 import crypto from 'crypto';
@@ -28,7 +28,7 @@ export const BILLING_PRODUCTS = {
   },
   turbo: {
     id: 'turbo',
-    title: 'GoCreate Turbo — +100 créditos (PIX)',
+    title: 'GoCreate Turbo — +100 créditos',
     amount: 20,
     credits: 100,
     type: 'topup',
@@ -110,6 +110,24 @@ export function getAccessTokenForAppPayments({ preferTest = true } = {}) {
 
 export function isMercadoPagoConfigured() {
   return Boolean(getAccessToken() || getTestAccessToken());
+}
+
+/**
+ * Kill switch do billing plataforma (Assinar Pro / Turbo via Payment Brick).
+ * Default ON quando tokens existem. Desligar com MERCADOPAGO_BILLING_ENABLED=false.
+ */
+export function isMercadoPagoBillingEnabled() {
+  const raw = String(process.env.MERCADOPAGO_BILLING_ENABLED || '')
+    .trim()
+    .toLowerCase();
+  if (raw === 'false' || raw === '0' || raw === 'no' || raw === 'off') return false;
+  if (raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on') return true;
+  // Sem flag explícita → ligado (Payment Brick in-app)
+  return true;
+}
+
+export function isMercadoPagoBillingReady() {
+  return isMercadoPagoBillingEnabled() && isMercadoPagoConfigured();
 }
 
 export function isLiveCredentialsUnauthorizedError(err) {

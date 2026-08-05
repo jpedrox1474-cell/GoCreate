@@ -6,40 +6,29 @@ import {
   Sparkles,
   Rocket,
   Loader2,
-  QrCode,
-  Copy,
   ArrowLeft,
   CheckCircle2,
-  ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PLANS } from '../lib/plans';
 import { createPayment, getPaymentStatus } from '../lib/billingApi';
+import MercadoPagoCheckout from './MercadoPagoCheckout';
 import Toast from './Toast';
-
-/** src de <img> a partir do qr_code_base64 do Mercado Pago (sem mock local). */
-function pixQrImageSrc(base64) {
-  const raw = String(base64 || '').trim();
-  if (!raw) return '';
-  if (raw.startsWith('data:image')) return raw;
-  return `data:image/png;base64,${raw}`;
-}
 
 /**
  * PricingModal — Free / Pro / Turbo.
- * Assinar Pro e Turbo → modal Pix no GoCreate (QR real MP + copia-e-cola).
- * Fallback: iframe do ticket_url sandbox/produção. Sem mock SVG / qrserver.
+ * Assinar Pro e Turbo → Payment Brick Mercado Pago in-app
+ * (Pix, cartão, boleto, Conta MP — a pessoa escolhe no Brick).
  */
 export default function PricingModal({ open, onClose, currentPlan = 'free', message = null }) {
   const { user } = useAuth();
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState(null);
-  const [view, setView] = useState('plans'); // plans | pending | success
-  const [pixData, setPixData] = useState(null);
-  const [pixStatus, setPixStatus] = useState('pending');
-  const [iframeBlocked, setIframeBlocked] = useState(false);
+  const [view, setView] = useState('plans'); // plans | checkout | success
+  const [checkout, setCheckout] = useState(null);
+  const [payStatus, setPayStatus] = useState('pending');
+  const [idToken, setIdToken] = useState(null);
   const pollRef = useRef(null);
-  const iframeTimerRef = useRef(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -51,22 +40,33 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
   useEffect(() => {
     if (!open) {
       stopPolling();
-      if (iframeTimerRef.current) {
-        clearTimeout(iframeTimerRef.current);
-        iframeTimerRef.current = null;
-      }
       setView('plans');
-      setPixData(null);
-      setPixStatus('pending');
+      setCheckout(null);
+      setPayStatus('pending');
       setBusyId(null);
-      setIframeBlocked(false);
+      setIdToken(null);
     }
   }, [open, stopPolling]);
 
-  useEffect(() => () => {
-    stopPolling();
-    if (iframeTimerRef.current) clearTimeout(iframeTimerRef.current);
-  }, [stopPolling]);
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  useEffect(() => {
+    if (view !== 'checkout' || !user || !checkout?.transactionId) {
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        if (!cancelled) setIdToken(token || null);
+      } catch {
+        if (!cancelled) setIdToken(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, user, checkout?.transactionId]);
 
   const startStatusPolling = useCallback(
     (transactionId) => {
@@ -74,10 +74,10 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       pollRef.current = setInterval(async () => {
         try {
           if (!user) return;
-          const idToken = await user.getIdToken();
-          const status = await getPaymentStatus({ transactionId, idToken });
+          const token = await user.getIdToken();
+          const status = await getPaymentStatus({ transactionId, idToken: token });
           if (status?.status === 'completed') {
-            setPixStatus('completed');
+            setPayStatus('completed');
             setView('success');
             stopPolling();
           }
@@ -93,14 +93,10 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
 
   function resetToPlans() {
     stopPolling();
-    if (iframeTimerRef.current) {
-      clearTimeout(iframeTimerRef.current);
-      iframeTimerRef.current = null;
-    }
     setView('plans');
-    setPixData(null);
-    setPixStatus('pending');
-    setIframeBlocked(false);
+    setCheckout(null);
+    setPayStatus('pending');
+    setIdToken(null);
   }
 
   async function handleSelect(plan) {
@@ -114,34 +110,39 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     }
 
     setBusyId(plan.id);
-    setIframeBlocked(false);
     try {
-      const idToken = await user.getIdToken();
-      const result = await createPayment({ productId: plan.id, idToken });
+      const token = await user.getIdToken();
+      const result = await createPayment({ productId: plan.id, idToken: token });
 
-      if (
-        result.mode === 'pix' &&
-        (result.qrCode || result.qrCodeBase64 || result.ticketUrl)
-      ) {
-        setPixData(result);
-        setPixStatus('pending');
-        setView('pending');
+      if (result.mode === 'brick' && result.preferenceId && result.publicKey) {
+        setCheckout({
+          transactionId: result.transactionId,
+          preferenceId: result.preferenceId,
+          publicKey: result.publicKey,
+          amount: result.amount,
+          credits: result.credits,
+          plan: result.plan,
+          title: result.title,
+        });
+        setIdToken(token);
+        setPayStatus('pending');
+        setView('checkout');
         startStatusPolling(result.transactionId);
-
-        // Se só houver ticket (sem base64), preparar detecção de X-Frame-Options.
-        if (!result.qrCodeBase64 && result.ticketUrl) {
-          if (iframeTimerRef.current) clearTimeout(iframeTimerRef.current);
-          iframeTimerRef.current = setTimeout(() => {
-            setIframeBlocked(true);
-          }, 4500);
-        }
         return;
       }
 
-      // Nunca redirecionar para Checkout Pro / init_point
+      if (result.mode === 'brick' && !result.publicKey) {
+        setToast({
+          message:
+            'Chave pública Mercado Pago em falta. Configure MERCADOPAGO_PUBLIC_KEY no servidor.',
+          type: 'error',
+        });
+        return;
+      }
+
       if (result.mode === 'checkout' || result.checkoutUrl) {
         setToast({
-          message: 'Checkout por redirect desativado. Tenta novamente (Pix no modal).',
+          message: 'Checkout transparente indisponível. Verifica MERCADOPAGO_PUBLIC_KEY.',
           type: 'error',
         });
         return;
@@ -150,15 +151,20 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       setToast({ message: 'Resposta de pagamento inesperada.', type: 'error' });
     } catch (err) {
       console.error('[PricingModal]', err);
-      if (err?.code === 'MP_NOT_CONFIGURED' || err?.status === 503) {
+      if (err?.code === 'MP_PUBLIC_KEY_MISSING') {
         setToast({
           message:
-            'Mercado Pago ainda não configurado. Adicione MERCADOPAGO_ACCESS_TOKEN no servidor.',
+            'Checkout Mercado Pago precisa de MERCADOPAGO_PUBLIC_KEY no servidor (não há QR fake).',
+          type: 'error',
+        });
+      } else if (err?.code === 'MP_NOT_CONFIGURED' || err?.code === 'MP_BILLING_DISABLED' || err?.status === 503) {
+        setToast({
+          message: err?.message || 'Mercado Pago ainda não configurado no servidor.',
           type: 'error',
         });
       } else {
         setToast({
-          message: err?.message || 'Falha ao iniciar pagamento Pix.',
+          message: err?.message || 'Falha ao iniciar pagamento Mercado Pago.',
           type: 'error',
         });
       }
@@ -167,59 +173,69 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     }
   }
 
-  async function copyPixCode() {
-    if (!pixData?.qrCode) return;
-    try {
-      await navigator.clipboard.writeText(pixData.qrCode);
-      setToast({ message: 'Código Pix copiado.', type: 'success' });
-    } catch {
-      setToast({ message: 'Não foi possível copiar.', type: 'error' });
+  function handleBrickResult(result) {
+    if (result?.status === 'approved' || result?.alreadyCompleted) {
+      setPayStatus('completed');
+      setView('success');
+      stopPolling();
+      return;
     }
+    setPayStatus('pending');
+    if (checkout?.transactionId) {
+      startStatusPolling(checkout.transactionId);
+    }
+    setToast({
+      message:
+        result?.status === 'pending' || result?.status === 'in_process'
+          ? 'Pagamento pendente. Confirmamos assim que o Mercado Pago aprovar.'
+          : 'Pagamento enviado. Aguardando confirmação…',
+      type: 'info',
+    });
+  }
+
+  function handleBrickError(err) {
+    setToast({
+      message: err?.message || 'Erro no checkout Mercado Pago.',
+      type: 'error',
+    });
   }
 
   const amountLabel =
-    pixData?.amount != null
-      ? `R$ ${Number(pixData.amount).toFixed(2).replace('.', ',')}`
+    checkout?.amount != null
+      ? `R$ ${Number(checkout.amount).toFixed(2).replace('.', ',')}`
       : '';
 
-  const qrSrc = pixQrImageSrc(pixData?.qrCodeBase64);
-  const useTicketIframe = Boolean(pixData?.ticketUrl) && !qrSrc;
-  // Link externo só quando o iframe do ticket for bloqueado (X-Frame-Options).
-  const showOpenMpLink = Boolean(pixData?.ticketUrl) && iframeBlocked && !qrSrc;
-  const pendingWide = useTicketIframe;
-
   const headerTitle =
-    view === 'pending'
-      ? 'Pagar com Pix'
+    view === 'checkout'
+      ? 'Pagar com Mercado Pago'
       : view === 'success'
         ? 'Pagamento confirmado'
         : 'Escolhe o teu ritmo';
 
   const headerSub =
-    view === 'pending'
-      ? qrSrc
-        ? 'Escaneia o QR do Mercado Pago ou copia o código. Ativamos o plano assim que o Pix for aprovado.'
-        : useTicketIframe
-          ? 'Checkout Pix do Mercado Pago embutido. Ativamos o plano assim que for aprovado.'
-          : 'Copia o código Pix. Ativamos o plano assim que for aprovado.'
+    view === 'checkout'
+      ? 'Escolhe Pix, cartão, boleto ou Conta Mercado Pago. Ativamos o plano assim que for aprovado.'
       : view === 'success'
         ? 'Créditos e plano atualizados na tua conta.'
-        : message || 'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.';
+        : message ||
+          (mpBillingOn
+            ? 'Créditos alimentam cada geração com a IA. Faz upgrade quando precisares.'
+            : 'Créditos alimentam cada geração com a IA. Assinatura Pro em breve.');
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/75 backdrop-blur-md"
-        onClick={view === 'pending' ? undefined : onClose}
+        onClick={view === 'checkout' ? undefined : onClose}
         aria-hidden
       />
       <div
         role="dialog"
         aria-modal="true"
         className={`relative w-full gc-themed bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden ${
-          view === 'pending' && pendingWide
-            ? 'max-w-2xl max-h-[92vh] flex flex-col'
-            : view === 'pending' || view === 'success'
+          view === 'checkout'
+            ? 'max-w-lg max-h-[92vh] flex flex-col'
+            : view === 'success'
               ? 'max-w-md'
               : 'max-w-5xl'
         }`}
@@ -229,7 +245,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         <div className="relative flex items-start justify-between gap-4 px-5 sm:px-7 py-5 border-b border-zinc-800 shrink-0">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">
-              {view === 'pending' ? 'Checkout' : 'Planos'}
+              {view === 'checkout' ? 'Checkout' : 'Planos'}
             </p>
             <h2 className="text-xl sm:text-2xl font-bold text-zinc-50 tracking-tight">
               {headerTitle}
@@ -320,10 +336,14 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
 
                     <button
                       type="button"
-                      disabled={isCurrent || busyId === plan.id}
+                      disabled={
+                        isCurrent ||
+                        busyId === plan.id ||
+                        (plan.amount > 0 && !mpBillingOn)
+                      }
                       onClick={() => handleSelect(plan)}
                       className={`relative w-full py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 ${
-                        plan.amount > 0
+                        plan.amount > 0 && mpBillingOn
                           ? isPro
                             ? 'text-white bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/30 ring-1 ring-blue-400/30'
                             : 'text-zinc-950 bg-zinc-100 hover:bg-white'
@@ -332,10 +352,12 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                     >
                       {busyId === plan.id ? (
                         <span className="inline-flex items-center gap-2 justify-center">
-                          <Loader2 size={14} className="animate-spin" /> A gerar Pix…
+                          <Loader2 size={14} className="animate-spin" /> A abrir Mercado Pago…
                         </span>
                       ) : isCurrent ? (
                         'Plano atual'
+                      ) : plan.amount > 0 && !mpBillingOn ? (
+                        'Em breve'
                       ) : (
                         plan.cta
                       )}
@@ -347,12 +369,8 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
           </div>
         )}
 
-        {view === 'pending' && pixData && (
-          <div
-            className={`relative p-5 sm:p-7 flex flex-col items-center gap-5 ${
-              pendingWide ? 'overflow-y-auto min-h-0 flex-1' : ''
-            }`}
-          >
+        {view === 'checkout' && checkout && (
+          <div className="relative p-5 sm:p-7 flex flex-col gap-4 overflow-y-auto min-h-0 flex-1">
             <button
               type="button"
               onClick={resetToPlans}
@@ -361,126 +379,47 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
               <ArrowLeft size={13} /> Voltar aos planos
             </button>
 
-            <div className="w-full rounded-2xl border border-zinc-800 bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-6 flex flex-col items-center gap-5">
-              <div className="w-full flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                    <QrCode size={16} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-zinc-100">
-                      {pixData.plan === 'pro' || pixData.title?.includes?.('Pro')
-                        ? 'GoCreate Pro'
-                        : 'GoCreate Turbo'}
-                    </p>
-                    <p className="text-[11px] text-zinc-500">
-                      {pixData.credits != null ? `+${pixData.credits} créditos` : 'Pagamento Pix'}
-                    </p>
-                  </div>
-                </div>
-                <p className="text-xl font-bold tracking-tight text-zinc-50">{amountLabel}</p>
+            <div className="w-full flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-zinc-100">
+                  {checkout.plan === 'pro' || checkout.title?.includes?.('Pro')
+                    ? 'GoCreate Pro'
+                    : 'GoCreate Turbo'}
+                </p>
+                <p className="text-[11px] text-zinc-500">
+                  {checkout.credits != null
+                    ? `+${checkout.credits} créditos`
+                    : 'Pagamento Mercado Pago'}
+                </p>
               </div>
-
-              {/* Primário: QR real do Mercado Pago (qr_code_base64) */}
-              {qrSrc ? (
-                <img
-                  src={qrSrc}
-                  alt="QR Code Pix Mercado Pago"
-                  width={256}
-                  height={256}
-                  className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl bg-white p-3 shadow-lg shadow-black/40 object-contain"
-                  onError={() => {
-                    // Base64 inválido → cair no iframe do ticket se existir
-                    setPixData((prev) =>
-                      prev ? { ...prev, qrCodeBase64: null } : prev
-                    );
-                    if (pixData.ticketUrl) {
-                      if (iframeTimerRef.current) clearTimeout(iframeTimerRef.current);
-                      iframeTimerRef.current = setTimeout(() => setIframeBlocked(true), 4500);
-                    }
-                  }}
-                />
-              ) : useTicketIframe && !iframeBlocked ? (
-                <div className="w-full rounded-xl overflow-hidden border border-zinc-700 bg-white min-h-[420px] h-[52vh] max-h-[560px]">
-                  <iframe
-                    title="Pix Mercado Pago"
-                    src={pixData.ticketUrl}
-                    className="w-full h-full border-0"
-                    referrerPolicy="no-referrer-when-downgrade"
-                    allow="payment *; clipboard-write"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-                    onLoad={() => {
-                      if (iframeTimerRef.current) {
-                        clearTimeout(iframeTimerRef.current);
-                        iframeTimerRef.current = null;
-                      }
-                      setIframeBlocked(false);
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="w-56 h-56 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-500 text-xs text-center px-6">
-                  {pixData.qrCode
-                    ? 'Usa o código copia-e-cola abaixo no app do teu banco'
-                    : 'QR indisponível — tenta novamente'}
-                </div>
-              )}
-
-              {pixData.qrCode && (
-                <div className="w-full space-y-2">
-                  <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                    Pix copia e cola
-                  </p>
-                  <div className="flex items-stretch gap-2">
-                    <p className="flex-1 text-[11px] text-zinc-400 font-mono break-all bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 max-h-20 overflow-y-auto">
-                      {pixData.qrCode}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={copyPixCode}
-                      className="shrink-0 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-all"
-                      title="Copiar código"
-                    >
-                      <Copy size={14} /> Copiar
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Só se o iframe for bloqueado (X-Frame-Options) — link secundário mínimo */}
-              {showOpenMpLink && (
-                <a
-                  href={pixData.ticketUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
-                >
-                  Abrir no Mercado Pago <ExternalLink size={10} />
-                </a>
-              )}
-
-              <div className="flex items-center gap-2 text-sm text-zinc-300">
-                {pixStatus === 'pending' ? (
-                  <>
-                    <Loader2 size={15} className="animate-spin text-blue-400" />
-                    Aguardando confirmação do Pix…
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 size={15} className="text-emerald-400" />
-                    Pagamento aprovado
-                  </>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full py-2.5 rounded-xl text-sm font-medium text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 bg-zinc-950/50 transition-all"
-              >
-                Cancelar
-              </button>
+              <p className="text-xl font-bold tracking-tight text-zinc-50">{amountLabel}</p>
             </div>
+
+            {!idToken ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-400">
+                <Loader2 size={16} className="animate-spin text-blue-400" />
+                A preparar sessão de pagamento…
+              </div>
+            ) : (
+              <MercadoPagoCheckout
+                key={checkout.transactionId}
+                publicKey={checkout.publicKey}
+                amount={checkout.amount}
+                preferenceId={checkout.preferenceId}
+                transactionId={checkout.transactionId}
+                payerEmail={user?.email || null}
+                idToken={idToken}
+                onResult={handleBrickResult}
+                onError={handleBrickError}
+              />
+            )}
+
+            {payStatus === 'pending' && (
+              <div className="flex items-center gap-2 text-sm text-zinc-400 justify-center">
+                <Loader2 size={14} className="animate-spin text-blue-400" />
+                Aguardando confirmação do Mercado Pago…
+              </div>
+            )}
           </div>
         )}
 
@@ -505,7 +444,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
 
         {view === 'plans' && (
           <p className="relative px-6 pb-5 text-[11px] text-zinc-500 text-center">
-            Pagamento via Pix · Mercado Pago · sem sair do GoCreate
+            Pagamento via Mercado Pago · Pix, cartão ou boleto · sem sair do GoCreate
           </p>
         )}
       </div>

@@ -208,7 +208,7 @@ export function buildIntegrationsPromptAddonFromIds(connectedIds = []) {
     if (id === 'whatsapp_evolution' || id === 'whatsapp') {
       obj.whatsapp = { connected: true, source: id === 'whatsapp' ? 'cloud_api' : 'evolution' };
     } else if (id === 'mercadopago' || id === 'pix') {
-      obj.mercadopago = { connected: true, platform: true, source: 'platform' };
+      obj.mercadopago = { connected: true, platform: false, source: 'oauth' };
     } else if (id === 'instagram') {
       obj.instagram = { connected: true };
     } else if (id === 'facebook') {

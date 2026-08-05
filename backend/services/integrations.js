@@ -13,6 +13,7 @@ import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import Stripe from 'stripe';
 import {
   isMercadoPagoConfigured,
+  isMercadoPagoBillingReady,
   getAccessTokenForAppPayments,
   getTestAccessToken,
   isTestAccessToken,
@@ -91,8 +92,7 @@ export const SOCIAL_CHANNEL_PROVIDERS = new Set([
 export const PLATFORM_PROVIDERS = new Set([
   'cloudinary',
   'viacep',
-  'pix',
-  // mercadopago → OAuth Connect (seller); billing plataforma continua via env
+  // pix / mercadopago → só via OAuth do utilizador (não auto-ligar)
 ]);
 
 /**
@@ -347,10 +347,9 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
     };
   }
 
-  // Mercado Pago — OAuth Connect (conta do vendedor) + billing da plataforma
+  // Mercado Pago — só "connected" com OAuth do utilizador (não auto-ligar pela plataforma)
   const mpUser = integrationsMeta.mercadopago;
   const mpUserConnected = Boolean(mpUser?.connected);
-  const mpPlatform = isMercadoPagoConfigured();
   const mpOAuthReady = oauthConfigured('mercadopago');
   providers.mercadopago = {
     id: 'mercadopago',
@@ -365,29 +364,27 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
         }
       : {
           oauthConfigured: mpOAuthReady,
-          platformBilling: mpPlatform,
+          platformBilling: isMercadoPagoBillingReady(),
           label: mpOAuthReady
             ? 'Conectar com Mercado Pago'
-            : mpPlatform
-              ? 'OAuth não configurado (billing plataforma OK)'
-              : undefined,
+            : undefined,
         },
   };
+  // Pix segue o OAuth MP do user — sem "Ligado (plataforma)" por token de env
   providers.pix = {
     id: 'pix',
-    status: mpUserConnected || mpPlatform ? 'connected' : 'available',
-    source: mpUserConnected ? 'oauth' : mpPlatform ? 'platform' : 'none',
+    status: mpUserConnected ? 'connected' : 'available',
+    source: mpUserConnected ? 'oauth' : 'none',
     meta: {
-      connected: mpUserConnected || mpPlatform,
+      connected: mpUserConnected,
       viaMercadoPago: true,
       label: mpUserConnected
         ? mpUser?.mpUserId
           ? `Via MP OAuth (ID ${mpUser.mpUserId})`
           : 'Via Mercado Pago OAuth'
-        : mpPlatform
-          ? 'Ligado (plataforma)'
-          : undefined,
-      platformPowered: !mpUserConnected && mpPlatform,
+        : 'Conecta Mercado Pago para activar Pix',
+      platformPowered: false,
+      requiresMercadoPagoOAuth: true,
     },
   };
 
@@ -514,7 +511,7 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
   return {
     providers,
     platform: {
-      mercadopagoBilling: isMercadoPagoConfigured(),
+      mercadopagoBilling: isMercadoPagoBillingReady(),
       stripeBilling: isStripeConfigured(),
       evolutionApi: isEvolutionConfigured(),
       metaApp: isMetaConfigured(),
@@ -951,20 +948,14 @@ export async function loadUserIntegrationsForPrompt(uid) {
         : null;
     out.mercadopago = {
       connected: true,
-      platform: providers.mercadopago.source === 'platform',
+      platform: false,
       source: providers.mercadopago.source || 'none',
       mpUserId: providers.mercadopago.meta?.mpUserId || mpCreds?.mpUserId || null,
       hasPublicKey: Boolean(mpCreds?.publicKey || providers.mercadopago.meta?.hasPublicKey),
     };
   }
 
-  if (providers.pix?.status === 'connected' && !out.mercadopago) {
-    out.mercadopago = {
-      connected: true,
-      platform: providers.pix.source === 'platform',
-      source: providers.pix.source || 'none',
-    };
-  }
+  // Não injectar mercadopago.connected só porque Pix/plataforma tem token de env
 
   if (providers.stripe?.status === 'connected') {
     out.stripe = {

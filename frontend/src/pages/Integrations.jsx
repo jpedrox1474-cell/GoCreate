@@ -16,6 +16,8 @@ import {
   Search,
   Lock,
   Server,
+  ChevronDown,
+  HelpCircle,
 } from 'lucide-react';
 import Toast from '../components/Toast';
 import ConnectIntegrationModal from '../components/integrations/ConnectIntegrationModal';
@@ -88,6 +90,7 @@ export default function Integrations() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [modalIntegration, setModalIntegration] = useState(null);
+  const [helpOpenId, setHelpOpenId] = useState(null);
   const googleHashTried = React.useRef(false);
 
   const refresh = useCallback(async () => {
@@ -160,6 +163,7 @@ export default function Integrations() {
       return (
         item.name.toLowerCase().includes(q) ||
         item.description.toLowerCase().includes(q) ||
+        (item.help || '').toLowerCase().includes(q) ||
         item.id.includes(q)
       );
     }).map((item) => {
@@ -199,10 +203,15 @@ export default function Integrations() {
 
     if (item.connectType === 'platform') {
       setToast({
-        message:
-          item.id === 'pix'
-            ? 'Pix usa Mercado Pago — conecta Mercado Pago nesta página ou usa o token da plataforma.'
-            : `${item.name} já faz parte da plataforma GoCreate.`,
+        message: `${item.name} já faz parte da plataforma GoCreate.`,
+        type: 'info',
+      });
+      return;
+    }
+
+    if (item.id === 'pix') {
+      setToast({
+        message: 'Pix activa ao conectares Mercado Pago (OAuth) nesta página.',
         type: 'info',
       });
       return;
@@ -412,9 +421,36 @@ export default function Integrations() {
                     </p>
                   </div>
                 </div>
-                <p className="text-xs text-zinc-400 leading-relaxed flex-1 mb-4">
+                <p className="text-xs text-zinc-400 leading-relaxed mb-2">
                   {item.description}
                 </p>
+                {item.help ? (
+                  <div className="mb-4">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setHelpOpenId((id) => (id === item.id ? null : item.id))
+                      }
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-400/90 hover:text-blue-300 transition-colors"
+                    >
+                      <HelpCircle size={12} />
+                      Como usar
+                      <ChevronDown
+                        size={12}
+                        className={`transition-transform ${
+                          helpOpenId === item.id ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+                    {helpOpenId === item.id ? (
+                      <p className="mt-2 text-[11px] text-zinc-500 leading-relaxed border border-zinc-800/80 rounded-lg bg-zinc-950/50 px-3 py-2">
+                        {item.help}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="flex-1 mb-4" />
+                )}
                 {isLocked ? (
                   <p className="text-[11px] text-amber-400/90 mb-3 flex items-start gap-1.5">
                     <Lock size={12} className="shrink-0 mt-0.5" />

@@ -61,9 +61,9 @@ import { saveCheckpoint, undoLastCheckpoint, getLatestCheckpoint } from '../lib/
 import {
   getProjectById,
   getMessagesForProject,
-  PENDING_PROMPT_KEY,
   GENERATION_STATE_KEY,
 } from '../lib/mockData';
+import { loadPendingPrompt, takePendingLandingFile } from '../lib/landingPending';
 import { useTheme } from '../context/ThemeContext';
 
 function readGenerationSession() {
@@ -106,7 +106,7 @@ const MOCK_IDS = new Set(['landing-saas', 'dashboard-analytics', 'checkout-pix']
 const QUICK_ACTIONS = [
   { label: 'Criar Landing Page', prompt: 'Cria uma landing page moderna para um SaaS de produtividade, com hero, features, pricing e CTA.', icon: LayoutTemplate },
   { label: 'Criar Dashboard', prompt: 'Cria um dashboard analytics com KPIs, gráficos e tabela de dados recentes.', icon: BarChart3 },
-  { label: 'Criar Checkout', prompt: 'Cria um fluxo de checkout com Pix QR Code e formulário de cartão. Usa window.GoCreatePayments.createPix e createCheckout para pagamentos reais via Mercado Pago.', icon: CreditCard },
+  { label: 'Criar Checkout', prompt: 'Cria um fluxo de checkout com Mercado Pago (Pix, cartão ou outros métodos que o pagador escolher). Usa window.GoCreatePayments.createCheckout / createPix para pagamentos reais.', icon: CreditCard },
   { label: 'Criar App UI', prompt: 'Cria um ecrã mobile de app com navegação inferior e lista de cards.', icon: Smartphone },
 ];
 
@@ -568,12 +568,46 @@ export default function Editor() {
 
   useEffect(() => {
     if (!user || projectLoading || pendingSentRef.current || !firestoreId) return;
-    const pending = sessionStorage.getItem(PENDING_PROMPT_KEY);
-    if (!pending) return;
+    const pending = loadPendingPrompt();
+    const pendingFile = takePendingLandingFile();
+    if (!pending && !pendingFile) return;
     pendingSentRef.current = true;
-    sessionStorage.removeItem(PENDING_PROMPT_KEY);
-    setInput(pending);
-    setTimeout(() => sendMessageText(pending), 80);
+
+    const text = pending?.text || '';
+    if (text) setInput(text);
+
+    (async () => {
+      try {
+        let att = pending?.attachment || null;
+        if (!att && pendingFile) {
+          setUploading(true);
+          const idToken = await user.getIdToken();
+          const result = await uploadFile({ file: pendingFile, idToken });
+          att = {
+            url: result.url,
+            name: result.originalName || pendingFile.name,
+            resourceType: result.resourceType || 'raw',
+            mimeType: result.mimeType || pendingFile.type || null,
+          };
+        }
+        if (att?.url) {
+          setAttachment(att);
+          attachmentRef.current = att;
+        }
+        if (text) {
+          setTimeout(() => sendMessageText(text), 80);
+        }
+      } catch (err) {
+        console.error('[Editor] pending landing upload:', err);
+        setToast({
+          message: err?.message || 'Falha ao enviar o anexo da landing.',
+          type: 'error',
+        });
+        if (text) setTimeout(() => sendMessageText(text), 80);
+      } finally {
+        setUploading(false);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, projectLoading, firestoreId]);
 

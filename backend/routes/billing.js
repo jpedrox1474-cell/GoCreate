@@ -1,13 +1,13 @@
-// Rotas de billing / créditos — Mercado Pago Pix (checkout no modal GoCreate).
+// Rotas de billing / créditos — Mercado Pago Payment Brick (modal GoCreate).
 //
-// Fluxo Pix (Pro + Turbo) — sem redirect Checkout Pro:
-// 1. GET  /api/billing/config (público) → produtos
-// 2. POST /api/billing/create-payment (auth) → Payments API payment_method_id=pix
-// 3. GET  /api/billing/status/:transactionId (auth) → polling até approved
-// 4. POST /api/billing/webhook → valida, fulfillTransaction()
+// Fluxo Pro + Turbo (checkout transparente in-app):
+// 1. GET  /api/billing/config (público) → publicKey + produtos
+// 2. POST /api/billing/create-payment (auth) → preferenceId p/ Payment Brick
+// 3. POST /api/billing/process-payment (auth) → formData do Brick → /v1/payments
+// 4. GET  /api/billing/status/:transactionId (auth) → polling até approved
+// 5. POST /api/billing/webhook → valida, fulfillTransaction()
 //
-// Stripe / Payment Brick / Checkout Pro preference: mantidos só como legado
-// (não usados no fluxo Assinar Pro da UI).
+// createPixPayment fica só como fallback interno se Brick/publicKey falhar.
 
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
@@ -16,8 +16,11 @@ import { db } from '../config/firebaseAdmin.js';
 import {
   BILLING_PRODUCTS,
   isMercadoPagoConfigured,
+  isMercadoPagoBillingEnabled,
+  isMercadoPagoBillingReady,
   getPublicKey,
   isPublicKeyConfigured,
+  createCheckoutPreference,
   createPixPayment,
   processBrickPayment,
   getPaymentById,
@@ -25,6 +28,7 @@ import {
   verifyWebhookSignature,
   extractPaymentIdFromNotification,
   resolveNotificationUrl,
+  resolveAppUrl,
 } from '../services/mercadopago.js';
 import {
   isStripeConfigured,
@@ -102,16 +106,35 @@ export async function fulfillTransaction({
 /**
  * POST /api/billing/create-payment
  * Body: { productId: 'pro' | 'turbo' }
- * Sempre cria pagamento Pix (QR + copia-e-cola). Sem Checkout Pro / init_point.
+ * Cria transaction + preference para Payment Brick (Pix/cartão/boleto/Conta MP).
+ * Sem redirect Checkout Pro como fluxo primário.
  */
 router.post('/create-payment', requireAuth, async (req, res) => {
   try {
+    if (!isMercadoPagoBillingEnabled()) {
+      return res.status(503).json({
+        error: 'Billing Mercado Pago temporariamente desativado.',
+        code: 'MP_BILLING_DISABLED',
+        message:
+          'Billing Mercado Pago está desativado (MERCADOPAGO_BILLING_ENABLED=false).',
+      });
+    }
     if (!isMercadoPagoConfigured()) {
       return res.status(503).json({
         error: 'MERCADOPAGO_ACCESS_TOKEN não configurado.',
         code: 'MP_NOT_CONFIGURED',
         message:
           'Pagamentos Mercado Pago ainda não estão ativos. Adicione MERCADOPAGO_ACCESS_TOKEN no backend/functions.',
+      });
+    }
+
+    const publicKey = getPublicKey();
+    if (!publicKey) {
+      return res.status(503).json({
+        error: 'MERCADOPAGO_PUBLIC_KEY não configurada.',
+        code: 'MP_PUBLIC_KEY_MISSING',
+        message:
+          'Checkout transparente precisa de MERCADOPAGO_PUBLIC_KEY (TEST-… ou APP_USR-…) no servidor.',
       });
     }
 
@@ -124,6 +147,7 @@ router.post('/create-payment', requireAuth, async (req, res) => {
     }
 
     const notificationUrl = resolveNotificationUrl(req);
+    const appUrl = resolveAppUrl(req);
     const email = req.user.email || null;
 
     const txRef = db.collection('transactions').doc();
@@ -138,50 +162,45 @@ router.post('/create-payment', requireAuth, async (req, res) => {
       status: 'pending',
       provider: 'mercadopago',
       productId: product.id,
-      checkoutMode: 'pix',
+      checkoutMode: 'brick',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const pix = await createPixPayment({
+    const preference = await createCheckoutPreference({
       product,
       transactionId,
       userId: req.user.uid,
       email,
       notificationUrl,
+      appUrl,
+      purpose: 'wallet_purchase',
     });
 
-    if (!pix.qrCode && !pix.qrCodeBase64 && !pix.ticketUrl) {
-      console.error('[billing/create-payment] Pix sem QR/ticket', {
-        paymentId: pix.paymentId,
-        status: pix.status,
-      });
+    if (!preference?.preferenceId) {
+      console.error('[billing/create-payment] preference sem id', preference);
       return res.status(502).json({
-        error:
-          'Mercado Pago não devolveu QR Code Pix. Verifique MERCADOPAGO_TEST_ACCESS_TOKEN (TEST-).',
-        code: 'MP_PIX_QR_MISSING',
-        paymentId: pix.paymentId,
+        error: 'Mercado Pago não devolveu preferenceId para o Payment Brick.',
+        code: 'MP_PREFERENCE_MISSING',
       });
     }
 
     await txRef.update({
-      mpPaymentId: pix.paymentId ? String(pix.paymentId) : null,
-      mpStatus: pix.status || 'pending',
+      mpPreferenceId: String(preference.preferenceId),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     return res.status(201).json({
       provider: 'mercadopago',
-      mode: 'pix',
+      mode: 'brick',
       transactionId,
-      paymentId: pix.paymentId,
-      status: pix.status,
+      preferenceId: preference.preferenceId,
+      publicKey,
       amount: product.amount,
       credits: product.credits,
       plan: product.plan || null,
       title: product.title,
-      qrCode: pix.qrCode,
-      qrCodeBase64: pix.qrCodeBase64,
-      ticketUrl: pix.ticketUrl,
+      // init_point só para fallback manual — UI não redireciona por defeito
+      checkoutUrl: preference.initPoint || null,
     });
   } catch (err) {
     console.error('[billing/create-payment]', err);
@@ -200,6 +219,13 @@ router.post('/create-payment', requireAuth, async (req, res) => {
  */
 router.post('/process-payment', requireAuth, async (req, res) => {
   try {
+    if (!isMercadoPagoBillingEnabled()) {
+      return res.status(503).json({
+        error: 'Billing Mercado Pago temporariamente desativado.',
+        code: 'MP_BILLING_DISABLED',
+        message: 'Assinatura via Mercado Pago está indisponível de momento.',
+      });
+    }
     if (!isMercadoPagoConfigured()) {
       return res.status(503).json({
         error: 'MERCADOPAGO_ACCESS_TOKEN não configurado.',
@@ -383,9 +409,10 @@ router.post('/stripe-checkout', requireAuth, async (req, res) => {
  */
 router.get('/providers', (_req, res) => {
   res.json({
-    mercadopago: isMercadoPagoConfigured(),
+    mercadopago: isMercadoPagoBillingReady(),
     stripe: isStripeConfigured(),
-    brick: isMercadoPagoConfigured() && isPublicKeyConfigured(),
+    brick: isMercadoPagoBillingReady() && isPublicKeyConfigured(),
+    mercadopagoBillingEnabled: isMercadoPagoBillingEnabled(),
   });
 });
 
@@ -393,12 +420,14 @@ router.get('/providers', (_req, res) => {
  * GET /api/billing/config — chave pública + catálogo (sem access token).
  */
 router.get('/config', (_req, res) => {
-  const publicKey = getPublicKey();
+  const billingOn = isMercadoPagoBillingReady();
+  const publicKey = billingOn ? getPublicKey() : null;
   res.json({
-    mercadopago: isMercadoPagoConfigured(),
-    brick: Boolean(publicKey) && isMercadoPagoConfigured(),
+    mercadopago: billingOn,
+    brick: Boolean(publicKey) && billingOn,
     publicKey: publicKey || null,
     stripe: isStripeConfigured(),
+    mercadopagoBillingEnabled: isMercadoPagoBillingEnabled(),
     products: Object.fromEntries(
       Object.entries(BILLING_PRODUCTS).map(([id, p]) => [
         id,

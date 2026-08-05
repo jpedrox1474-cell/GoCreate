@@ -11,15 +11,20 @@ Aliases em `.firebaserc`:
 - `default` / `gocreate` → `gen-lang-client-0968841856`
 - `vexo` → `vexo-ef6e2`
 
-## Por que o project ID não é `gocreate-app`?
+## Por que o project ID não é `gocreate`?
 
-A conta `jpedrox1474@gmail.com` esgotou a **quota de criação de projetos GCP** (`RESOURCE_EXHAUSTED` / “exceeded your allotted project quota”).  
-Criar `gocreate-app` / `gocreate-prod` falhou. Solução aplicada: ativar Firebase num projeto Gemini descartável existente e renomear o display name para **GoCreate**.
+**Os Project IDs do Google Cloud / Firebase não podem ser renomeados** depois de criados. O display name já é **GoCreate**; o site Hosting público é `gocreate-app.web.app`.
+
+Opções:
+1. **Manter** `gen-lang-client-0968841856` (recomendado em produção) — display name + URL limpa bastam para a marca.
+2. **Migrar** para um projeto novo `gocreate` / `gocreate-app` se a quota permitir — trabalho pesado (Auth, Firestore, Functions, Hosting, secrets, OAuth redirects). Não faças cutover até o novo projeto estar 100% espelhado.
+
+A conta `jpedrox1474@gmail.com` esgotou a **quota de criação de projetos GCP** (`RESOURCE_EXHAUSTED`). Criar `gocreate-app` / `gocreate-prod` falhou. Solução aplicada: ativar Firebase num projeto Gemini existente e renomear o **display name** para **GoCreate** (não o ID).
 
 Para obter um ID limpo no futuro:
 1. Pedir aumento de quota: https://support.google.com/code/contact/project_quota_increase  
 2. Esperar exclusão permanente dos projetos apagados (`gen-lang-client-0293760474`, `gen-lang-client-0747178634`), **ou**
-3. Apagar mais projetos não usados e criar `gocreate-app`, depois migrar.
+3. Apagar mais projetos não usados e criar `gocreate` / `gocreate-app`, depois migrar.
 
 ## Hosting
 
