@@ -20,6 +20,7 @@ import { db } from '../firebase';
 import { getAuth } from 'firebase/auth';
 import {
   buildProjectThumbnailDataUrl,
+  createProjectViaApi,
   deleteProjectViaApi,
   bulkDeleteProjectsViaApi,
 } from './projectsApi';
@@ -141,35 +142,56 @@ export async function getOrCreateDefaultProject(uid) {
 }
 
 export async function createProject(uid, { name = 'Novo Projeto', description = '', isDefault = false, ownerEmail = null } = {}) {
-  const projectsRef = collection(db, 'projects');
-  const newProjectRef = doc(projectsRef);
+  if (!uid) throw new Error('Utilizador inválido.');
   const email =
     String(ownerEmail || getAuth().currentUser?.email || '')
       .trim()
       .toLowerCase() || null;
-  await setDoc(newProjectRef, {
-    ownerId: uid,
-    ownerEmail: email,
-    authAccess: { mode: 'owner_only', invitedEmails: [] },
-    auth: { googleEnabled: false, googleMode: 'default', emailPasswordEnabled: false },
+  const payload = {
     name,
     description: description || 'Projeto criado com GoCreate',
-    status: 'draft',
-    framework: 'React + Tailwind',
-    color: pickColor(),
     isDefault,
-    backendEnabled: false,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
+    ownerEmail: email,
+  };
 
-  await saveMessage(newProjectRef.id, {
-    role: 'ai',
-    text: WELCOME_MESSAGE,
-    uid: null,
-  });
+  try {
+    const projectsRef = collection(db, 'projects');
+    const newProjectRef = doc(projectsRef);
+    await setDoc(newProjectRef, {
+      ownerId: uid,
+      ownerEmail: email,
+      authAccess: { mode: 'owner_only', invitedEmails: [] },
+      auth: { googleEnabled: false, googleMode: 'default', emailPasswordEnabled: false },
+      name,
+      description: payload.description,
+      status: 'draft',
+      framework: 'React + Tailwind',
+      color: pickColor(),
+      isDefault,
+      backendEnabled: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
 
-  return newProjectRef.id;
+    try {
+      await saveMessage(newProjectRef.id, {
+        role: 'ai',
+        text: WELCOME_MESSAGE,
+        uid: null,
+      });
+    } catch (msgErr) {
+      console.warn('[projects] welcome message:', msgErr?.message || msgErr);
+    }
+
+    return newProjectRef.id;
+  } catch (clientErr) {
+    console.warn('[projects] create client failed, trying API:', clientErr?.code || clientErr?.message);
+    const user = getAuth().currentUser;
+    if (!user?.getIdToken) throw clientErr;
+    const token = await user.getIdToken();
+    const created = await createProjectViaApi(payload, token);
+    return created.id;
+  }
 }
 
 export async function listUserProjects(uid) {

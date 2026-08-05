@@ -44,6 +44,31 @@ export function buildProjectThumbnailDataUrl(name = 'Projeto', colorClass = '') 
 }
 
 /**
+ * Cria um projeto via Cloud Function (Admin SDK) — fallback se o cliente Firestore falhar.
+ * @param {{ name?: string, description?: string, isDefault?: boolean }} payload
+ * @param {string} idToken
+ * @returns {Promise<{ id: string }>}
+ */
+export async function createProjectViaApi(payload, idToken) {
+  const res = await fetch(apiUrl('/'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Falha ao criar projeto (${res.status})`);
+  }
+  if (!data?.id) {
+    throw new Error('API não devolveu id do projeto.');
+  }
+  return data;
+}
+
+/**
  * Apaga um projeto via Cloud Function (Admin cascade).
  * @param {string} projectId
  * @param {string} idToken

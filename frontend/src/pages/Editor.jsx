@@ -445,10 +445,26 @@ export default function Editor() {
 
       try {
         if (routeId === 'new' || !routeId) {
-          const id = await createProject(user.uid, { name: 'Novo Projeto' });
-          if (cancelled) return;
-          navigate(`/editor/${id}`, { replace: true });
-          return;
+          try {
+            const id = await createProject(user.uid, { name: 'Novo Projeto' });
+            if (cancelled) return;
+            navigate(`/editor/${id}`, { replace: true });
+            return;
+          } catch (createErr) {
+            console.error('[Editor] create:', createErr);
+            if (!cancelled) {
+              setToast({
+                message:
+                  createErr?.code === 'permission-denied'
+                    ? 'Sem permissão para criar projeto. Faz hard refresh (Ctrl+Shift+R) e tenta de novo.'
+                    : createErr?.message || 'Falha ao criar projeto.',
+                type: 'error',
+              });
+              setProjectLoading(false);
+              navigate('/dashboard', { replace: true });
+            }
+            return;
+          }
         }
 
         const id = routeId;
@@ -522,13 +538,12 @@ export default function Editor() {
         console.error('[Editor] projeto:', err);
         if (!cancelled) {
           setFirestoreId(null);
-          setMessages(
-            sanitizeMessages(getMessagesForProject(routeId || 'default'), (files) => {
-              setGeneratedFiles((prev) => ({ ...prev, ...files }));
-              setActiveFile((cur) => cur || Object.keys(files)[0] || null);
-            })
-          );
+          setToast({
+            message: err?.message || 'Não foi possível abrir o projeto.',
+            type: 'error',
+          });
           setProjectLoading(false);
+          navigate('/dashboard', { replace: true });
         }
       }
     }
@@ -552,7 +567,7 @@ export default function Editor() {
   }, [generatedFiles, activeFile]);
 
   useEffect(() => {
-    if (!user || projectLoading || pendingSentRef.current) return;
+    if (!user || projectLoading || pendingSentRef.current || !firestoreId) return;
     const pending = sessionStorage.getItem(PENDING_PROMPT_KEY);
     if (!pending) return;
     pendingSentRef.current = true;
@@ -698,13 +713,24 @@ export default function Editor() {
         return;
       }
 
-      if (!firestoreId) {
-        setIsTyping(false);
-        pushLocalTurn(
-          'Projeto ainda não está pronto. Recarrega a página ou cria um projeto novo no Dashboard e tenta outra vez.'
-        );
-        finishGeneration();
-        return;
+      let activeProjectId = firestoreId;
+      if (!activeProjectId) {
+        // Auto-create if user landed without a ready project id (e.g. race / stale tab).
+        try {
+          activeProjectId = await createProject(user.uid, { name: 'Novo Projeto' });
+          setFirestoreId(activeProjectId);
+          rememberLastProjectId(activeProjectId);
+          navigate(`/editor/${activeProjectId}`, { replace: true });
+        } catch (createErr) {
+          console.error('[Editor] auto-create:', createErr);
+          setIsTyping(false);
+          pushLocalTurn(
+            createErr?.message ||
+              'Não foi possível criar o projeto. Volta ao Dashboard, cria um projeto novo e tenta outra vez.'
+          );
+          finishGeneration();
+          return;
+        }
       }
 
       // Snapshot pré-apply para checkpoint + diff (não em continue automático).
@@ -723,7 +749,7 @@ export default function Editor() {
       try {
         const idToken = await user.getIdToken();
         const result = await streamChat({
-          projectId: firestoreId,
+          projectId: activeProjectId,
           messages: historyForApi,
           attachmentUrl: currentAttachment?.url || null,
           attachmentResourceType: currentAttachment?.resourceType || null,
@@ -824,7 +850,7 @@ export default function Editor() {
         const snap = pendingCheckpointRef.current;
         if (snap && fileCount > 0) {
           setDiffBaselines(snap.files || {});
-          void saveCheckpoint(firestoreId, {
+          void saveCheckpoint(activeProjectId, {
             files: snap.files || {},
             messageCount: snap.messageCount,
             prompt: snap.prompt,
@@ -835,7 +861,7 @@ export default function Editor() {
         }
 
         setGenerationIncomplete(false);
-        notifyAutomations(firestoreId);
+        notifyAutomations(activeProjectId);
         finishGeneration({ waitForHistory: true });
       } catch (err) {
         if (err?.name === 'AbortError' || controller.signal.aborted) {
@@ -902,6 +928,8 @@ export default function Editor() {
       firestoreId,
       routeId,
       messages,
+      projectMeta,
+      navigate,
       applyAiRaw,
       applyEntities,
       mergeGeneratedFiles,

@@ -155,7 +155,11 @@ export default function Dashboard() {
       navigate(`/editor/${id}`);
     } catch (err) {
       console.error('[Dashboard] create:', err);
-      setToast({ message: 'Falha ao criar projeto.', type: 'error' });
+      const msg =
+        err?.code === 'permission-denied'
+          ? 'Sem permissão no Firestore. Faz hard refresh (Ctrl+Shift+R) e tenta criar de novo.'
+          : err?.message || 'Falha ao criar projeto.';
+      setToast({ message: msg, type: 'error' });
       setCreating(false);
     }
   }
@@ -566,8 +570,13 @@ export default function Dashboard() {
           </div>
 
           {!filteredProjects.length && !search && (
-            <p className="text-center text-sm text-zinc-500 mt-8">
-              Ainda não tens projetos. Cria o primeiro ou abre um exemplo abaixo.
+            <p className="text-center text-sm text-zinc-500 mt-8 max-w-md mx-auto">
+              Ainda não tens projetos neste ambiente. Cria o primeiro abaixo.
+              {unlimited ? (
+                <span className="block mt-2 text-xs text-zinc-600">
+                  Nota: projetos do site antigo (gocreate.web.app / vexo) não aparecem aqui — base de dados nova.
+                </span>
+              ) : null}
             </p>
           )}
 

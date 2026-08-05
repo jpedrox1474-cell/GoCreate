@@ -179,6 +179,68 @@ async function syncBackendFlagToPublicSnapshots(projectId, backendEnabled) {
   }
 }
 
+const PROJECT_COLORS = [
+  'from-blue-600 to-indigo-600',
+  'from-emerald-600 to-teal-600',
+  'from-violet-600 to-purple-600',
+  'from-amber-600 to-orange-600',
+  'from-rose-600 to-pink-600',
+  'from-cyan-600 to-blue-600',
+];
+
+/**
+ * POST /api/projects — create project via Admin SDK (bypasses client rules).
+ * Body: { name?, description?, isDefault? }
+ */
+router.post('/', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const name = String(req.body?.name || 'Novo Projeto').trim() || 'Novo Projeto';
+    const description =
+      String(req.body?.description || 'Projeto criado com GoCreate').trim() ||
+      'Projeto criado com GoCreate';
+    const isDefault = Boolean(req.body?.isDefault);
+    const ownerEmail =
+      normalizeEmail(req.body?.ownerEmail || req.user.email) || null;
+    const color = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
+    const ref = db.collection('projects').doc();
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    await ref.set({
+      ownerId: uid,
+      ownerEmail,
+      authAccess: { mode: 'owner_only', invitedEmails: [] },
+      auth: { googleEnabled: false, googleMode: 'default', emailPasswordEnabled: false },
+      name,
+      description,
+      status: 'draft',
+      framework: 'React + Tailwind',
+      color,
+      isDefault,
+      backendEnabled: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    try {
+      await ref.collection('messages').add({
+        role: 'ai',
+        text: 'Olá! Bem-vindo ao GoCreate. O que vamos construir hoje?',
+        uid: null,
+        attachmentUrl: null,
+        createdAt: now,
+      });
+    } catch (msgErr) {
+      console.warn('[projects] welcome message:', msgErr?.message || msgErr);
+    }
+
+    return res.status(201).json({ id: ref.id, name, ownerId: uid });
+  } catch (err) {
+    console.error('[projects] create:', err);
+    return res.status(500).json({ error: err.message || 'Falha ao criar projeto.' });
+  }
+});
+
 /** POST /api/projects/bulk-delete  { projectIds: string[] } */
 router.post('/bulk-delete', requireAuth, async (req, res) => {
   try {

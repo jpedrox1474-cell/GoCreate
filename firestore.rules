@@ -97,7 +97,7 @@ service cloud.firestore {
 
       function authEmail() {
         return request.auth != null && request.auth.token.email != null
-          ? request.auth.token.email
+          ? request.auth.token.email.lower()
           : '';
       }
 
