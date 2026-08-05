@@ -121,8 +121,9 @@ export async function syncDeployEmailPreference(uid, enabled) {
 }
 
 /**
- * Após deploy bem-sucedido: regista flag/stub se o utilizador pediu avisos.
- * (Envio de e-mail real fica para um worker futuro.)
+ * Após deploy bem-sucedido: preferência já sincronizada em users.preferences.deployEmails.
+ * O e-mail real é enviado pelo backend (Resend) em POST /api/deploy.
+ * Este stub só regista lastDeployNotify no cliente se a API ainda não o fizer.
  */
 export async function recordDeployNotificationStub({
   uid,

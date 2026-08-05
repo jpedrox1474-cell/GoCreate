@@ -264,6 +264,43 @@ async function publishHandler(req, res) {
       { merge: true }
     );
 
+    // E-mail de deploy (preferência users.preferences.deployEmails) via Resend
+    try {
+      const userSnap = await db.collection('users').doc(req.user.uid).get();
+      const prefs = userSnap.data()?.preferences || {};
+      const wantsEmail =
+        req.body?.notifyEmail === true || prefs.deployEmails === true;
+      const notifyTo =
+        String(req.user.email || ownerEmail || '')
+          .trim()
+          .toLowerCase() || null;
+      if (wantsEmail && notifyTo) {
+        const { sendDeployNotificationEmail } = await import('../services/resendMail.js');
+        const sent = await sendDeployNotificationEmail({
+          to: notifyTo,
+          projectName: name || project.name || 'Projeto',
+          url,
+          env,
+        });
+        await db.collection('users').doc(req.user.uid).set(
+          {
+            lastDeployNotify: {
+              projectId,
+              url,
+              env,
+              at: admin.firestore.FieldValue.serverTimestamp(),
+              status: sent.ok ? 'sent' : sent.skipped ? 'pending_email' : 'failed',
+              via: sent.ok ? 'resend' : null,
+            },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+    } catch (mailErr) {
+      console.warn('[deploy/publish] notify email', mailErr?.message || mailErr);
+    }
+
     res.json({
       ok: true,
       url,

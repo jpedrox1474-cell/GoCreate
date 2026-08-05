@@ -21,6 +21,7 @@ export async function publishViaApi({
   files,
   name,
   env = 'production',
+  notifyEmail = false,
 }) {
   const res = await fetch(`${API_URL}/api/deploy/publish`, {
     method: 'POST',
@@ -28,7 +29,7 @@ export async function publishViaApi({
       Authorization: `Bearer ${idToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ projectId, files, name, env }),
+    body: JSON.stringify({ projectId, files, name, env, notifyEmail: Boolean(notifyEmail) }),
   });
   const data = await parseJson(res);
   if (!res.ok) {

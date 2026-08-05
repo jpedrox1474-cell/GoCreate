@@ -74,6 +74,10 @@ router.post('/password-reset', async (req, res) => {
       '../services/resendMail.js'
     );
     if (!isResendConfigured()) {
+      console.warn(
+        '[me/password-reset] RESEND_API_KEY em falta — cliente deve usar Firebase Auth. ' +
+          'Cole a chave em backend/.env e functions/.env (https://resend.com/api-keys).'
+      );
       return res.json({ ok: true, useClientFirebase: true });
     }
 

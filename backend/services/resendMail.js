@@ -173,3 +173,46 @@ export async function sendDeployNotificationEmail({
   `;
   return sendEmail({ to, subject, html, text });
 }
+
+/**
+ * Recibo após fulfill de billing (Pro / Turbo).
+ */
+export async function sendBillingReceiptEmail({
+  to,
+  productLabel,
+  amount,
+  credits,
+  currency = 'BRL',
+  transactionId,
+  plan,
+}) {
+  const label = productLabel || plan || 'GoCreate';
+  const amountStr =
+    amount != null && amount !== ''
+      ? `${currency === 'BRL' ? 'R$' : currency} ${Number(amount).toFixed(2)}`
+      : null;
+  const subject = `Recibo GoCreate — ${label}`;
+  const text = [
+    `Pagamento confirmado: ${label}.`,
+    amountStr ? `Valor: ${amountStr}` : null,
+    credits != null ? `Créditos: ${credits}` : null,
+    transactionId ? `Transação: ${transactionId}` : null,
+    'Obrigado por usares o GoCreate.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const html = `
+    <div style="font-family:system-ui,sans-serif;line-height:1.5;color:#18181b">
+      <p>Pagamento confirmado: <strong>${escapeHtml(label)}</strong>.</p>
+      ${amountStr ? `<p>Valor: <strong>${escapeHtml(amountStr)}</strong></p>` : ''}
+      ${credits != null ? `<p>Créditos: <strong>${escapeHtml(String(credits))}</strong></p>` : ''}
+      ${
+        transactionId
+          ? `<p style="color:#52525b;font-size:14px">Transação: ${escapeHtml(String(transactionId))}</p>`
+          : ''
+      }
+      <p>Obrigado por usares o GoCreate.</p>
+    </div>
+  `;
+  return sendEmail({ to, subject, html, text });
+}

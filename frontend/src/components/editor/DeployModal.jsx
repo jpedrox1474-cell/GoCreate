@@ -152,6 +152,7 @@ export default function DeployModal({
 
     try {
       let result;
+      const wantsNotify = getUserSettings().notifications;
       if (env === 'production') {
         const idToken = await user.getIdToken();
         result = await publishViaApi({
@@ -160,6 +161,7 @@ export default function DeployModal({
           files,
           name: projectName,
           env: 'production',
+          notifyEmail: wantsNotify,
         });
       } else {
         result = await publishProject(projectId, {
@@ -179,7 +181,6 @@ export default function DeployModal({
       setPhase('done');
       onToast?.({ message: 'Publicado com sucesso — o link mantém-se estável.', type: 'success' });
 
-      const wantsNotify = getUserSettings().notifications;
       if (wantsNotify) {
         await recordDeployNotificationStub({
           uid: ownerId,
