@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PLANS } from '../lib/plans';
-import { createPayment, getPaymentStatus } from '../lib/billingApi';
+import { createPayment, getBillingConfig, getPaymentStatus } from '../lib/billingApi';
 import MercadoPagoCheckout from './MercadoPagoCheckout';
 import Toast from './Toast';
 
@@ -28,6 +28,8 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
   const [checkout, setCheckout] = useState(null);
   const [payStatus, setPayStatus] = useState('pending');
   const [idToken, setIdToken] = useState(null);
+  /** Default true — billing ON; só desliga se /config disser explicitamente. */
+  const [mpBillingOn, setMpBillingOn] = useState(true);
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
@@ -45,7 +47,17 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       setPayStatus('pending');
       setBusyId(null);
       setIdToken(null);
+      return;
     }
+    let cancelled = false;
+    getBillingConfig().then((cfg) => {
+      if (cancelled) return;
+      // Só “Em breve” se o kill switch estiver explicitamente off.
+      setMpBillingOn(cfg?.mercadopagoBillingEnabled !== false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, stopPolling]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
