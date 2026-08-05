@@ -62,11 +62,13 @@ export default function MercadoPagoCheckout({
     if (preferenceId) {
       paymentMethods.mercadoPago = 'all';
     }
+    const isLight =
+      typeof document !== 'undefined' && document.documentElement.classList.contains('light');
     return {
       paymentMethods,
       visual: {
         style: {
-          theme: 'dark',
+          theme: isLight ? 'default' : 'dark',
         },
       },
     };

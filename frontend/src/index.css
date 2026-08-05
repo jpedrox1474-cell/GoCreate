@@ -193,6 +193,8 @@ html.light .gc-themed .hover\:border-zinc-600:hover {
   border-color: #e4e4e7 !important;
 }
 
+html.light .gc-app-shell .text-zinc-50,
+html.light .gc-themed .text-zinc-50,
 html.light .gc-app-shell .text-zinc-100,
 html.light .gc-themed .text-zinc-100,
 html.light .gc-app-shell .hover\:text-zinc-100:hover,
@@ -205,6 +207,24 @@ html.light .gc-themed .text-zinc-200,
 html.light .gc-app-shell .hover\:text-zinc-200:hover,
 html.light .gc-themed .hover\:text-zinc-200:hover {
   color: #27272a !important;
+}
+
+/* Keep primary CTA labels readable on blue / near-white buttons in light mode */
+html.light .gc-themed .bg-blue-600,
+html.light .gc-themed .bg-blue-500,
+html.light .gc-app-shell .bg-blue-600,
+html.light .gc-app-shell .bg-blue-500 {
+  color: #ffffff;
+}
+html.light .gc-themed .bg-blue-600.text-white,
+html.light .gc-themed .hover\:bg-blue-500:hover,
+html.light .gc-themed button.bg-blue-600,
+html.light .gc-themed button.bg-blue-600 * {
+  color: #ffffff !important;
+}
+html.light .gc-themed .bg-zinc-100.text-zinc-950,
+html.light .gc-themed button.bg-zinc-100 {
+  color: #09090b !important;
 }
 
 html.light .gc-app-shell .text-zinc-300,

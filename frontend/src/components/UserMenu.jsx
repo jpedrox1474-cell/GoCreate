@@ -1,10 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { User, Settings, LayoutDashboard, LogOut, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
+const MENU_W = 224;
+const MENU_H_EST = 220;
+const VIEW_PAD = 8;
+const GAP = 4;
+
 /**
  * Base44-style account menu: avatar opens dropdown; only Logout signs out.
+ * Portal + fixed positioning so the menu is never clipped by overflow/z-index.
  */
 export default function UserMenu({
   variant = 'sidebar',
@@ -15,29 +22,70 @@ export default function UserMenu({
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const place = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const menuW = Math.min(MENU_W, window.innerWidth - VIEW_PAD * 2);
+    const measuredH = menuRef.current?.offsetHeight || MENU_H_EST;
+    const openUp = variant === 'sidebar';
+
+    let left = variant === 'sidebar' ? r.left : r.right - menuW;
+    left = Math.max(VIEW_PAD, Math.min(left, window.innerWidth - menuW - VIEW_PAD));
+
+    let top;
+    if (openUp) {
+      top = Math.max(VIEW_PAD, r.top - measuredH - GAP);
+      if (top + measuredH > r.top - GAP && r.bottom + measuredH + VIEW_PAD < window.innerHeight) {
+        top = Math.min(r.bottom + GAP, window.innerHeight - measuredH - VIEW_PAD);
+      }
+    } else {
+      top = r.bottom + GAP;
+      if (top + measuredH > window.innerHeight - VIEW_PAD) {
+        top = Math.max(VIEW_PAD, r.top - measuredH - GAP);
+      }
+    }
+
+    setCoords({ top, left, width: menuW });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    place();
+  }, [open, variant]);
 
   useEffect(() => {
     if (!open) return undefined;
+
     function onDoc(e) {
-      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+      if (btnRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
     }
     function onKey(e) {
       if (e.key === 'Escape') setOpen(false);
     }
+
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, variant]);
 
   if (!user) return null;
 
   const initial = (user.displayName || user.email || 'U')[0].toUpperCase();
   const isCompact = variant === 'compact' || variant === 'header';
-  const menuAlign = variant === 'sidebar' ? 'left-0 bottom-full mb-1' : 'right-0 top-full mt-1';
 
   async function handleLogout(e) {
     e.preventDefault();
@@ -71,8 +119,9 @@ export default function UserMenu({
   );
 
   return (
-    <div ref={rootRef} className={`relative ${className}`}>
+    <div className={`relative ${className}`}>
       <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
@@ -101,58 +150,62 @@ export default function UserMenu({
         ) : null}
       </button>
 
-      {open ? (
-        <div
-          role="menu"
-          className={`absolute z-50 w-56 rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/40 py-1 ${menuAlign}`}
-        >
-          <div className="px-3 py-2 border-b border-zinc-800">
-            <p className="text-xs font-medium text-zinc-200 truncate">
-              {user.displayName || 'Utilizador'}
-            </p>
-            <p className="text-[11px] text-zinc-500 truncate">{user.email}</p>
-          </div>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => go('/profile')}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <User size={14} className="text-zinc-500" />
-            A minha conta / Perfil
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => go('/settings')}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <Settings size={14} className="text-zinc-500" />
-            Configurações
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => go('/dashboard')}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <LayoutDashboard size={14} className="text-zinc-500" />
-            Dashboard
-          </button>
-          <div className="my-1 border-t border-zinc-800" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={handleLogout}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-600/10"
-          >
-            <LogOut size={14} />
-            Sair
-          </button>
-        </div>
-      ) : null}
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{ top: coords.top, left: coords.left, width: coords.width || MENU_W }}
+              className="gc-themed fixed z-[200] rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/40 py-1"
+            >
+              <div className="px-3 py-2 border-b border-zinc-800">
+                <p className="text-xs font-medium text-zinc-200 truncate">
+                  {user.displayName || 'Utilizador'}
+                </p>
+                <p className="text-[11px] text-zinc-500 truncate">{user.email}</p>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => go('/profile')}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <User size={14} className="text-zinc-500" />
+                A minha conta / Perfil
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => go('/settings')}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <Settings size={14} className="text-zinc-500" />
+                Configurações
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => go('/dashboard')}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <LayoutDashboard size={14} className="text-zinc-500" />
+                Dashboard
+              </button>
+              <div className="my-1 border-t border-zinc-800" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-600/10"
+              >
+                <LogOut size={14} />
+                Sair
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
 
-      {/* Hidden link for a11y crawlers */}
       <Link to="/profile" className="sr-only">
         Perfil
       </Link>

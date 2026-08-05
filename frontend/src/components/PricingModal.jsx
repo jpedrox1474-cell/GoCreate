@@ -261,14 +261,14 @@ export default function PricingModal({
 
   const headerTitle =
     showCheckout || showCheckoutLoading
-      ? 'Pagar com Mercado Pago'
+      ? 'Checkout'
       : view === 'success'
         ? 'Pagamento confirmado'
         : 'Escolhe o teu ritmo';
 
   const headerSub =
     showCheckout || showCheckoutLoading
-      ? 'Escolhe Pix, cartão, boleto ou Conta Mercado Pago. Ativamos o plano assim que for aprovado.'
+      ? 'Paga com Mercado Pago — Pix, cartão, boleto ou Conta MP. Ativamos o plano assim que for aprovado.'
       : view === 'success'
         ? 'Créditos e plano atualizados na tua conta.'
         : message ||
@@ -296,17 +296,17 @@ export default function PricingModal({
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_40%_at_50%_0%,rgba(37,99,235,0.12),transparent_60%)]" />
 
-        <div className="relative flex items-start justify-between gap-4 px-5 sm:px-7 py-5 border-b border-zinc-800 shrink-0">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">
+        <div className="relative flex items-start justify-between gap-3 px-5 sm:px-7 py-5 border-b border-zinc-800 shrink-0">
+          <div className="min-w-0 flex-1 flex flex-col gap-1.5 pr-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400">
               {checkoutShell || view === 'success' ? 'Checkout' : 'Planos'}
             </p>
-            <h2 className="text-xl sm:text-2xl font-bold text-zinc-50 tracking-tight">
+            <h2 className="text-xl sm:text-2xl font-bold text-zinc-100 tracking-tight leading-snug">
               {headerTitle}
             </h2>
-            <p className="text-sm text-zinc-400 mt-1.5 max-w-lg">{headerSub}</p>
+            <p className="text-sm text-zinc-500 leading-relaxed max-w-lg">{headerSub}</p>
             {showPlans && message ? (
-              <p className="mt-2 text-xs text-amber-300/90 bg-amber-950/40 border border-amber-700/30 rounded-lg px-3 py-2 max-w-lg">
+              <p className="mt-1 text-xs text-amber-300/90 bg-amber-950/40 border border-amber-700/30 rounded-lg px-3 py-2 max-w-lg">
                 {message}
               </p>
             ) : null}
@@ -332,22 +332,16 @@ export default function PricingModal({
                 return (
                   <div
                     key={plan.id}
-                    className={`relative flex flex-col h-full rounded-2xl border p-5 sm:p-6 transition-all ${
+                    className={`relative flex flex-col h-full overflow-hidden rounded-2xl border p-5 sm:p-6 transition-all ${
                       isPro
-                        ? 'border-blue-500/60 bg-gradient-to-b from-blue-600/15 via-zinc-900/90 to-zinc-950 shadow-[0_0_40px_rgba(37,99,235,0.22)]'
+                        ? 'border-blue-500/70 bg-zinc-900 ring-1 ring-blue-500/30 shadow-[0_0_32px_rgba(37,99,235,0.18)]'
                         : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900/80'
                     }`}
                   >
                     {isPro && (
-                      <>
-                        <div
-                          className="absolute -inset-px rounded-2xl bg-gradient-to-b from-blue-500/25 via-transparent to-transparent pointer-events-none"
-                          aria-hidden
-                        />
-                        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-900/40">
-                          Popular
-                        </span>
-                      </>
+                      <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-[1] text-[10px] font-bold uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-900/40">
+                        Popular
+                      </span>
                     )}
 
                     <div className="relative flex items-center gap-2.5 mb-4 min-h-[36px]">
@@ -360,15 +354,15 @@ export default function PricingModal({
                       >
                         <Icon size={17} />
                       </div>
-                      <h3 className="text-base font-semibold text-zinc-50">{plan.name}</h3>
+                      <h3 className="text-base font-semibold text-zinc-100">{plan.name}</h3>
                     </div>
 
                     <div className="relative mb-5">
                       <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-bold tracking-tight text-zinc-50">
+                        <span className="text-3xl font-bold tracking-tight text-zinc-100">
                           {plan.priceLabel}
                         </span>
-                        <span className="text-sm text-zinc-400">{plan.period}</span>
+                        <span className="text-sm text-zinc-500">{plan.period}</span>
                       </div>
                       <p className="text-xs text-zinc-500 mt-1.5">
                         {plan.credits} créditos
@@ -401,11 +395,13 @@ export default function PricingModal({
                       }
                       onClick={() => handleSelect(plan)}
                       className={`relative w-full py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 ${
-                        plan.amount > 0 && mpBillingOn
-                          ? isPro
-                            ? 'text-white bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/30 ring-1 ring-blue-400/30'
-                            : 'text-zinc-950 bg-zinc-100 hover:bg-white'
-                          : 'text-zinc-400 bg-zinc-800/80 border border-zinc-700 cursor-default'
+                        isCurrent
+                          ? 'text-zinc-200 bg-zinc-800 border border-zinc-700 cursor-default'
+                          : plan.amount > 0 && mpBillingOn
+                            ? isPro
+                              ? 'text-white bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/30 ring-1 ring-blue-400/30'
+                              : 'text-zinc-950 bg-zinc-100 hover:bg-white'
+                            : 'text-zinc-300 bg-zinc-800 border border-zinc-700 cursor-default'
                       }`}
                     >
                       {busyId === plan.id ? (
@@ -460,23 +456,25 @@ export default function PricingModal({
             </button>
 
             <div className="w-full flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
-              <div>
-                <p className="text-sm font-semibold text-zinc-100">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-zinc-100 truncate">
                   {checkout.plan === 'pro' || checkout.title?.includes?.('Pro')
                     ? 'GoCreate Pro'
                     : 'GoCreate Turbo'}
                 </p>
-                <p className="text-[11px] text-zinc-500">
+                <p className="text-[11px] text-zinc-500 mt-0.5">
                   {checkout.credits != null
                     ? `+${checkout.credits} créditos`
                     : 'Pagamento Mercado Pago'}
                 </p>
               </div>
-              <p className="text-xl font-bold tracking-tight text-zinc-50">{amountLabel}</p>
+              <p className="text-xl font-bold tracking-tight text-zinc-100 shrink-0 tabular-nums">
+                {amountLabel}
+              </p>
             </div>
 
             {!idToken ? (
-              <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-400">
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-300">
                 <Loader2 size={16} className="animate-spin text-blue-400" />
                 A preparar sessão de pagamento…
               </div>
@@ -495,8 +493,8 @@ export default function PricingModal({
             )}
 
             {payStatus === 'pending' && (
-              <div className="flex items-center gap-2 text-sm text-zinc-400 justify-center">
-                <Loader2 size={14} className="animate-spin text-blue-400" />
+              <div className="flex items-center gap-2 text-sm font-medium text-zinc-300 justify-center">
+                <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
                 Aguardando confirmação do Mercado Pago…
               </div>
             )}
