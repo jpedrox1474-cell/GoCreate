@@ -100,6 +100,51 @@ export async function fulfillTransaction({
     firestoreTx.set(userRef, userUpdate, { merge: true });
 
     return { alreadyCompleted: false, data, credits };
+  }).then(async (result) => {
+    if (!result?.alreadyCompleted) {
+      await maybeSendBillingReceipt(result, transactionId).catch((err) => {
+        console.warn('[billing/fulfill] receipt email', err?.message || err);
+      });
+    }
+    return result;
+  });
+}
+
+async function maybeSendBillingReceipt(result, transactionId) {
+  const { sendBillingReceiptEmail, isResendConfigured } = await import(
+    '../services/resendMail.js'
+  );
+  if (!isResendConfigured()) return;
+  const data = result?.data || {};
+  let email = data.email || null;
+  if (!email && data.userId) {
+    try {
+      const userSnap = await db.collection('users').doc(data.userId).get();
+      email = userSnap.data()?.email || null;
+    } catch {
+      /* ignore */
+    }
+    if (!email) {
+      try {
+        const userRecord = await admin.auth().getUser(data.userId);
+        email = userRecord.email || null;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (!email) return;
+
+  const productId = data.productId || data.plan;
+  const product = productId ? BILLING_PRODUCTS[String(productId).toLowerCase()] : null;
+  await sendBillingReceiptEmail({
+    to: email,
+    productLabel: product?.title || data.plan || data.productId || 'GoCreate',
+    amount: data.amount ?? product?.amount,
+    credits: result.credits ?? data.credits,
+    currency: product?.currency || 'BRL',
+    transactionId: transactionId || null,
+    plan: data.plan || product?.plan,
   });
 }
 
@@ -155,6 +200,7 @@ router.post('/create-payment', requireAuth, async (req, res) => {
 
     await txRef.set({
       userId: req.user.uid,
+      email: email || null,
       amount: product.amount,
       credits: product.credits,
       type: product.type,
@@ -363,6 +409,7 @@ router.post('/stripe-checkout', requireAuth, async (req, res) => {
 
     await txRef.set({
       userId: req.user.uid,
+      email: email || null,
       amount: product.amount,
       credits: product.credits,
       type: product.type,

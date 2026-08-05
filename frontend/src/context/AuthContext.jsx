@@ -211,9 +211,36 @@ export function AuthProvider({ children }) {
       throw err;
     }
     try {
-      await sendPasswordResetEmail(auth, trimmed);
+      const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(`${API_URL}/api/me/password-reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.useClientFirebase) {
+        await sendPasswordResetEmail(auth, trimmed);
+        return;
+      }
+      if (!res.ok) {
+        const msg = data?.error || 'Não foi possível enviar o e-mail de recuperação.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
+      // Enviado via Resend (ou conta inexistente — resposta genérica ok)
     } catch (err) {
-      setAuthError(translateError(err.code));
+      if (err?.code) {
+        setAuthError(translateError(err.code));
+      } else if (!err?.message || err.message === 'Failed to fetch') {
+        // API offline → fallback Firebase
+        try {
+          await sendPasswordResetEmail(auth, trimmed);
+          return;
+        } catch (fbErr) {
+          setAuthError(translateError(fbErr.code));
+          throw fbErr;
+        }
+      }
       throw err;
     }
   }

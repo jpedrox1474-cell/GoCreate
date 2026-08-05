@@ -1226,11 +1226,14 @@ router.get('/:projectId/collaborators', requireAuth, async (req, res) => {
 router.post('/:projectId/collaborators', requireAuth, async (req, res) => {
   try {
     const { projectId } = req.params;
-    await assertOwner(projectId, req.user.uid);
+    const snap = await assertOwner(projectId, req.user.uid);
+    const project = snap.data() || {};
     const { addCollaborator } = await import('../services/collaborators.js');
+    const role = req.body?.role;
+    const inviteEmail = req.body?.email;
     const collaborators = await addCollaborator(projectId, {
-      email: req.body?.email,
-      role: req.body?.role,
+      email: inviteEmail,
+      role,
     });
     const { writeAuditLog } = await import('../services/audit.js');
     await writeAuditLog({
@@ -1238,9 +1241,30 @@ router.post('/:projectId/collaborators', requireAuth, async (req, res) => {
       actorUid: req.user.uid,
       actorEmail: req.user.email,
       projectId,
-      meta: { email: req.body?.email, role: req.body?.role },
+      meta: { email: inviteEmail, role },
     });
-    res.json({ ok: true, collaborators });
+
+    let inviteEmailSent = false;
+    try {
+      const { sendCollaboratorInviteEmail } = await import('../services/resendMail.js');
+      const sent = await sendCollaboratorInviteEmail({
+        to: inviteEmail,
+        inviterEmail: req.user.email,
+        projectName: project.name || project.title || projectId,
+        projectId,
+        role: role === 'viewer' ? 'viewer' : 'editor',
+      });
+      inviteEmailSent = Boolean(sent?.ok);
+      if (sent?.skipped) {
+        console.info('[projects/collaborators/add] invite email skipped (no RESEND_API_KEY)');
+      } else if (!sent?.ok) {
+        console.warn('[projects/collaborators/add] invite email failed', sent?.error);
+      }
+    } catch (mailErr) {
+      console.warn('[projects/collaborators/add] invite email', mailErr?.message || mailErr);
+    }
+
+    res.json({ ok: true, collaborators, inviteEmailSent });
   } catch (err) {
     console.error('[projects/collaborators/add]', err);
     res.status(err.status || 500).json({ error: err.message || 'Falha ao convidar.' });

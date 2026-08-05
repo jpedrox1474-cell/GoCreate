@@ -56,6 +56,55 @@ async function ensureHandler(req, res) {
 router.get('/ensure', requireAuth, ensureHandler);
 router.post('/ensure', requireAuth, ensureHandler);
 
+/**
+ * POST /api/me/password-reset — { email }
+ * Público. Com RESEND_API_KEY: gera link Firebase Admin e envia via Resend.
+ * Sem chave: responde { ok, useClientFirebase: true } para o cliente usar Firebase Auth.
+ */
+router.post('/password-reset', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '')
+      .trim()
+      .toLowerCase();
+    if (!email.includes('@')) {
+      return res.status(400).json({ error: 'E-mail inválido.' });
+    }
+
+    const { isResendConfigured, sendPasswordRecoveryEmail } = await import(
+      '../services/resendMail.js'
+    );
+    if (!isResendConfigured()) {
+      return res.json({ ok: true, useClientFirebase: true });
+    }
+
+    const admin = (await import('../config/firebaseAdmin.js')).default;
+    const appUrl = String(process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(
+      /\/$/,
+      ''
+    );
+    let resetLink;
+    try {
+      resetLink = await admin.auth().generatePasswordResetLink(email, {
+        url: `${appUrl}/login`,
+      });
+    } catch (err) {
+      // Evitar enumeração de contas — resposta genérica
+      console.warn('[me/password-reset] generate link', err?.code || err?.message || err);
+      return res.json({ ok: true });
+    }
+
+    const sent = await sendPasswordRecoveryEmail({ to: email, resetLink });
+    if (!sent.ok && !sent.skipped) {
+      console.error('[me/password-reset] resend failed', sent.error);
+      return res.status(502).json({ error: 'Falha ao enviar e-mail de recuperação.' });
+    }
+    return res.json({ ok: true, via: 'resend' });
+  } catch (err) {
+    console.error('[me/password-reset]', err);
+    res.status(500).json({ error: err.message || 'Falha na recuperação.' });
+  }
+});
+
 /** GET /api/me/sessions */
 router.get('/sessions', requireAuth, async (req, res) => {
   try {

@@ -52,6 +52,7 @@ const FILES = [
   'services/projectFunctions.js',
   'services/sessions.js',
   'services/collaborators.js',
+  'services/resendMail.js',
   'services/audit.js',
   'services/adminMetrics.js',
   'services/secretsCrypto.js',
