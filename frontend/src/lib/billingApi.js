@@ -84,10 +84,23 @@ export async function processPayment({
 export async function getBillingConfig() {
   try {
     const res = await fetch(billingUrl('/config'));
-    if (!res.ok) return { mercadopago: false, publicKey: null, brick: false };
+    if (!res.ok) {
+      return {
+        mercadopago: true,
+        publicKey: null,
+        brick: true,
+        mercadopagoBillingEnabled: true,
+      };
+    }
     return await res.json();
   } catch {
-    return { mercadopago: false, publicKey: null, brick: false };
+    // Optimistic: keep Assinar ativo se /config falhar (rede); o create-payment valida.
+    return {
+      mercadopago: true,
+      publicKey: null,
+      brick: true,
+      mercadopagoBillingEnabled: true,
+    };
   }
 }
 
