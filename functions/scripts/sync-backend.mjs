@@ -45,6 +45,7 @@ const FILES = [
   'services/evolution.js',
   'services/meta.js',
   'services/suggestIntegrations.js',
+  'services/chatIntent.js',
   'services/projectSlug.js',
   'services/customDomains.js',
   'services/projectFunctions.js',

@@ -56,6 +56,7 @@ export default function SettingsModal({
   const [slugHint, setSlugHint] = useState('');
   const [backendBusy, setBackendBusy] = useState(false);
   const [backendEnabled, setBackendEnabled] = useState(Boolean(project?.backendEnabled));
+  const [layoutLock, setLayoutLock] = useState(Boolean(project?.layoutLock));
   const [authMode, setAuthMode] = useState(
     project?.authAccess?.mode === 'invited' ? 'invited' : 'owner_only'
   );
@@ -88,6 +89,7 @@ export default function SettingsModal({
     setSlug(project?.slug || projectId || '');
     setSlugHint('');
     setBackendEnabled(Boolean(project?.backendEnabled));
+    setLayoutLock(Boolean(project?.layoutLock));
     setAuthMode(project?.authAccess?.mode === 'invited' ? 'invited' : 'owner_only');
     setInvitedEmails(
       Array.isArray(project?.authAccess?.invitedEmails)
@@ -111,6 +113,7 @@ export default function SettingsModal({
     project?.customDomainVerified,
     project?.slug,
     project?.backendEnabled,
+    project?.layoutLock,
     project?.authAccess?.mode,
     project?.authAccess?.invitedEmails,
     project?.auth?.googleEnabled,
@@ -358,13 +361,15 @@ async function handleSave(e) {
           JSON.stringify(prevAccess.invitedEmails || []) !==
             JSON.stringify(nextAuthAccess.invitedEmails) ||
           !project?.ownerEmail;
-        if (nameChanged || descChanged || domainChanged || authChanged) {
+        const layoutLockChanged = Boolean(layoutLock) !== Boolean(project?.layoutLock);
+        if (nameChanged || descChanged || domainChanged || authChanged || layoutLockChanged) {
           await updateProjectSettings(projectId, {
             name: trimmedName,
             description: trimmedDesc,
             customDomain: trimmedDomain,
             authAccess: nextAuthAccess,
             ownerEmail,
+            layoutLock: Boolean(layoutLock),
           });
         }
         if (domainChanged && user?.getIdToken) {
@@ -398,6 +403,7 @@ async function handleSave(e) {
         slug: nextSlug || project?.slug || null,
         publishedUrl: nextPublishedUrl || project?.publishedUrl || null,
         backendEnabled,
+        layoutLock: Boolean(layoutLock),
         authAccess: nextAuthAccess,
         ownerEmail,
       });
@@ -899,6 +905,42 @@ async function handleSave(e) {
               </button>
             )}
           </div>
+        </section>
+
+        <section className="space-y-2 pt-1 border-t border-zinc-800/80">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 pt-2">
+            IA / Layout
+          </p>
+          <label className="flex items-center justify-between gap-4 p-3 rounded-lg bg-zinc-950 border border-zinc-800 cursor-pointer">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-md bg-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                <LayoutTemplate size={14} className="text-violet-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm text-zinc-200">Preservar layout</p>
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  Layout lock: a IA só altera dados (GoCreateData, entidades, submit) — não redesenha
+                  UI, cores nem classes Tailwind. Também ativa se pedires “preserva o design” no chat.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={layoutLock}
+              disabled={readOnly}
+              onClick={() => setLayoutLock((v) => !v)}
+              className={`relative w-10 h-6 rounded-full transition-all shrink-0 ${
+                layoutLock ? 'bg-violet-600' : 'bg-zinc-700'
+              } disabled:opacity-50`}
+            >
+              <span
+                className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-all ${
+                  layoutLock ? 'translate-x-4' : ''
+                }`}
+              />
+            </button>
+          </label>
         </section>
 
         <section className="space-y-2 pt-1 border-t border-zinc-800/80">

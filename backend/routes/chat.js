@@ -22,6 +22,12 @@ import {
   detectSuggestedIntegrations,
   filterUnconnectedSuggestions,
 } from '../services/suggestIntegrations.js';
+import {
+  detectPreserveLayoutIntent,
+  detectChatTurnIntent,
+  detectDataBackendOnlyRequest,
+  buildChatBehaviorAddon,
+} from '../services/chatIntent.js';
 
 const router = Router();
 
@@ -105,12 +111,14 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
       console.warn('[api/chat] integrations addon:', intErr?.message);
     }
 
-    // Estado Backend + Auth deste projeto
+    // Estado Backend + Auth + layoutLock deste projeto
+    let projectLayoutLock = false;
     try {
       const projectSnap = await db.collection('projects').doc(projectId).get();
       if (projectSnap.exists) {
         const pdata = projectSnap.data() || {};
         const be = Boolean(pdata.backendEnabled);
+        projectLayoutLock = Boolean(pdata.layoutLock);
         const { normalizeProjectAuth, publicProjectAuthPayload } = await import(
           '../services/projectAuth.js'
         );
@@ -121,6 +129,7 @@ router.post('/', requireAuth, creditCheck, async (req, res) => {
 
 ## Estado deste projeto GoCreate
 - backendEnabled: ${be ? 'true' : 'false'}
+- layoutLock: ${projectLayoutLock ? 'true' : 'false'}
 - auth.googleEnabled: ${auth.googleEnabled ? 'true' : 'false'}
 - auth.googleMode: ${auth.googleMode}
 - googleAuthEnabled (backend+flag): ${authPublic.googleAuthEnabled ? 'true' : 'false'}
@@ -134,6 +143,11 @@ ${
     ? `- Google Auth ATIVO: mostra botão "Continuar com Google" via window.GoCreateAuth; respeita window.__GOCREATE_AUTH__.googleAuthEnabled.`
     : `- Google Auth OFF ou Backend off: NÃO mostres Login/Register Google como "ligado". Se o user pedir login Google, indica Configurações → Authentication (ou usa o motor de orquestração).`
 }
+${
+  projectLayoutLock
+    ? `- LAYOUT LOCK ATIVO (Preservar layout): só camada de dados — NÃO mudes layout/cores/Tailwind/estrutura.`
+    : ``
+}
 `;
       }
     } catch (beErr) {
@@ -141,12 +155,14 @@ ${
     }
 
     // Intent → orchestrate JSON (auth / entities) before free-form codegen
+    let orchestrateMatched = false;
     try {
       const { detectOrchestrateIntent, applyOrchestrate } = await import(
         '../services/orchestrate.js'
       );
       const intent = detectOrchestrateIntent(lastUserText);
       if (intent) {
+        orchestrateMatched = true;
         const projectSnap = await db.collection('projects').doc(projectId).get();
         if (projectSnap.exists) {
           const orchestrateResult = await applyOrchestrate(
@@ -173,8 +189,9 @@ ${orchestrateResult.wiringPrompt}
 ${
   isSchema
     ? `- Schema persistido em projects/{projectId}/entities (isolado por tenant). Use window.GoCreateData para CRUD.
-- Responde em UMA linha curta confirmando o módulo criado; gera UI de listagem/formulário se o user pediu app.`
-    : `- Responde em UMA linha curta confirmando; se houver wiring de UI auth, gera o artefacto React com o botão Google.`
+- Responde em UMA linha curta confirmando o módulo criado; gera UI de listagem/formulário se o user pediu app.
+- Com layout lock ou pedido só de dados: NÃO redesenhes a UI — só wiring GoCreateData nos formulários existentes.`
+    : `- Responde em UMA linha curta confirmando; se houver wiring de UI auth, gera o artefacto React com o botão Google (sem redesenhar o resto).`
 }
 `;
           }
@@ -183,6 +200,20 @@ ${
     } catch (orchErr) {
       console.warn('[api/chat] orchestrate intent:', orchErr?.message);
     }
+
+    // Intent do turno + layout lock (projeto OU mensagem do user)
+    const layoutLock =
+      projectLayoutLock || detectPreserveLayoutIntent(lastUserText);
+    const turnIntent = detectChatTurnIntent(lastUserText, {
+      hasOrchestrateIntent: orchestrateMatched,
+    });
+    const dataBackendOnly =
+      layoutLock || detectDataBackendOnlyRequest(lastUserText);
+    systemPrompt += buildChatBehaviorAddon({
+      intent: turnIntent,
+      layoutLock,
+      dataBackendOnly,
+    });
 
     // Explicit wiring flag from "Add to pages" button
     if (req.body?.wiringPrompt && typeof req.body.wiringPrompt === 'string') {

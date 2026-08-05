@@ -96,6 +96,7 @@ export function mapProjectDoc(d) {
     slug: data.slug || null,
     isDefault: Boolean(data.isDefault),
     backendEnabled: Boolean(data.backendEnabled),
+    layoutLock: Boolean(data.layoutLock),
     ownerId: data.ownerId,
     ownerEmail: data.ownerEmail || null,
     collaborators: Array.isArray(data.collaborators)
@@ -169,6 +170,7 @@ export async function createProject(uid, { name = 'Novo Projeto', description = 
       color: pickColor(),
       isDefault,
       backendEnabled: false,
+      layoutLock: false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -229,7 +231,7 @@ export async function archiveProject(projectId, archived = true) {
 
 export async function updateProjectSettings(
   projectId,
-  { name, description, customDomain, authAccess, ownerEmail } = {}
+  { name, description, customDomain, authAccess, ownerEmail, layoutLock } = {}
 ) {
   if (!projectId) throw new Error('Projeto inválido.');
   const patch = { updatedAt: serverTimestamp() };
@@ -246,6 +248,9 @@ export async function updateProjectSettings(
   }
   if (ownerEmail != null) {
     patch.ownerEmail = String(ownerEmail).trim().toLowerCase() || null;
+  }
+  if (layoutLock != null) {
+    patch.layoutLock = Boolean(layoutLock);
   }
   if (authAccess != null) {
     const mode = authAccess.mode === 'invited' ? 'invited' : 'owner_only';
