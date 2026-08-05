@@ -110,7 +110,7 @@ export async function bulkDeleteProjectsViaApi(projectIds, idToken) {
 }
 
 /**
- * Ativa Backend Functions no projeto (Free gasta créditos; Pro/Owner grátis).
+ * Ativa Backend Functions no projeto (grátis em Free/Pro/Owner — freemium Base44).
  */
 export async function enableProjectBackend({ projectId, idToken }) {
   const res = await fetch(apiUrl(`/${encodeURIComponent(projectId)}/backend/enable`), {

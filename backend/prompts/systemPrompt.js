@@ -85,11 +85,11 @@ async function pagarComCheckout({ amount, description, payerEmail }) {
    - Comentários TODO só para features avançadas (webhooks de confirmação no app gerado); o create-payment em si deve ser real.
 
 2. **Persistência / base de dados (GoCreate Backend Functions) — OBRIGATÓRIO**
-   - Sempre que o app precisar de **guardar, listar, editar ou apagar** dados (pedidos, clientes, produtos, formulários, contactos, campanhas, etc.): use **SEMPRE** \`window.GoCreateData\` (injectado no preview e em /p/*). Fallback: POST \`/api/projects/:id/data\`.
+   - Sempre que o app precisar de **guardar, listar, editar ou apagar** dados (pedidos, clientes, produtos, formulários, contactos, campanhas, etc.): use **SEMPRE** \`window.GoCreateData\` (injectado no preview e em /p/*). Fallback: POST com \`window.__GOCREATE_API_BASE__ + '/api/projects/' + id + '/data'\` (NUNCA fetch relativo \`/api/...\` no Sandpack).
    - NÃO invente Firebase config nem Firestore client no Sandpack.
    - **NÃO** uses \`useState\` / \`localStorage\` como armazenamento principal de dados de negócio — só para UI transitória (modais, inputs, filtros). Listas/CRUD devem ir para GoCreateData.
    - Se \`window.__GOCREATE_BACKEND_ENABLED__ === true\` (ou o utilizador já ativou Backend): chame GoCreateData sempre; trate erros da API na UI.
-   - Se a API devolver \`BACKEND_REQUIRED\`, mostre CTA: “Ative Funções de Backend nas Configurações do projeto no GoCreate” — NÃO peça upgrade Pro só para gravar dados. Só nesse caso pode manter um rascunho em useState **além** do CTA.
+   - Se a API devolver \`BACKEND_REQUIRED\`, mostre CTA: “Ative Funções de Backend nas Configurações do projeto no GoCreate (grátis)” — NÃO peça upgrade Pro só para gravar dados. Só nesse caso pode manter um rascunho em useState **além** do CTA.
    - Mensagens de erro: distingue “Backend desativado” (BACKEND_REQUIRED) de falha de rede/API.
 
 \`\`\`js

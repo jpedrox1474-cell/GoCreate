@@ -78,8 +78,13 @@ export default function IntegrationsBanner({ projectId }) {
       }
     }
     load();
+    function onBackendEnabled() {
+      load();
+    }
+    window.addEventListener('gocreate:backend-enabled', onBackendEnabled);
     return () => {
       cancelled = true;
+      window.removeEventListener('gocreate:backend-enabled', onBackendEnabled);
     };
   }, [user]);
 

@@ -11,8 +11,11 @@ export const OWNER_ROLE = 'owner';
 export const OWNER_PLAN = 'enterprise_master';
 export const FREE_DAILY_CREDITS = 50;
 export const PREMIUM_PLANS = new Set(['pro', 'enterprise_master']);
-/** Créditos para ativar Backend Functions num projeto (Free). Owner/Pro: grátis. */
-export const BACKEND_ENABLE_CREDIT_COST = 5;
+/**
+ * Custo para ativar Backend Functions num projeto.
+ * Base44-style freemium: Free inclui o unlock (0 créditos). Soft limits futuros ok.
+ */
+export const BACKEND_ENABLE_CREDIT_COST = 0;
 
 /**
  * Normalize email for owner matching (lowercase, strip +aliases for gmail).
@@ -75,7 +78,7 @@ export function todayKeyUTC3(date = new Date()) {
 }
 
 export const PREMIUM_REQUIRED_MESSAGE =
-  'Recurso Premium. GitHub e canais sociais (WhatsApp, Instagram, Facebook, YouTube, TikTok) estão nos planos pagos. Upload/leitura de mídia, publicar e Backend Functions estão no Free (créditos / badge GoCreate).';
+  'Recurso Premium. GitHub e canais sociais (WhatsApp, Instagram, Facebook, YouTube, TikTok) estão nos planos pagos. Upload/leitura de mídia, publicar e Backend Functions (Auth + dados) estão no Free.';
 
 export const BACKEND_REQUIRED_MESSAGE =
   'Funções de Backend não ativadas. Ative em Configurações do projeto para guardar dados na base de dados.';

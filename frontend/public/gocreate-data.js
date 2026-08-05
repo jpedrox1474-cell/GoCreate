@@ -4,23 +4,47 @@
  *
  * Expects:
  *   window.__GOCREATE_PROJECT_ID__
- *   window.__GOCREATE_API_BASE__ (optional)
+ *   window.__GOCREATE_API_BASE__ (optional; defaults to gocreate-app production)
  *   window.__GOCREATE_BACKEND_ENABLED__ (optional hint)
  */
 (function (global) {
   if (global.GoCreateData) return;
 
-  function apiBase() {
-    if (global.__GOCREATE_API_BASE__) return String(global.__GOCREATE_API_BASE__).replace(/\/$/, '');
+  var FALLBACK_API = 'https://gocreate-app.web.app';
+
+  function looksLikeSandpackOrigin(origin) {
+    if (!origin || typeof origin !== 'string') return true;
     try {
-      return global.location.origin;
-    } catch {
-      return 'https://gocreate-app.web.app';
+      var host = new URL(origin).hostname.toLowerCase();
+      return (
+        host.indexOf('csb.app') !== -1 ||
+        host.indexOf('codesandbox') !== -1 ||
+        host.indexOf('sandpack') !== -1 ||
+        host === 'localhost' ||
+        host === '127.0.0.1'
+      );
+    } catch (_) {
+      return true;
     }
   }
 
+  function apiBase() {
+    if (global.__GOCREATE_API_BASE__) {
+      return String(global.__GOCREATE_API_BASE__).replace(/\/$/, '');
+    }
+    try {
+      var origin = global.location && global.location.origin;
+      if (origin && !looksLikeSandpackOrigin(origin)) return origin.replace(/\/$/, '');
+    } catch (_) {
+      /* ignore */
+    }
+    return FALLBACK_API;
+  }
+
   function projectId() {
-    return global.__GOCREATE_PROJECT_ID__ || null;
+    var pid = global.__GOCREATE_PROJECT_ID__;
+    if (!pid || pid === 'null' || pid === 'undefined') return null;
+    return String(pid);
   }
 
   function showToast(message, type) {
@@ -44,7 +68,7 @@
         } catch (_) {
           /* ignore */
         }
-      }, 2800);
+      }, 3200);
     } catch (_) {
       /* ignore */
     }
@@ -52,16 +76,19 @@
 
   function friendlyError(res, data) {
     var code = data && data.code;
-    if (code === 'BACKEND_REQUIRED' || res.status === 403) {
+    if (code === 'BACKEND_REQUIRED' || (res && res.status === 403 && code === 'BACKEND_REQUIRED')) {
       return (
         (data && (data.message || data.error)) ||
-        'Funções de Backend desativadas. Ative em Configurações do projeto no GoCreate.'
+        'Funções de Backend desativadas. Ative em Configurações do projeto no GoCreate (grátis).'
       );
     }
-    if (res.status === 404) {
+    if (code === 'ENTITY_ACCESS_DENIED') {
+      return (data && (data.message || data.error)) || 'Sem permissão para esta entidade.';
+    }
+    if (res && res.status === 404) {
       return (data && (data.message || data.error)) || 'Projeto ou registo não encontrado.';
     }
-    if (res.status >= 500) {
+    if (res && res.status >= 500) {
       return (data && (data.message || data.error)) || 'Erro no servidor ao guardar dados. Tente novamente.';
     }
     return (
@@ -91,11 +118,25 @@
       /* ignore */
     }
 
-    var res = await fetch(apiBase() + '/api/projects/' + encodeURIComponent(pid) + '/data', {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(body),
-    });
+    var url = apiBase() + '/api/projects/' + encodeURIComponent(pid) + '/data';
+    var res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(body),
+      });
+    } catch (netErr) {
+      var net = new Error(
+        'Rede/CORS: não foi possível contactar a API (' +
+          apiBase() +
+          '). Confirma que o preview carregou o runtime GoCreate.'
+      );
+      net.code = 'NETWORK_ERROR';
+      net.cause = netErr;
+      if (opts.toast !== false) showToast(net.message, 'error');
+      throw net;
+    }
 
     var data = null;
     try {

@@ -40,7 +40,6 @@ import {
 } from '../lib/socialChannelsApi';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
-import { BACKEND_ENABLE_CREDIT_COST } from '../lib/plans';
 
 const OAUTH_PROVIDERS = new Set(['github', 'mercadopago']);
 const ICONS = {
@@ -109,6 +108,14 @@ export default function Integrations() {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    function onBackendEnabled() {
+      void refresh();
+    }
+    window.addEventListener('gocreate:backend-enabled', onBackendEnabled);
+    return () => window.removeEventListener('gocreate:backend-enabled', onBackendEnabled);
   }, [refresh]);
 
   useEffect(() => {
@@ -183,7 +190,8 @@ export default function Integrations() {
         return;
       }
       setToast({
-        message: `Ativa Backend Functions nas Configurações do projeto (−${BACKEND_ENABLE_CREDIT_COST} créditos no Free) para desbloquear Login, Firestore e Firebase.`,
+        message:
+          'Ativa Backend Functions nas Configurações do projeto (grátis no Free) para desbloquear Login, Firestore e Firebase.',
         type: 'info',
       });
       return;
@@ -305,8 +313,8 @@ export default function Integrations() {
         <div>
           <h1 className="text-2xl font-bold text-zinc-100 tracking-tight mb-1">Integrações</h1>
           <p className="text-sm text-zinc-500">
-            Só providers activos. Login / Firestore / Firebase desbloqueiam com Backend Functions (−
-            {BACKEND_ENABLE_CREDIT_COST} créditos no Free).
+            Só providers activos. Login / Firestore / Firebase desbloqueiam com Backend Functions
+            (grátis no Free).
           </p>
         </div>
         <div className="text-right">
@@ -410,7 +418,7 @@ export default function Integrations() {
                 {isLocked ? (
                   <p className="text-[11px] text-amber-400/90 mb-3 flex items-start gap-1.5">
                     <Lock size={12} className="shrink-0 mt-0.5" />
-                    Ativa Backend Functions no projeto (−{BACKEND_ENABLE_CREDIT_COST} créditos Free).
+                    Ativa Backend Functions no projeto (grátis no Free).
                   </p>
                 ) : null}
                 {item.meta?.login && (

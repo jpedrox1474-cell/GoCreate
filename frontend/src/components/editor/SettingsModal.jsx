@@ -26,8 +26,6 @@ import {
 import { getUserSettings, saveUserSettings, syncDeployEmailPreference } from '../../lib/userSettings';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { useCredits } from '../../context/CreditsContext';
-import { BACKEND_ENABLE_CREDIT_COST } from '../../lib/plans';
 
 function normalizeInviteEmail(value) {
   return String(value || '')
@@ -48,7 +46,6 @@ export default function SettingsModal({
 }) {
   const { preference, setTheme } = useTheme();
   const { user } = useAuth();
-  const { canUsePremium, credits, openPricing } = useCredits();
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [customDomain, setCustomDomain] = useState(project?.customDomain || '');
@@ -196,26 +193,21 @@ export default function SettingsModal({
       const result = await enableProjectBackend({ projectId, idToken });
       setBackendEnabled(true);
       onProjectUpdated?.({ ...project, backendEnabled: true });
-      const charged = result.creditsCharged || 0;
+      try {
+        window.dispatchEvent(
+          new CustomEvent('gocreate:backend-enabled', { detail: { projectId } })
+        );
+      } catch {
+        /* ignore */
+      }
       onToast?.({
-        message:
-          charged > 0
-            ? `Backend ativado (−${charged} créditos).`
-            : result.alreadyEnabled
-              ? 'Backend já estava ativo.'
-              : 'Backend Functions ativadas.',
+        message: result.alreadyEnabled
+          ? 'Backend já estava ativo. Preview e apps publicados usam a Data API.'
+          : 'Backend ativado (grátis). Pede à IA criar uma entidade e um formulário — os dados passam a gravar na base.',
         type: 'success',
       });
     } catch (err) {
       console.error('[SettingsModal] backend', err);
-      if (err?.code === 'INSUFFICIENT_CREDITS') {
-        onToast?.({
-          message: err.message || 'Créditos insuficientes.',
-          type: 'error',
-        });
-        openPricing?.();
-        return;
-      }
       onToast?.({ message: err?.message || 'Não foi possível ativar o Backend.', type: 'error' });
     } finally {
       setBackendBusy(false);
@@ -429,7 +421,6 @@ async function handleSave(e) {
   const publishedUrl =
     project?.publishedUrl ||
     (projectId ? getPublishUrl(projectId, project?.publishedEnv || 'production', publicKey) : null);
-  const creditCost = canUsePremium ? 0 : BACKEND_ENABLE_CREDIT_COST;
   const ownerLabel = project?.ownerEmail || user?.email || 'o teu e-mail';
 
   return (
@@ -882,9 +873,8 @@ async function handleSave(e) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-zinc-200">Funções de Backend</p>
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
-                  Permite ao site publicado gravar na base de dados via API GoCreate (estilo Base44).
-                  Contas novas com créditos podem ativar. Free gasta {BACKEND_ENABLE_CREDIT_COST}{' '}
-                  créditos; Pro/Owner é grátis.
+                  Permite gravar na base de dados via API GoCreate (estilo Base44). Incluído no Free —
+                  Auth, entidades e GoCreateData sem pagar nem gastar créditos.
                 </p>
               </div>
             </div>
@@ -905,13 +895,9 @@ async function handleSave(e) {
                 ) : (
                   <Server size={14} />
                 )}
-                Ativar funções de Backend
-                {creditCost > 0 ? ` (−${creditCost} créditos)` : ' (incluído)'}
+                Ativar funções de Backend (grátis)
               </button>
             )}
-            {!backendEnabled && !canUsePremium && typeof credits === 'number' ? (
-              <p className="text-[10px] text-zinc-600">Tens {credits} créditos disponíveis.</p>
-            ) : null}
           </div>
         </section>
 

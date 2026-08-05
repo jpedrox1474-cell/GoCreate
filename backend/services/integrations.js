@@ -23,7 +23,6 @@ import { isStripeConfigured } from './stripe.js';
 import { isEvolutionConfigured, buildInstanceNameForUser } from './evolution.js';
 import { oauthConfigured } from './oauth/providers.js';
 import { isMetaConfigured } from './meta.js';
-import { BACKEND_ENABLE_CREDIT_COST } from '../lib/owner.js';
 
 function isPayPalPlatformConfigured() {
   return Boolean(
@@ -98,7 +97,7 @@ export const PLATFORM_PROVIDERS = new Set([
 
 /**
  * Login / Firestore / Firebase — só “connected” depois de ativar Backend Functions
- * num projeto do utilizador (custa BACKEND_ENABLE_CREDIT_COST no Free).
+ * num projeto do utilizador (unlock gratuito no Free — Base44 freemium).
  */
 export const BACKEND_GATED_PROVIDERS = new Set([
   'firebase_auth',
@@ -340,10 +339,10 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
         connected: backendUnlocked,
         requiresBackend: true,
         backendEnabled: backendUnlocked,
-        creditCost: BACKEND_ENABLE_CREDIT_COST,
+        creditCost: 0,
         label: backendUnlocked
           ? 'Ligado (Backend Functions)'
-          : 'Bloqueado — ativa Backend Functions no projeto',
+          : 'Bloqueado — ativa Backend Functions no projeto (grátis)',
       },
     };
   }

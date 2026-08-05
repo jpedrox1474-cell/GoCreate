@@ -5,12 +5,8 @@ import { Router } from 'express';
 import admin from '../config/firebaseAdmin.js';
 import { db } from '../config/firebaseAdmin.js';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
-import { ensureUserAdmin, debitCredit } from '../middleware/credits.js';
-import {
-  canUsePremium,
-  BACKEND_ENABLE_CREDIT_COST,
-  BACKEND_REQUIRED_MESSAGE,
-} from '../lib/owner.js';
+import { ensureUserAdmin } from '../middleware/credits.js';
+import { BACKEND_ENABLE_CREDIT_COST, BACKEND_REQUIRED_MESSAGE } from '../lib/owner.js';
 import { projectDataOp, getEntityPermissions } from '../services/entities.js';
 import {
   AUTH_ACCESS_DENIED_MESSAGE,
@@ -519,6 +515,52 @@ router.post('/:projectId/orchestrate', requireAuth, async (req, res) => {
   }
 });
 
+function publicAppOrigin() {
+  return String(process.env.PUBLIC_APP_URL || 'https://gocreate-app.web.app').replace(/\/$/, '');
+}
+
+/** Shared runtime payload for JSON + JS bootstrap (preview / published apps). */
+async function buildProjectRuntimePayload(projectId, project) {
+  const env = {};
+  try {
+    const { secretValueFromDoc } = await import('../services/secretsCrypto.js');
+    const secretSnap = await db
+      .collection('projects')
+      .doc(projectId)
+      .collection('envSecrets')
+      .get();
+    secretSnap.docs.forEach((d) => {
+      const data = d.data() || {};
+      const key = String(data.key || d.id || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]/g, '');
+      if (!isClientSafeEnvSecretKey(key)) return;
+      try {
+        const value = secretValueFromDoc(data);
+        if (key && value !== '') env[key] = value;
+      } catch {
+        /* skip bad cipher */
+      }
+    });
+  } catch (envErr) {
+    console.warn('[projects/runtime] envSecrets:', envErr?.message);
+  }
+
+  const authPayload = publicProjectAuthPayload(project);
+  return {
+    ok: true,
+    projectId,
+    backendEnabled: Boolean(project.backendEnabled),
+    apiBase: publicAppOrigin(),
+    env,
+    customDomain: project.customDomain || '',
+    customDomainVerified: Boolean(project.customDomainVerified),
+    ...publicAuthAccessPayload(project),
+    ...authPayload,
+  };
+}
+
 /**
  * GET /api/projects/:projectId/runtime — public hint for published / preview apps.
  * Returns live projects.backendEnabled (not the possibly-stale publicProjects snapshot).
@@ -530,50 +572,79 @@ router.get('/:projectId/runtime', async (req, res) => {
       return res.status(400).json({ error: 'projectId é obrigatório.' });
     }
     const { data: project } = await loadProjectOrThrow(projectId);
-
-    // Inject project env secrets into published SPA runtime (Base44-style).
-    // Values are visible in the browser — NEVER inject *_SECRET / Client Secret.
-    const env = {};
-    try {
-      const { secretValueFromDoc } = await import('../services/secretsCrypto.js');
-      const secretSnap = await db
-        .collection('projects')
-        .doc(projectId)
-        .collection('envSecrets')
-        .get();
-      secretSnap.docs.forEach((d) => {
-        const data = d.data() || {};
-        const key = String(data.key || d.id || '')
-          .trim()
-          .toUpperCase()
-          .replace(/[^A-Z0-9_]/g, '');
-        if (!isClientSafeEnvSecretKey(key)) return;
-        try {
-          const value = secretValueFromDoc(data);
-          if (key && value !== '') env[key] = value;
-        } catch {
-          /* skip bad cipher */
-        }
-      });
-    } catch (envErr) {
-      console.warn('[projects/runtime] envSecrets:', envErr?.message);
-    }
-
-    const authPayload = publicProjectAuthPayload(project);
-
-    res.json({
-      ok: true,
-      projectId,
-      backendEnabled: Boolean(project.backendEnabled),
-      env,
-      customDomain: project.customDomain || '',
-      customDomainVerified: Boolean(project.customDomainVerified),
-      ...publicAuthAccessPayload(project),
-      ...authPayload,
-    });
+    res.json(await buildProjectRuntimePayload(projectId, project));
   } catch (err) {
     console.error('[projects/runtime]', err);
     res.status(err.status || 500).json({ error: err.message || 'Falha ao ler runtime.' });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/runtime.js — live Sandpack/bootstrap script.
+ * Overrides projectId / apiBase / backendEnabled from Firestore (avoids stale props).
+ */
+router.get('/:projectId/runtime.js', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      res.status(400).type('application/javascript').send('/* missing projectId */');
+      return;
+    }
+    const { data: project } = await loadProjectOrThrow(projectId);
+    const payload = await buildProjectRuntimePayload(projectId, project);
+    const auth = payload.auth || {
+      googleEnabled: false,
+      googleMode: 'default',
+      emailPasswordEnabled: false,
+    };
+    const googleAuthEnabled =
+      Boolean(payload.backendEnabled) && Boolean(auth.googleEnabled);
+    const access = {
+      mode: payload.mode === 'invited' ? 'invited' : 'owner_only',
+      invitedEmails: Array.isArray(payload.invitedEmails) ? payload.invitedEmails : [],
+      ownerId: payload.ownerId || null,
+      ownerEmail: payload.ownerEmail || null,
+    };
+    const authFlags = {
+      googleEnabled: Boolean(auth.googleEnabled),
+      googleMode: auth.googleMode === 'custom' ? 'custom' : 'default',
+      emailPasswordEnabled: Boolean(auth.emailPasswordEnabled),
+      googleAuthEnabled,
+    };
+    const env = payload.env && typeof payload.env === 'object' ? payload.env : {};
+    const apiBase = JSON.stringify(payload.apiBase || publicAppOrigin());
+    const pid = JSON.stringify(projectId);
+    const be = JSON.stringify(Boolean(payload.backendEnabled));
+    const accessJson = JSON.stringify(access);
+    const authJson = JSON.stringify(authFlags);
+    const envJson = JSON.stringify(env);
+
+    const body = `(function(g){try{
+g.__GOCREATE_PROJECT_ID__=${pid};
+g.__GOCREATE_API_BASE__=${apiBase};
+g.__GOCREATE_BACKEND_ENABLED__=${be};
+g.__GOCREATE_AUTH_ACCESS__=${accessJson};
+g.__GOCREATE_AUTH__=${authJson};
+g.__GOCREATE_ENV__=${envJson};
+try{g.process=g.process||{};g.process.env=Object.assign({},g.process.env||{},${envJson});}catch(e){}
+if(!g.__GOCREATE_FETCH_PATCHED__){g.__GOCREATE_FETCH_PATCHED__=true;var _f=g.fetch;if(typeof _f==='function'){g.fetch=function(input,init){try{var u=typeof input==='string'?input:(input&&input.url)||'';var base=String(g.__GOCREATE_API_BASE__||'').replace(/\\/$/,'');if(base&&typeof u==='string'&&u.charAt(0)==='/'&&u.indexOf('/api/projects/')===0){var abs=base+u;if(typeof input==='string'){return _f.call(g,abs,init);}return _f.call(g,new Request(abs,input),init);}}catch(e){}return _f.call(g,input,init);};}}
+}catch(e){console.error('[gocreate runtime.js]',e);}})(typeof window!=='undefined'?window:globalThis);`;
+
+    res
+      .status(200)
+      .set({
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Cache-Control': 'no-store, max-age=0',
+        'Access-Control-Allow-Origin': '*',
+      })
+      .send(body);
+  } catch (err) {
+    console.error('[projects/runtime.js]', err);
+    const msg = JSON.stringify(err.message || 'runtime error');
+    res
+      .status(err.status || 500)
+      .type('application/javascript')
+      .send(`console.error('[gocreate runtime.js]',${msg});`);
   }
 });
 
@@ -586,14 +657,11 @@ router.get('/:projectId/backend', requireAuth, async (req, res) => {
     const snap = await assertOwner(projectId, req.user.uid);
     const data = snap.data() || {};
     const profile = await ensureUserAdmin(req.user.uid, req.user.email);
-    const freeCost =
-      canUsePremium({ plan: profile.plan, role: profile.role, email: req.user.email })
-        ? 0
-        : BACKEND_ENABLE_CREDIT_COST;
     res.json({
       ok: true,
       backendEnabled: Boolean(data.backendEnabled),
-      creditCost: freeCost,
+      // Base44 freemium: unlock is free for all plans (soft limits later).
+      creditCost: BACKEND_ENABLE_CREDIT_COST,
       credits: profile.credits,
       unlimited: profile.unlimited,
     });
@@ -605,8 +673,7 @@ router.get('/:projectId/backend', requireAuth, async (req, res) => {
 
 /**
  * POST /api/projects/:projectId/backend/enable — Ativar funções de Backend.
- * Free: gasta BACKEND_ENABLE_CREDIT_COST (precisa de créditos).
- * Pro / Owner: grátis.
+ * Free / Pro / Owner: grátis (0 créditos) — freemium estilo Base44.
  */
 router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
   try {
@@ -629,35 +696,6 @@ router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
       });
     }
 
-    const profile = await ensureUserAdmin(req.user.uid, req.user.email);
-    const premium = canUsePremium({
-      plan: profile.plan,
-      role: profile.role,
-      email: req.user.email,
-    });
-    let creditsCharged = 0;
-
-    if (!premium) {
-      if (profile.credits <= 0) {
-        return res.status(403).json({
-          error: 'Créditos insuficientes para ativar Backend Functions.',
-          message: 'Créditos insuficientes para ativar Backend Functions.',
-          code: 'INSUFFICIENT_CREDITS',
-          creditCost: BACKEND_ENABLE_CREDIT_COST,
-        });
-      }
-      if (profile.credits < BACKEND_ENABLE_CREDIT_COST) {
-        return res.status(403).json({
-          error: `Precisas de ${BACKEND_ENABLE_CREDIT_COST} créditos para ativar Backend Functions.`,
-          message: `Precisas de ${BACKEND_ENABLE_CREDIT_COST} créditos para ativar Backend Functions.`,
-          code: 'INSUFFICIENT_CREDITS',
-          creditCost: BACKEND_ENABLE_CREDIT_COST,
-        });
-      }
-      await debitCredit(req.user.uid, BACKEND_ENABLE_CREDIT_COST);
-      creditsCharged = BACKEND_ENABLE_CREDIT_COST;
-    }
-
     await snap.ref.set(
       {
         backendEnabled: true,
@@ -674,14 +712,14 @@ router.post('/:projectId/backend/enable', requireAuth, async (req, res) => {
       actorUid: req.user.uid,
       actorEmail: req.user.email,
       projectId,
-      meta: { creditsCharged },
+      meta: { creditsCharged: 0, freemium: true },
     });
 
     const after = await ensureUserAdmin(req.user.uid, req.user.email);
     res.json({
       ok: true,
       backendEnabled: true,
-      creditsCharged,
+      creditsCharged: 0,
       credits: after.credits,
     });
   } catch (err) {

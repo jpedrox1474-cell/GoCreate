@@ -18,8 +18,8 @@ export const OWNER_PLAN = 'enterprise_master';
 export const PREMIUM_REQUIRED_MESSAGE =
   'Recurso Premium. GitHub e canais sociais (WhatsApp, Instagram, Facebook, YouTube, TikTok) estão nos planos pagos. Upload de mídia e leitura pela IA estão incluídos no Free.';
 
-/** Custo Free para ativar Backend Functions (espelha backend/lib/owner.js). */
-export const BACKEND_ENABLE_CREDIT_COST = 5;
+/** Custo para ativar Backend Functions (Base44 freemium: Free = 0). */
+export const BACKEND_ENABLE_CREDIT_COST = 0;
 
 export const BACKEND_REQUIRED_MESSAGE =
   'Funções de Backend não ativadas. Ative em Configurações do projeto para guardar dados na base de dados.';
@@ -38,7 +38,7 @@ export const PLANS = [
       '50 créditos/dia',
       'Anexar imagens/vídeos (IA lê o conteúdo)',
       'Publicar com badge GoCreate',
-      'Ativar Backend Functions (créditos)',
+      'Backend Functions (Auth + base de dados)',
       'Preview Sandpack + Pix demo',
     ],
     cta: 'Plano atual',
@@ -56,7 +56,7 @@ export const PLANS = [
       '500 créditos/mês',
       'Sem badge “Feito com GoCreate”',
       'GitHub + canais sociais',
-      'Backend Functions incluídas',
+      'Backend Functions + GitHub/redes',
       'Prioridade na fila',
     ],
     cta: 'Assinar Pro via Pix',

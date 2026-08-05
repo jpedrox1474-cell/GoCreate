@@ -276,11 +276,11 @@ export default function PreviewPane({
   // Sandpack iframe OAuth → parent Google popup on authorized domain
   useEffect(() => installPreviewAuthBridge(), []);
 
-  const [fetchedEnv, setFetchedEnv] = useState(null);
+  const [liveRuntime, setLiveRuntime] = useState(null);
 
   useEffect(() => {
-    if (!projectId || (runtimeEnv && typeof runtimeEnv === 'object')) {
-      setFetchedEnv(null);
+    if (!projectId) {
+      setLiveRuntime(null);
       return undefined;
     }
     let cancelled = false;
@@ -289,17 +289,15 @@ export default function PreviewPane({
         const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/runtime`);
         if (!res.ok) return;
         const json = await res.json().catch(() => ({}));
-        if (!cancelled && json?.env && typeof json.env === 'object') {
-          setFetchedEnv(json.env);
-        }
+        if (!cancelled) setLiveRuntime(json);
       } catch {
-        /* ignore */
+        /* ignore — fall back to props */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [projectId, runtimeEnv]);
+  }, [projectId, backendEnabled]);
 
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const hasFiles = Boolean(sandpackFiles && Object.keys(sandpackFiles).length);
@@ -309,22 +307,39 @@ export default function PreviewPane({
     [sandpackFiles, files]
   );
 
+  const effectiveBackendEnabled =
+    typeof liveRuntime?.backendEnabled === 'boolean'
+      ? liveRuntime.backendEnabled
+      : Boolean(backendEnabled);
+
   const effectiveEnv = useMemo(() => {
     if (runtimeEnv && typeof runtimeEnv === 'object') return runtimeEnv;
-    return fetchedEnv && typeof fetchedEnv === 'object' ? fetchedEnv : {};
-  }, [runtimeEnv, fetchedEnv]);
+    if (liveRuntime?.env && typeof liveRuntime.env === 'object') return liveRuntime.env;
+    return {};
+  }, [runtimeEnv, liveRuntime]);
 
   const sandpackKey = useMemo(() => {
     if (!sandpackFiles) return 'empty';
     const depsKey = Object.keys(dependencies).sort().join(',');
-    const beKey = backendEnabled ? 'be1' : 'be0';
+    const beKey = effectiveBackendEnabled ? 'be1' : 'be0';
     const authKey = `${projectAuth?.googleEnabled ? 'g1' : 'g0'}:${projectAuth?.googleMode || 'd'}`;
     const envKey = Object.keys(effectiveEnv).sort().join(',');
-    return `${depsKey}::${projectId || ''}::${beKey}::${authKey}::${envKey}::${Object.entries(sandpackFiles)
+    const rtKey = liveRuntime?.backendEnabled === true ? 'live1' : 'live0';
+    return `${depsKey}::${projectId || ''}::${beKey}::${rtKey}::${authKey}::${envKey}::${Object.entries(
+      sandpackFiles
+    )
       .map(([path, entry]) => `${path}:${(entry?.code || '').length}:${(entry?.code || '').slice(0, 48)}`)
       .sort()
       .join('|')}`;
-  }, [sandpackFiles, dependencies, projectId, backendEnabled, projectAuth, effectiveEnv]);
+  }, [
+    sandpackFiles,
+    dependencies,
+    projectId,
+    effectiveBackendEnabled,
+    liveRuntime?.backendEnabled,
+    projectAuth,
+    effectiveEnv,
+  ]);
 
   const apiBase =
     typeof window !== 'undefined'
@@ -333,8 +348,13 @@ export default function PreviewPane({
 
   const paymentsBootstrap = useMemo(() => {
     const pid = JSON.stringify(projectId || '');
-    const base = JSON.stringify(apiBase);
-    const be = JSON.stringify(Boolean(backendEnabled));
+    // Prefer production host for Sandpack iframe fetches (CORS-safe rewrite via Hosting).
+    const resolvedApiBase =
+      typeof liveRuntime?.apiBase === 'string' && liveRuntime.apiBase
+        ? liveRuntime.apiBase
+        : apiBase;
+    const base = JSON.stringify(resolvedApiBase);
+    const be = JSON.stringify(Boolean(effectiveBackendEnabled));
     const firebaseConfig = {
       apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
       authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
@@ -344,31 +364,60 @@ export default function PreviewPane({
       appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
     };
     const cfg = JSON.stringify(firebaseConfig);
-    const access = JSON.stringify(
-      authAccess && typeof authAccess === 'object'
+    const liveAccess =
+      liveRuntime && typeof liveRuntime === 'object'
         ? {
-            mode: authAccess.mode === 'invited' ? 'invited' : 'owner_only',
-            invitedEmails: Array.isArray(authAccess.invitedEmails)
-              ? authAccess.invitedEmails
+            mode: liveRuntime.mode === 'invited' ? 'invited' : 'owner_only',
+            invitedEmails: Array.isArray(liveRuntime.invitedEmails)
+              ? liveRuntime.invitedEmails
               : [],
-            ownerId: authAccess.ownerId || null,
-            ownerEmail: authAccess.ownerEmail || null,
+            ownerId: liveRuntime.ownerId || null,
+            ownerEmail: liveRuntime.ownerEmail || null,
           }
-        : null
+        : null;
+    const access = JSON.stringify(
+      liveAccess ||
+        (authAccess && typeof authAccess === 'object'
+          ? {
+              mode: authAccess.mode === 'invited' ? 'invited' : 'owner_only',
+              invitedEmails: Array.isArray(authAccess.invitedEmails)
+                ? authAccess.invitedEmails
+                : [],
+              ownerId: authAccess.ownerId || null,
+              ownerEmail: authAccess.ownerEmail || null,
+            }
+          : null)
     );
-    const googleEnabled = Boolean(projectAuth?.googleEnabled);
-    const googleMode = projectAuth?.googleMode === 'custom' ? 'custom' : 'default';
-    const googleAuthEnabled = Boolean(backendEnabled) && googleEnabled;
+    const liveAuth = liveRuntime?.auth && typeof liveRuntime.auth === 'object' ? liveRuntime.auth : null;
+    const googleEnabled = Boolean(liveAuth?.googleEnabled ?? projectAuth?.googleEnabled);
+    const googleMode =
+      (liveAuth?.googleMode || projectAuth?.googleMode) === 'custom' ? 'custom' : 'default';
+    const googleAuthEnabled = Boolean(effectiveBackendEnabled) && googleEnabled;
     const authFlags = JSON.stringify({
       googleEnabled,
       googleMode,
-      emailPasswordEnabled: Boolean(projectAuth?.emailPasswordEnabled),
+      emailPasswordEnabled: Boolean(
+        liveAuth?.emailPasswordEnabled ?? projectAuth?.emailPasswordEnabled
+      ),
       googleAuthEnabled,
     });
     const envJson = JSON.stringify(effectiveEnv || {});
     return `data:text/javascript,window.__GOCREATE_PROJECT_ID__=${pid};window.__GOCREATE_API_BASE__=${base};window.__GOCREATE_BACKEND_ENABLED__=${be};window.__GOCREATE_FIREBASE_CONFIG__=${cfg};window.__GOCREATE_AUTH_ACCESS__=${access};window.__GOCREATE_AUTH__=${authFlags};window.__GOCREATE_ENV__=${envJson};try{window.process=window.process||{};window.process.env=Object.assign({},window.process.env||{},${envJson});}catch(e){}`;
-  }, [projectId, apiBase, backendEnabled, authAccess, projectAuth, effectiveEnv]);
+  }, [
+    projectId,
+    apiBase,
+    effectiveBackendEnabled,
+    authAccess,
+    projectAuth,
+    effectiveEnv,
+    liveRuntime,
+  ]);
 
+  const runtimeJsUrl = projectId
+    ? `${apiBase}/api/projects/${encodeURIComponent(projectId)}/runtime.js?be=${
+        effectiveBackendEnabled ? '1' : '0'
+      }`
+    : null;
   const shellClass = publicMode
     ? 'w-full h-full min-h-0 overflow-hidden bg-zinc-950 relative flex flex-col'
     : 'w-full h-full min-h-0 rounded-xl border border-zinc-800 overflow-hidden bg-zinc-950 relative shadow-2xl shadow-black/40 flex flex-col';
@@ -402,6 +451,7 @@ export default function PreviewPane({
                 externalResources: [
                   'https://cdn.tailwindcss.com',
                   paymentsBootstrap,
+                  ...(runtimeJsUrl ? [runtimeJsUrl] : []),
                   `${apiBase}/gocreate-payments.js`,
                   `${apiBase}/gocreate-auth.js`,
                   `${apiBase}/gocreate-data.js`,

@@ -55,7 +55,7 @@ export const INTEGRATIONS_CATALOG = [
     name: 'Login (Firebase Auth)',
     category: 'auth',
     description:
-      'Login e-mail e Google nos apps gerados (window.GoCreateAuth). Disponível após ativar Backend Functions no projeto (−créditos).',
+      'Login e-mail e Google nos apps gerados (window.GoCreateAuth). Disponível após ativar Backend Functions no projeto (grátis no Free).',
     icon: 'Shield',
     connectType: 'backend_gate',
   },
@@ -82,7 +82,7 @@ export const INTEGRATIONS_CATALOG = [
     name: 'Cloud Firestore',
     category: 'database',
     description:
-      'Base NoSQL nos apps gerados. Só disponível depois de ativar Backend Functions (−créditos no Free).',
+      'Base NoSQL nos apps gerados. Só disponível depois de ativar Backend Functions (grátis no Free).',
     icon: 'Database',
     connectType: 'backend_gate',
   },
