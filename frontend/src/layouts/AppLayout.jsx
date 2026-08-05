@@ -14,7 +14,6 @@ import {
   Trash2,
   Database,
   Shield,
-  Code2,
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import CreditsBadge from '../components/CreditsBadge';
@@ -35,7 +34,6 @@ import {
 const NAV = [
   { to: '/dashboard', label: 'Projetos', icon: LayoutDashboard },
   { to: '/entities', label: 'Entidades', icon: Database },
-  { to: '/functions', label: 'Funções', icon: Code2 },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/profile', label: 'Perfil', icon: User },
   { to: '/settings', label: 'Configurações', icon: Settings },

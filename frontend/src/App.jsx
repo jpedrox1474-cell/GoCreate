@@ -14,7 +14,6 @@ import Settings from './pages/Settings';
 import Integrations from './pages/Integrations';
 import Entities from './pages/Entities';
 import Admin from './pages/Admin';
-import BackendFunctions from './pages/BackendFunctions';
 import PublicPreview from './pages/PublicPreview';
 import { resolveCustomHost } from './lib/deployApi';
 
@@ -146,7 +145,7 @@ export default function App() {
           <Route path="/automations" element={<Navigate to="/dashboard" replace />} />
           <Route path="/entities" element={<Entities />} />
           <Route path="/database" element={<Entities />} />
-          <Route path="/functions" element={<BackendFunctions />} />
+          <Route path="/functions" element={<Navigate to="/dashboard" replace />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
 

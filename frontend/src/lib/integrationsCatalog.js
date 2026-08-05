@@ -45,17 +45,6 @@ export const INTEGRATIONS_CATALOG = [
     docsUrl: 'https://www.mercadopago.com.br/developers/docs/security/oauth',
   },
   {
-    id: 'pix',
-    name: 'Pix (via Mercado Pago)',
-    category: 'brazil',
-    description:
-      'QR e copia-e-cola via a tua conta Mercado Pago — activa ao conectar MP.',
-    help:
-      'Não é um interruptor separado: ao ligares Mercado Pago, o Pix fica disponível nos apps. Usa createPix / createCheckout. Não confundir com o checkout de planos GoCreate Pro (também Mercado Pago, mas da plataforma).',
-    icon: 'QrCode',
-    connectType: 'oauth',
-  },
-  {
     id: 'firebase_auth',
     name: 'Login (Firebase Auth)',
     category: 'auth',

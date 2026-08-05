@@ -9,7 +9,6 @@ import {
   Image,
   FolderOpen,
   MapPin,
-  QrCode,
   Plug,
   Check,
   Loader2,
@@ -53,7 +52,6 @@ const ICONS = {
   Image,
   FolderOpen,
   MapPin,
-  QrCode,
   Plug,
 };
 
@@ -204,14 +202,6 @@ export default function Integrations() {
     if (item.connectType === 'platform') {
       setToast({
         message: `${item.name} já faz parte da plataforma GoCreate.`,
-        type: 'info',
-      });
-      return;
-    }
-
-    if (item.id === 'pix') {
-      setToast({
-        message: 'Pix activa ao conectares Mercado Pago (OAuth) nesta página.',
         type: 'info',
       });
       return;
@@ -508,10 +498,10 @@ export default function Integrations() {
                 </button>
                 {isLocked ? (
                   <Link
-                    to="/functions"
+                    to="/dashboard"
                     className="mt-2 text-center text-[11px] text-zinc-500 hover:text-zinc-300 underline-offset-2 hover:underline"
                   >
-                    Ir para Funções / projeto
+                    Abre o projeto → Settings → Funções de Backend
                   </Link>
                 ) : null}
               </article>

@@ -321,7 +321,6 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
   const providers = {};
 
   for (const id of PLATFORM_PROVIDERS) {
-    if (id === 'pix') continue;
     providers[id] = {
       id,
       status: 'connected',
@@ -370,24 +369,6 @@ export async function getIntegrationsStatus(uid, { githubStatus } = {}) {
             : undefined,
         },
   };
-  // Pix segue o OAuth MP do user — sem "Ligado (plataforma)" por token de env
-  providers.pix = {
-    id: 'pix',
-    status: mpUserConnected ? 'connected' : 'available',
-    source: mpUserConnected ? 'oauth' : 'none',
-    meta: {
-      connected: mpUserConnected,
-      viaMercadoPago: true,
-      label: mpUserConnected
-        ? mpUser?.mpUserId
-          ? `Via MP OAuth (ID ${mpUser.mpUserId})`
-          : 'Via Mercado Pago OAuth'
-        : 'Conecta Mercado Pago para activar Pix',
-      platformPowered: false,
-      requiresMercadoPagoOAuth: true,
-    },
-  };
-
   for (const id of CONNECTABLE_PROVIDERS) {
     const meta = integrationsMeta[id];
     const connected = Boolean(meta?.connected);
