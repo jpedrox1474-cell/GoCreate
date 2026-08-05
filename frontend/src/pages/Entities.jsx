@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import Toast from '../components/Toast';
 import EntityBrowser from '../components/editor/EntityBrowser';
+import ModalShell from '../components/editor/ModalShell';
 import { useAuth } from '../context/AuthContext';
 import { listUserProjects, getPublishedProject } from '../lib/projects';
 import {
@@ -36,6 +37,8 @@ export default function Entities() {
   const [rowsLoading, setRowsLoading] = useState(false);
   const [busy, setBusy] = useState(null);
   const [toast, setToast] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState('NovaEntidade');
 
   const selected = useMemo(
     () => entities.find((e) => e.id === selectedId) || null,
@@ -163,12 +166,19 @@ export default function Entities() {
 
   async function handleCreateEmpty() {
     if (!projectId || busy) return;
-    const name = window.prompt('Nome da entidade', 'NovaEntidade');
-    if (!name?.trim()) return;
+    setCreateName('NovaEntidade');
+    setCreateOpen(true);
+  }
+
+  async function confirmCreateEntity() {
+    if (!projectId || busy) return;
+    const name = createName?.trim();
+    if (!name) return;
+    setCreateOpen(false);
     setBusy('create');
     try {
       const id = await upsertEntity(projectId, {
-        name: name.trim(),
+        name,
         columns: [
           { name: 'name', type: 'string' },
           { name: 'createdAt', type: 'date' },
@@ -345,6 +355,44 @@ export default function Entities() {
           </ul>
         </div>
       )}
+
+      <ModalShell
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Nova entidade"
+      >
+        <label className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">
+          Nome da entidade
+        </label>
+        <input
+          type="text"
+          autoFocus
+          value={createName}
+          onChange={(e) => setCreateName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && createName?.trim()) confirmCreateEntity();
+          }}
+          placeholder="NovaEntidade"
+          className="w-full bg-zinc-950 border border-zinc-800 focus:border-blue-500/50 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-all mb-4"
+        />
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setCreateOpen(false)}
+            className="px-3.5 py-2 rounded-lg text-sm font-medium border border-zinc-700 text-zinc-300 hover:bg-zinc-800/80 transition-all"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={!createName?.trim() || !!busy}
+            onClick={confirmCreateEntity}
+            className="px-3.5 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-all disabled:opacity-50"
+          >
+            OK
+          </button>
+        </div>
+      </ModalShell>
 
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
     </div>

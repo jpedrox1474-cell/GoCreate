@@ -18,12 +18,13 @@
 
 import OpenAI from 'openai';
 
-// Defaults free-tier / documentados — overrides via options ou env
+// Defaults — overrides via options ou env (OPENROUTER_MODEL, GROQ_MODEL, …)
 const DEFAULT_MODELS = {
   // Groq free: llama-3.3-70b-versatile (docs Groq)
   groq: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-  // OpenRouter free router (escolhe um modelo :free disponível)
-  openrouter: process.env.OPENROUTER_MODEL || 'openrouter/free',
+  // OpenRouter: gpt-4o-mini é estável com chave paga; alternativas:
+  //   openrouter/free | openrouter/auto | openai/gpt-4o
+  openrouter: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
   // GitHub Models catalog: openai/gpt-4o-mini (ou openai/gpt-4o)
   github: process.env.GITHUB_MODELS_MODEL || 'openai/gpt-4o-mini',
 };
@@ -42,13 +43,11 @@ const PROVIDERS = [
     baseURL: 'https://openrouter.ai/api/v1',
     getKey: () => String(process.env.OPENROUTER_API_KEY || '').trim(),
     getModel: (opts) => opts?.models?.openrouter || DEFAULT_MODELS.openrouter,
+    // OpenRouter ranking headers (docs: HTTP-Referer + X-Title)
     defaultHeaders: () => ({
-      ...(process.env.OPENROUTER_HTTP_REFERER
-        ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER }
-        : {}),
-      ...(process.env.OPENROUTER_APP_TITLE
-        ? { 'X-OpenRouter-Title': process.env.OPENROUTER_APP_TITLE }
-        : { 'X-OpenRouter-Title': 'GoCreate' }),
+      'HTTP-Referer':
+        process.env.OPENROUTER_HTTP_REFERER || 'https://gocreate-app.web.app',
+      'X-Title': process.env.OPENROUTER_APP_TITLE || 'GoCreate',
     }),
   },
   {
