@@ -97,12 +97,12 @@ async function tryOpenAiFallbackChat({
       preferredProvider ? ` preferido=${preferredProvider}` : ''
     }…`
   );
+  // Truncamento por provider fica em aiFallbackService (TPM Groq ≈ 12k).
   const result = await completeTextWithFallback(
     buildFallbackUserPrompt(systemPrompt, messages, attachmentUrl),
     {
-      systemPrompt: String(systemPrompt || '').slice(0, 120000) || undefined,
+      systemPrompt: String(systemPrompt || '').trim() || undefined,
       temperature: 0.5,
-      maxTokens: 8192,
       preferredProvider: preferredProvider || undefined,
       strictProvider: Boolean(strictProvider),
     }
