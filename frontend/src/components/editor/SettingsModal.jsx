@@ -317,6 +317,8 @@ async function handleSave(e) {
       const prevDomain = String(project?.customDomain || '')
         .trim()
         .toLowerCase() || null;
+      // Declarado no escopo de handleSave (evita ReferenceError fora do bloco if)
+      const domainChanged = trimmedDomain !== prevDomain;
       const trimmedSlug = slug
         .trim()
         .toLowerCase()
@@ -359,7 +361,6 @@ async function handleSave(e) {
       if (projectId && trimmedName) {
         const nameChanged = trimmedName !== (project?.name || '');
         const descChanged = trimmedDesc !== (project?.description || '');
-        const domainChanged = trimmedDomain !== prevDomain;
         const prevAccess = project?.authAccess || { mode: 'owner_only', invitedEmails: [] };
         const authChanged =
           prevAccess.mode !== nextAuthAccess.mode ||
