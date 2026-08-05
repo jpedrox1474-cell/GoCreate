@@ -1,5 +1,14 @@
 import React from 'react';
-import { Monitor, Code, Layout, Smartphone, Database, ExternalLink, LayoutDashboard } from 'lucide-react';
+import {
+  Monitor,
+  Code,
+  Layout,
+  Smartphone,
+  Database,
+  ExternalLink,
+  LayoutDashboard,
+  MousePointer2,
+} from 'lucide-react';
 import PreviewPane from './PreviewPane';
 import CodeEditor from './CodeEditor';
 import EntitiesPanel from './EntitiesPanel';
@@ -41,6 +50,8 @@ export default function WorkspacePanel({
     window.open(`/p/${projectId}/preview`, '_blank', 'noopener,noreferrer');
   }
 
+  const editing = activeTab === 'edit' || activeTab === 'code';
+
   return (
     <section className="flex-1 flex flex-col bg-zinc-950 min-w-0 min-h-0 h-full overflow-hidden">
       <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-zinc-800 gap-2 shrink-0">
@@ -68,6 +79,19 @@ export default function WorkspacePanel({
           >
             <LayoutDashboard size={14} />
             Painel
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('edit')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+              activeTab === 'edit'
+                ? 'bg-zinc-800 text-white shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+            title="Editar código do projeto"
+          >
+            <MousePointer2 size={14} />
+            Editar
           </button>
           <button
             type="button"
@@ -163,7 +187,7 @@ export default function WorkspacePanel({
               projectAuth={projectAuth}
               onOpenSettings={onOpenSettings}
               onOpenDeploy={onOpenDeploy}
-              onOpenCode={() => setActiveTab('code')}
+              onOpenCode={() => setActiveTab('edit')}
               onToast={onToast}
               onProjectMetaPatch={onProjectMetaPatch}
             />
@@ -176,7 +200,7 @@ export default function WorkspacePanel({
               backendEnabled={backendEnabled}
             />
           </div>
-        ) : (
+        ) : editing ? (
           <div className="w-full h-full min-h-0 overflow-hidden">
             <CodeEditor
               files={files}
@@ -191,7 +215,7 @@ export default function WorkspacePanel({
               diffBaselines={diffBaselines}
             />
           </div>
-        )}
+        ) : null}
       </div>
     </section>
   );

@@ -112,7 +112,7 @@ export default function ProjectDashboardPanel({
 }) {
   void projectAuth;
   const { user } = useAuth();
-  const { openPricing, plan, role } = useCredits();
+  const { openCheckout, plan, role } = useCredits();
   const [section, setSection] = useState('overview');
   const [search, setSearch] = useState('');
   const [copied, setCopied] = useState(false);
@@ -162,7 +162,7 @@ export default function ProjectDashboardPanel({
   async function toggleBadge() {
     if (!projectId) return;
     if (!hideBadge && !premiumOk) {
-      openPricing('Ocultar o selo GoCreate está nos planos pagos.');
+      window.location.href = '/plans';
       return;
     }
     setHideBadgeBusy(true);
@@ -199,7 +199,9 @@ export default function ProjectDashboardPanel({
         <PremiumGate
           title={`${item.label} é Premium`}
           description="Disponível nos planos Pro e superiores. Compara os planos e faz upgrade."
-          onPlans={() => openPricing()}
+          onPlans={() => {
+            window.location.href = '/plans';
+          }}
         />
       );
     }
@@ -244,7 +246,7 @@ export default function ProjectDashboardPanel({
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => openPricing()}
+                    onClick={() => openCheckout('turbo')}
                     className="px-3 py-1.5 text-xs font-medium rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900"
                   >
                     Ganhar créditos
@@ -372,13 +374,12 @@ export default function ProjectDashboardPanel({
                   Configurar domínio
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => openPricing('Domínios personalizados estão nos planos pagos.')}
-                  className="px-3 py-2 text-xs font-semibold rounded-lg bg-zinc-100 hover:bg-white text-zinc-950"
+                <Link
+                  to="/plans"
+                  className="px-3 py-2 text-xs font-semibold rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 inline-flex"
                 >
                   Ver planos
-                </button>
+                </Link>
               )}
             </div>
           </div>
@@ -426,7 +427,9 @@ export default function ProjectDashboardPanel({
             title="Agentes"
             description="Cria agentes que trabalham no teu app (automações com IA). Em breve — por agora usa o Assistente Auto no chat."
             actionLabel="Ver planos"
-            onAction={() => openPricing()}
+            onAction={() => {
+              window.location.href = '/plans';
+            }}
           />
         );
 
@@ -466,7 +469,9 @@ export default function ProjectDashboardPanel({
             title="MCP — acesso para assistentes de IA"
             description="Deixa assistentes de IA usarem o teu app via Model Context Protocol. Disponível em planos pagos."
             actionLabel="Ver planos"
-            onAction={() => openPricing('MCP está nos planos pagos.')}
+            onAction={() => {
+              window.location.href = '/plans';
+            }}
           />
         );
 
@@ -477,7 +482,9 @@ export default function ProjectDashboardPanel({
             title={item?.label || 'Secção'}
             description="Esta área estará disponível em breve no GoCreate."
             actionLabel="Ver planos"
-            onAction={() => openPricing()}
+            onAction={() => {
+              window.location.href = '/plans';
+            }}
           />
         );
     }

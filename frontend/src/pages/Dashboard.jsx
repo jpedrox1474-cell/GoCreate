@@ -11,6 +11,7 @@ import {
   CheckSquare,
   Trash2,
   X,
+  MousePointer2,
 } from 'lucide-react';
 import { MOCK_PROJECTS } from '../lib/mockData';
 import {
@@ -51,7 +52,7 @@ function saveHiddenDemos(set) {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { credits, plan, creditsUsedThisMonth, allowance, openPricing, lowCredits, unlimited } = useCredits();
+  const { credits, plan, creditsUsedThisMonth, allowance, lowCredits, unlimited } = useCredits();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
@@ -345,7 +346,22 @@ export default function Dashboard() {
         </Link>
 
         {!selectMode && (
-          <div className="absolute top-8 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
+          <div className="absolute top-8 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20 flex items-center gap-1">
+            {!isDemo && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate(`/editor/${project.id}`);
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md bg-black/50 text-white/95 hover:bg-black/70 transition-all text-[10px] font-semibold border border-white/10"
+                title="Editar projeto"
+              >
+                <MousePointer2 size={12} />
+                Editar
+              </button>
+            )}
             {isDemo ? (
               <button
                 type="button"
@@ -463,14 +479,13 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={openPricing}
+          <Link
+            to="/plans"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-all"
           >
             <Zap size={12} />
             Ver planos
-          </button>
+          </Link>
         </div>
         <div className="space-y-2">
           {unlimited ? (

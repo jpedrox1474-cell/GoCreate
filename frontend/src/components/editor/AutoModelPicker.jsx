@@ -231,7 +231,7 @@ export default function AutoModelPicker({
             type="button"
             onClick={() => {
               setOpen(false);
-              openPricing?.();
+              window.location.href = '/plans';
             }}
             className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold py-2.5 transition-colors"
           >

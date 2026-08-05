@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Crown, Sparkles, Zap, ArrowLeft } from 'lucide-react';
+import { Check, Crown, Sparkles, Zap, ArrowLeft, Loader2 } from 'lucide-react';
 import { PLANS } from '../lib/plans';
 import { useAuth } from '../context/AuthContext';
 import { useCredits } from '../context/CreditsContext';
@@ -10,10 +10,23 @@ import UserMenu from '../components/UserMenu';
 
 /**
  * Página pública /plans — comparação de planos (pedido do vídeo Base44).
+ * CTAs pagos abrem o Payment Brick Mercado Pago direto (sem modal de planos).
  */
 export default function Plans() {
   const { user } = useAuth();
-  const { plan, openPricing } = useCredits();
+  const { plan, openCheckout } = useCredits();
+  const [busyId, setBusyId] = useState(null);
+
+  function handlePaidCta(productId) {
+    if (!user) {
+      window.location.href = '/login';
+      return;
+    }
+    setBusyId(productId);
+    openCheckout(productId);
+    // Modal cuida do loading; limpa o busy local no próximo tick.
+    setTimeout(() => setBusyId(null), 800);
+  }
 
   return (
     <div className="relative min-h-screen text-zinc-300">
@@ -46,49 +59,62 @@ export default function Plans() {
               Escolhe o plano certo
             </h1>
             <p className="mt-3 text-sm sm:text-base text-zinc-400 max-w-xl mx-auto">
-              Comparação clara: créditos, badge, GitHub, domínios e recursos premium — como no Base44, no layout GoCreate.
+              Créditos, badge, GitHub, domínio, colaboradores e recursos premium — comparação clara no estilo Base44.
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-5 md:grid-cols-3 md:items-stretch">
             {PLANS.map((p) => {
               const current = (plan || 'free') === p.id || (p.id === 'pro' && plan === 'enterprise_master');
+              const isPaid = p.amount > 0;
+              const disabled = (current && p.id !== 'turbo') || busyId === p.id;
+
               return (
                 <div
                   key={p.id}
-                  className={`rounded-2xl border p-5 flex flex-col ${
+                  className={`relative rounded-2xl border p-5 sm:p-6 flex flex-col h-full min-h-[420px] ${
                     p.highlight
                       ? 'border-blue-500/50 bg-zinc-900/90 shadow-lg shadow-blue-950/30'
                       : 'border-zinc-800 bg-zinc-950/80'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
+                  {p.highlight && (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wide px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-900/40">
+                      Popular
+                    </span>
+                  )}
+
+                  <div className="flex items-center justify-between mb-1 min-h-[28px]">
                     <h2 className="text-lg font-semibold text-zinc-100">{p.name}</h2>
-                    {p.highlight && <Crown size={16} className="text-amber-400" />}
+                    {p.highlight && <Crown size={16} className="text-amber-400 shrink-0" />}
                   </div>
-                  <p className="text-2xl font-bold text-zinc-50">
+
+                  <p className="text-2xl font-bold text-zinc-50 leading-tight">
                     {p.priceLabel}
                     <span className="text-sm font-normal text-zinc-500">{p.period}</span>
                   </p>
-                  <ul className="mt-4 space-y-2 flex-1">
+                  <p className="text-xs text-zinc-500 mt-1.5 min-h-[16px]">
+                    {p.credits} créditos
+                    {p.type === 'subscription' ? (p.id === 'free' ? '/dia' : '/mês') : ' únicos'}
+                  </p>
+
+                  <ul className="mt-5 space-y-2.5 flex-1">
                     {p.features.map((f) => (
-                      <li key={f} className="flex items-start gap-2 text-sm text-zinc-400">
+                      <li key={f} className="flex items-start gap-2 text-sm text-zinc-400 leading-snug">
                         <Check size={14} className="text-blue-400 mt-0.5 shrink-0" />
-                        {f}
+                        <span>{f}</span>
                       </li>
                     ))}
                   </ul>
+
                   <button
                     type="button"
-                    disabled={current && p.id !== 'turbo'}
+                    disabled={disabled}
                     onClick={() => {
-                      if (!user) {
-                        window.location.href = '/login';
-                        return;
-                      }
-                      openPricing();
+                      if (!isPaid) return;
+                      handlePaidCta(p.id);
                     }}
-                    className={`mt-5 w-full py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                    className={`mt-6 w-full py-2.5 rounded-lg text-sm font-semibold transition-colors inline-flex items-center justify-center gap-2 ${
                       current && p.id !== 'turbo'
                         ? 'bg-zinc-800 text-zinc-500 cursor-default'
                         : p.highlight
@@ -96,7 +122,16 @@ export default function Plans() {
                           : 'bg-zinc-100 hover:bg-white text-zinc-950'
                     }`}
                   >
-                    {current && p.id !== 'turbo' ? 'Plano atual' : p.cta}
+                    {busyId === p.id ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        A abrir Mercado Pago…
+                      </>
+                    ) : current && p.id !== 'turbo' ? (
+                      'Plano atual'
+                    ) : (
+                      p.cta
+                    )}
                   </button>
                 </div>
               );

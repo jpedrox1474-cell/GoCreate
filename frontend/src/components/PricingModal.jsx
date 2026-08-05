@@ -19,8 +19,15 @@ import Toast from './Toast';
  * PricingModal — Free / Pro / Turbo.
  * Assinar Pro e Turbo → Payment Brick Mercado Pago in-app
  * (Pix, cartão, boleto, Conta MP — a pessoa escolhe no Brick).
+ * Com `initialProductId`, salta a lista de planos e vai direto ao Brick.
  */
-export default function PricingModal({ open, onClose, currentPlan = 'free', message = null }) {
+export default function PricingModal({
+  open,
+  onClose,
+  currentPlan = 'free',
+  message = null,
+  initialProductId = null,
+}) {
   const { user } = useAuth();
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -31,6 +38,9 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
   /** Default true — billing ON; só desliga se /config disser explicitamente. */
   const [mpBillingOn, setMpBillingOn] = useState(true);
   const pollRef = useRef(null);
+  const autoStartRef = useRef(null);
+
+  const directCheckout = initialProductId === 'pro' || initialProductId === 'turbo';
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -47,6 +57,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       setPayStatus('pending');
       setBusyId(null);
       setIdToken(null);
+      autoStartRef.current = null;
       return;
     }
     let cancelled = false;
@@ -101,88 +112,114 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     [user, stopPolling]
   );
 
+  const handleSelect = useCallback(
+    async (plan) => {
+      if (plan.id === 'free' || plan.amount === 0) {
+        setToast({ message: 'Já estás no plano Free.', type: 'info' });
+        return;
+      }
+      if (!user?.uid) {
+        setToast({ message: 'Inicia sessão para continuar.', type: 'error' });
+        return;
+      }
+
+      setBusyId(plan.id);
+      try {
+        const token = await user.getIdToken();
+        const result = await createPayment({ productId: plan.id, idToken: token });
+
+        if (result.mode === 'brick' && result.preferenceId && result.publicKey) {
+          setCheckout({
+            transactionId: result.transactionId,
+            preferenceId: result.preferenceId,
+            publicKey: result.publicKey,
+            amount: result.amount,
+            credits: result.credits,
+            plan: result.plan,
+            title: result.title,
+          });
+          setIdToken(token);
+          setPayStatus('pending');
+          setView('checkout');
+          startStatusPolling(result.transactionId);
+          return;
+        }
+
+        if (result.mode === 'brick' && !result.publicKey) {
+          setToast({
+            message:
+              'Chave pública Mercado Pago em falta. Configure MERCADOPAGO_PUBLIC_KEY no servidor.',
+            type: 'error',
+          });
+          return;
+        }
+
+        if (result.mode === 'checkout' || result.checkoutUrl) {
+          setToast({
+            message: 'Checkout transparente indisponível. Verifica MERCADOPAGO_PUBLIC_KEY.',
+            type: 'error',
+          });
+          return;
+        }
+
+        setToast({ message: 'Resposta de pagamento inesperada.', type: 'error' });
+      } catch (err) {
+        console.error('[PricingModal]', err);
+        if (err?.code === 'MP_PUBLIC_KEY_MISSING') {
+          setToast({
+            message:
+              'Checkout Mercado Pago precisa de MERCADOPAGO_PUBLIC_KEY no servidor (não há QR fake).',
+            type: 'error',
+          });
+        } else if (
+          err?.code === 'MP_NOT_CONFIGURED' ||
+          err?.code === 'MP_BILLING_DISABLED' ||
+          err?.status === 503
+        ) {
+          setToast({
+            message: err?.message || 'Mercado Pago ainda não configurado no servidor.',
+            type: 'error',
+          });
+        } else {
+          setToast({
+            message: err?.message || 'Falha ao iniciar pagamento Mercado Pago.',
+            type: 'error',
+          });
+        }
+        // Em checkout direto, mantém o modal aberto com o erro (sem listar planos outra vez).
+        if (directCheckout) {
+          setView('checkout');
+        }
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [user, startStatusPolling, directCheckout]
+  );
+
+  // Auto-abre o Brick quando openPricing/openCheckout passa productId.
+  useEffect(() => {
+    if (!open || !directCheckout) return;
+    if (autoStartRef.current === initialProductId) return;
+    const plan = PLANS.find((p) => p.id === initialProductId);
+    if (!plan || plan.amount <= 0) return;
+    autoStartRef.current = initialProductId;
+    setView('checkout');
+    handleSelect(plan);
+  }, [open, directCheckout, initialProductId, handleSelect]);
+
   if (!open) return null;
 
   function resetToPlans() {
+    if (directCheckout) {
+      onClose?.();
+      return;
+    }
     stopPolling();
     setView('plans');
     setCheckout(null);
     setPayStatus('pending');
     setIdToken(null);
-  }
-
-  async function handleSelect(plan) {
-    if (plan.id === 'free' || plan.amount === 0) {
-      setToast({ message: 'Já estás no plano Free.', type: 'info' });
-      return;
-    }
-    if (!user?.uid) {
-      setToast({ message: 'Inicia sessão para continuar.', type: 'error' });
-      return;
-    }
-
-    setBusyId(plan.id);
-    try {
-      const token = await user.getIdToken();
-      const result = await createPayment({ productId: plan.id, idToken: token });
-
-      if (result.mode === 'brick' && result.preferenceId && result.publicKey) {
-        setCheckout({
-          transactionId: result.transactionId,
-          preferenceId: result.preferenceId,
-          publicKey: result.publicKey,
-          amount: result.amount,
-          credits: result.credits,
-          plan: result.plan,
-          title: result.title,
-        });
-        setIdToken(token);
-        setPayStatus('pending');
-        setView('checkout');
-        startStatusPolling(result.transactionId);
-        return;
-      }
-
-      if (result.mode === 'brick' && !result.publicKey) {
-        setToast({
-          message:
-            'Chave pública Mercado Pago em falta. Configure MERCADOPAGO_PUBLIC_KEY no servidor.',
-          type: 'error',
-        });
-        return;
-      }
-
-      if (result.mode === 'checkout' || result.checkoutUrl) {
-        setToast({
-          message: 'Checkout transparente indisponível. Verifica MERCADOPAGO_PUBLIC_KEY.',
-          type: 'error',
-        });
-        return;
-      }
-
-      setToast({ message: 'Resposta de pagamento inesperada.', type: 'error' });
-    } catch (err) {
-      console.error('[PricingModal]', err);
-      if (err?.code === 'MP_PUBLIC_KEY_MISSING') {
-        setToast({
-          message:
-            'Checkout Mercado Pago precisa de MERCADOPAGO_PUBLIC_KEY no servidor (não há QR fake).',
-          type: 'error',
-        });
-      } else if (err?.code === 'MP_NOT_CONFIGURED' || err?.code === 'MP_BILLING_DISABLED' || err?.status === 503) {
-        setToast({
-          message: err?.message || 'Mercado Pago ainda não configurado no servidor.',
-          type: 'error',
-        });
-      } else {
-        setToast({
-          message: err?.message || 'Falha ao iniciar pagamento Mercado Pago.',
-          type: 'error',
-        });
-      }
-    } finally {
-      setBusyId(null);
-    }
   }
 
   function handleBrickResult(result) {
@@ -217,15 +254,20 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
       ? `R$ ${Number(checkout.amount).toFixed(2).replace('.', ',')}`
       : '';
 
+  const showPlans = view === 'plans' && !directCheckout;
+  const showCheckoutLoading = (view === 'checkout' || directCheckout) && !checkout && view !== 'success';
+  const showCheckout = view === 'checkout' && checkout;
+  const checkoutShell = showCheckout || showCheckoutLoading;
+
   const headerTitle =
-    view === 'checkout'
+    showCheckout || showCheckoutLoading
       ? 'Pagar com Mercado Pago'
       : view === 'success'
         ? 'Pagamento confirmado'
         : 'Escolhe o teu ritmo';
 
   const headerSub =
-    view === 'checkout'
+    showCheckout || showCheckoutLoading
       ? 'Escolhe Pix, cartão, boleto ou Conta Mercado Pago. Ativamos o plano assim que for aprovado.'
       : view === 'success'
         ? 'Créditos e plano atualizados na tua conta.'
@@ -238,14 +280,14 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/75 backdrop-blur-md"
-        onClick={view === 'checkout' ? undefined : onClose}
+        onClick={checkoutShell ? undefined : onClose}
         aria-hidden
       />
       <div
         role="dialog"
         aria-modal="true"
         className={`relative w-full gc-themed bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden ${
-          view === 'checkout'
+          checkoutShell
             ? 'max-w-lg max-h-[92vh] flex flex-col'
             : view === 'success'
               ? 'max-w-md'
@@ -257,13 +299,13 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
         <div className="relative flex items-start justify-between gap-4 px-5 sm:px-7 py-5 border-b border-zinc-800 shrink-0">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">
-              {view === 'checkout' ? 'Checkout' : 'Planos'}
+              {checkoutShell || view === 'success' ? 'Checkout' : 'Planos'}
             </p>
             <h2 className="text-xl sm:text-2xl font-bold text-zinc-50 tracking-tight">
               {headerTitle}
             </h2>
             <p className="text-sm text-zinc-400 mt-1.5 max-w-lg">{headerSub}</p>
-            {view === 'plans' && message ? (
+            {showPlans && message ? (
               <p className="mt-2 text-xs text-amber-300/90 bg-amber-950/40 border border-amber-700/30 rounded-lg px-3 py-2 max-w-lg">
                 {message}
               </p>
@@ -279,9 +321,9 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
           </button>
         </div>
 
-        {view === 'plans' && (
+        {showPlans && (
           <div className="relative p-5 sm:p-7">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 md:items-stretch">
               {PLANS.map((plan) => {
                 const isCurrent = plan.id === currentPlan && plan.type === 'subscription';
                 const Icon = plan.id === 'pro' ? Rocket : plan.id === 'turbo' ? Sparkles : Zap;
@@ -290,9 +332,9 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                 return (
                   <div
                     key={plan.id}
-                    className={`relative flex flex-col rounded-2xl border p-5 sm:p-6 transition-all ${
+                    className={`relative flex flex-col h-full rounded-2xl border p-5 sm:p-6 transition-all ${
                       isPro
-                        ? 'border-blue-500/60 bg-gradient-to-b from-blue-600/15 via-zinc-900/90 to-zinc-950 shadow-[0_0_40px_rgba(37,99,235,0.22)] md:scale-[1.02] md:-my-1'
+                        ? 'border-blue-500/60 bg-gradient-to-b from-blue-600/15 via-zinc-900/90 to-zinc-950 shadow-[0_0_40px_rgba(37,99,235,0.22)]'
                         : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900/80'
                     }`}
                   >
@@ -308,9 +350,9 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                       </>
                     )}
 
-                    <div className="relative flex items-center gap-2.5 mb-4">
+                    <div className="relative flex items-center gap-2.5 mb-4 min-h-[36px]">
                       <div
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${
                           isPro
                             ? 'bg-blue-600/20 text-blue-400 border-blue-500/30'
                             : 'bg-zinc-800 text-zinc-400 border-zinc-700/80'
@@ -330,18 +372,22 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
                       </div>
                       <p className="text-xs text-zinc-500 mt-1.5">
                         {plan.credits} créditos
-                        {plan.type === 'subscription' ? '/mês' : ' únicos'}
+                        {plan.type === 'subscription'
+                          ? plan.id === 'free'
+                            ? '/dia'
+                            : '/mês'
+                          : ' únicos'}
                       </p>
                     </div>
 
                     <ul className="relative space-y-2.5 mb-6 flex-1">
                       {plan.features.map((f) => (
-                        <li key={f} className="flex items-start gap-2.5 text-sm text-zinc-300">
+                        <li key={f} className="flex items-start gap-2.5 text-sm text-zinc-300 leading-snug">
                           <Check
                             size={14}
                             className={`mt-0.5 shrink-0 ${isPro ? 'text-blue-400' : 'text-zinc-500'}`}
                           />
-                          {f}
+                          <span>{f}</span>
                         </li>
                       ))}
                     </ul>
@@ -381,14 +427,36 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
           </div>
         )}
 
-        {view === 'checkout' && checkout && (
+        {showCheckoutLoading && (
+          <div className="relative p-5 sm:p-7 flex flex-col items-center justify-center gap-3 py-16">
+            <Loader2 size={22} className="animate-spin text-blue-400" />
+            <p className="text-sm text-zinc-400">
+              {busyId ? 'A abrir checkout Mercado Pago…' : 'A preparar pagamento…'}
+            </p>
+            {directCheckout && !busyId && (
+              <button
+                type="button"
+                onClick={() => {
+                  autoStartRef.current = null;
+                  const plan = PLANS.find((p) => p.id === initialProductId);
+                  if (plan) handleSelect(plan);
+                }}
+                className="mt-2 text-xs font-medium text-blue-400 hover:text-blue-300"
+              >
+                Tentar novamente
+              </button>
+            )}
+          </div>
+        )}
+
+        {showCheckout && (
           <div className="relative p-5 sm:p-7 flex flex-col gap-4 overflow-y-auto min-h-0 flex-1">
             <button
               type="button"
               onClick={resetToPlans}
               className="self-start inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-all"
             >
-              <ArrowLeft size={13} /> Voltar aos planos
+              <ArrowLeft size={13} /> {directCheckout ? 'Voltar' : 'Voltar aos planos'}
             </button>
 
             <div className="w-full flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
@@ -454,7 +522,7 @@ export default function PricingModal({ open, onClose, currentPlan = 'free', mess
           </div>
         )}
 
-        {view === 'plans' && (
+        {showPlans && (
           <p className="relative px-6 pb-5 text-[11px] text-zinc-500 text-center">
             Pagamento via Mercado Pago · Pix, cartão ou boleto · sem sair do GoCreate
           </p>

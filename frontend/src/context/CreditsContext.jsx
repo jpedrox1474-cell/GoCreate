@@ -35,6 +35,8 @@ export function CreditsProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [pricingMessage, setPricingMessage] = useState(null);
+  /** Quando definido ('pro'|'turbo'), o modal abre direto no Payment Brick. */
+  const [pricingProductId, setPricingProductId] = useState(null);
   const [billingToast, setBillingToast] = useState(null);
 
   useEffect(() => {
@@ -185,12 +187,29 @@ export function CreditsProvider({ children }) {
     setPricingMessage(
       typeof message === 'string' && message.trim() ? message.trim() : null
     );
+    setPricingProductId(null);
+    setPricingOpen(true);
+  }, []);
+
+  /**
+   * Abre o Payment Brick Mercado Pago direto para Pro ou Turbo
+   * (sem listar planos outra vez — usado em /plans).
+   * @param {'pro'|'turbo'} productId
+   * @param {string} [message]
+   */
+  const openCheckout = useCallback((productId, message) => {
+    if (productId !== 'pro' && productId !== 'turbo') return;
+    setPricingMessage(
+      typeof message === 'string' && message.trim() ? message.trim() : null
+    );
+    setPricingProductId(productId);
     setPricingOpen(true);
   }, []);
 
   const closePricing = useCallback(() => {
     setPricingOpen(false);
     setPricingMessage(null);
+    setPricingProductId(null);
   }, []);
 
   const openPremiumPaywall = useCallback(() => {
@@ -231,6 +250,7 @@ export function CreditsProvider({ children }) {
       lowCredits: unlimited ? false : (credits ?? 0) < 10,
       pricingOpen,
       openPricing,
+      openCheckout,
       openPremiumPaywall,
       closePricing,
     }),
@@ -245,6 +265,7 @@ export function CreditsProvider({ children }) {
       loading,
       pricingOpen,
       openPricing,
+      openCheckout,
       openPremiumPaywall,
       closePricing,
     ]
@@ -258,6 +279,7 @@ export function CreditsProvider({ children }) {
         onClose={closePricing}
         currentPlan={plan === 'enterprise_master' ? 'pro' : plan}
         message={pricingMessage}
+        initialProductId={pricingProductId}
       />
       {billingToast && (
         <Toast
