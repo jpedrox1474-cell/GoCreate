@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SandpackProvider,
   SandpackPreview,
@@ -7,13 +7,25 @@ import {
   useLoadingOverlayState,
   useErrorMessage,
 } from '@codesandbox/sandpack-react';
-import { AlertTriangle, Wand2, Loader2, LayoutTemplate, Terminal } from 'lucide-react';
+import {
+  AlertTriangle,
+  Wand2,
+  Loader2,
+  LayoutTemplate,
+  Terminal,
+  MousePointer2,
+  X,
+} from 'lucide-react';
 import {
   toSandpackFiles,
   resolveSandpackDependencies,
 } from '../../lib/artifactParser';
 import { installPreviewAuthBridge } from '../../lib/previewAuthBridge';
 import SandpackErrorBoundary from './SandpackErrorBoundary';
+
+const VISUAL_EDIT_SET = 'gocreate-visual-edit-set';
+const VISUAL_EDIT_SELECT = 'gocreate-visual-edit-select';
+const VISUAL_EDIT_READY = 'gocreate-visual-edit-ready';
 
 function CompilingOverlay({ externalLoading, publicMode }) {
   const state = useLoadingOverlayState(undefined, Boolean(externalLoading));
@@ -134,8 +146,78 @@ function IncompleteBanner({ visible, onContinue }) {
   );
 }
 
-function PreviewInner({ isGenerating, onAskFix, publicMode, generationIncomplete, onContinue }) {
+function PreviewInner({
+  isGenerating,
+  onAskFix,
+  publicMode,
+  generationIncomplete,
+  onContinue,
+  visualEditMode = false,
+  onToggleVisualEdit = null,
+  onElementSelect = null,
+  selectedElement = null,
+}) {
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const previewRef = useRef(null);
+
+  function postVisualEditEnabled(enabled) {
+    try {
+      const client = previewRef.current?.getClient?.();
+      const iframe = client?.iframe || null;
+      iframe?.contentWindow?.postMessage(
+        { type: VISUAL_EDIT_SET, enabled: Boolean(enabled) },
+        '*'
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  useEffect(() => {
+    postVisualEditEnabled(visualEditMode);
+    // Sandpack may remount the iframe after compile — nudge a few times.
+    if (!visualEditMode) return undefined;
+    const t1 = setTimeout(() => postVisualEditEnabled(true), 400);
+    const t2 = setTimeout(() => postVisualEditEnabled(true), 1200);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [visualEditMode]);
+
+  useEffect(() => {
+    function onMessage(event) {
+      const data = event?.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === VISUAL_EDIT_READY) {
+        postVisualEditEnabled(visualEditMode);
+        return;
+      }
+      if (data.type === VISUAL_EDIT_SELECT && typeof onElementSelect === 'function') {
+        onElementSelect(data.payload || null);
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [visualEditMode, onElementSelect]);
+
+  const editAction =
+    !publicMode && typeof onToggleVisualEdit === 'function' ? (
+      <button
+        type="button"
+        onClick={() => onToggleVisualEdit(!visualEditMode)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all border ${
+          visualEditMode
+            ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-900/30'
+            : 'bg-zinc-800 text-zinc-100 border-zinc-700 hover:bg-zinc-700 hover:text-white'
+        }`}
+        title={visualEditMode ? 'Sair do modo edição' : 'Modo edição visual (estilo Figma)'}
+        aria-pressed={visualEditMode}
+      >
+        <MousePointer2 size={13} />
+        Editar
+      </button>
+    ) : null;
 
   return (
     <div
@@ -143,15 +225,47 @@ function PreviewInner({ isGenerating, onAskFix, publicMode, generationIncomplete
         publicMode
           ? '[&_.sp-navigator]:!hidden [&_.sp-preview-actions]:!hidden [&_.sp-button]:!hidden'
           : ''
+      } ${
+        visualEditMode
+          ? 'ring-2 ring-blue-500 ring-inset [&_.sp-preview-container]:!ring-2 [&_.sp-preview-container]:!ring-blue-500/40'
+          : ''
       }`}
     >
+      {visualEditMode && !publicMode && (
+        <div className="shrink-0 z-20 flex items-center gap-2 px-3 py-1.5 bg-blue-600/15 border-b border-blue-500/40 text-[11px] text-blue-100">
+          <MousePointer2 size={13} className="text-blue-400 shrink-0" />
+          <span className="font-semibold text-blue-200">Modo Editar</span>
+          <span className="text-blue-200/80 truncate">
+            — clica num elemento no preview para selecionar
+          </span>
+          {selectedElement?.tag ? (
+            <span className="ml-auto font-mono text-[10px] text-blue-100/90 bg-blue-950/50 border border-blue-500/30 rounded px-1.5 py-0.5 max-w-[40%] truncate">
+              {`<${selectedElement.tag}>`}
+              {selectedElement.text ? ` “${selectedElement.text.slice(0, 28)}”` : ''}
+            </span>
+          ) : (
+            <span className="ml-auto text-blue-400/70 hidden sm:inline">Esc cancela</span>
+          )}
+          <button
+            type="button"
+            onClick={() => onToggleVisualEdit?.(false)}
+            className="shrink-0 p-0.5 rounded text-blue-300 hover:text-white hover:bg-blue-500/30"
+            title="Sair do modo edição"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 relative">
         <SandpackLayout style={{ height: '100%', border: 'none', background: 'transparent' }}>
           <SandpackPreview
+            ref={previewRef}
             showNavigator={!publicMode}
             showOpenInCodeSandbox={false}
             showRefreshButton={!publicMode}
             showSandpackErrorOverlay={false}
+            actionsChildren={editAction}
             style={{ height: '100%', flex: 1 }}
           />
         </SandpackLayout>
@@ -272,6 +386,10 @@ export default function PreviewPane({
   generationIncomplete = false,
   onRequestUi = null,
   onContinue = null,
+  visualEditMode = false,
+  onToggleVisualEdit = null,
+  onElementSelect = null,
+  selectedElement = null,
 }) {
   // Sandpack iframe OAuth → parent Google popup on authorized domain
   useEffect(() => installPreviewAuthBridge(), []);
@@ -455,6 +573,7 @@ export default function PreviewPane({
                   `${apiBase}/gocreate-payments.js`,
                   `${apiBase}/gocreate-auth.js`,
                   `${apiBase}/gocreate-data.js`,
+                  ...(publicMode ? [] : [`${apiBase}/gocreate-visual-edit.js`]),
                 ],
               }}
               style={{ height: '100%' }}
@@ -465,6 +584,10 @@ export default function PreviewPane({
                 publicMode={publicMode}
                 generationIncomplete={generationIncomplete}
                 onContinue={onContinue}
+                visualEditMode={visualEditMode}
+                onToggleVisualEdit={onToggleVisualEdit}
+                onElementSelect={onElementSelect}
+                selectedElement={selectedElement}
               />
             </SandpackProvider>
           </SandpackErrorBoundary>

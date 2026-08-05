@@ -335,7 +335,7 @@ export default function Dashboard() {
             <p className="text-xs text-zinc-500 line-clamp-2 mb-3">
               {project.description || 'Projeto GoCreate'}
             </p>
-            <div className="flex items-center justify-between text-[11px] text-zinc-500">
+            <div className="flex items-center justify-between text-[11px] text-zinc-500 mb-3">
               <span className="inline-flex items-center gap-1">
                 <Clock size={11} />
                 {project.updatedAtLabel || project.updatedAt || 'Agora'}
@@ -346,48 +346,53 @@ export default function Dashboard() {
         </Link>
 
         {!selectMode && (
-          <div className="absolute top-8 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20 flex items-center gap-1">
+          <>
+            <div className="absolute top-2 right-2 z-20">
+              {isDemo ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hideDemo(project.id);
+                  }}
+                  className="p-1.5 rounded-md bg-black/50 text-white/90 hover:bg-black/70 transition-all inline-flex items-center gap-1 text-[10px] font-medium border border-white/10"
+                  title="Ocultar exemplo"
+                >
+                  <EyeOff size={12} />
+                </button>
+              ) : (
+                <ProjectActionsMenu
+                  project={project}
+                  buttonClassName="bg-black/50 text-white/90 hover:bg-black/70 hover:text-white border border-white/10"
+                  onSelect={enterSelectWithProject}
+                  onOpen={(proj) => navigate(`/editor/${proj.id}`)}
+                  onRename={handleRename}
+                  onDuplicate={handleDuplicate}
+                  onArchive={handleArchive}
+                  onDelete={handleDelete}
+                />
+              )}
+            </div>
+
             {!isDemo && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  navigate(`/editor/${project.id}`);
-                }}
-                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md bg-black/50 text-white/95 hover:bg-black/70 transition-all text-[10px] font-semibold border border-white/10"
-                title="Editar projeto"
-              >
-                <MousePointer2 size={12} />
-                Editar
-              </button>
+              <div className="px-4 pb-4 -mt-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navigate(`/editor/${project.id}`);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold border border-blue-500/40 shadow-sm shadow-blue-900/20 transition-all"
+                  title="Abrir editor do projeto"
+                >
+                  <MousePointer2 size={13} />
+                  Editar
+                </button>
+              </div>
             )}
-            {isDemo ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  hideDemo(project.id);
-                }}
-                className="p-1.5 rounded-md bg-black/40 text-white/90 hover:bg-black/60 transition-all inline-flex items-center gap-1 text-[10px] font-medium"
-                title="Ocultar exemplo"
-              >
-                <EyeOff size={12} />
-              </button>
-            ) : (
-              <ProjectActionsMenu
-                project={project}
-                buttonClassName="bg-black/40 text-white/90 hover:bg-black/60 hover:text-white"
-                onSelect={enterSelectWithProject}
-                onOpen={(proj) => navigate(`/editor/${proj.id}`)}
-                onRename={handleRename}
-                onDuplicate={handleDuplicate}
-                onArchive={handleArchive}
-                onDelete={handleDelete}
-              />
-            )}
-          </div>
+          </>
         )}
       </div>
     );
